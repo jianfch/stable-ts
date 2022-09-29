@@ -6,6 +6,9 @@ This script modifies methods of Whisper's model to gain access to the predicted 
 
 ![image](https://user-images.githubusercontent.com/28970749/192950141-40ac8cbd-ccac-45da-b563-f8144d22c54e.png)
 
+## TODO
+- [ ] Add ability to stabilize with multiple inferences
+
 ### Dependency
 
 * [Whisper](https://github.com/openai/whisper)
