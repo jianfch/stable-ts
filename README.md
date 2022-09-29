@@ -1,12 +1,13 @@
 # Stabilizing Timestamps for Whisper
 
 ## Description
-This script modifies methods of Whisper's model to gain access to the predicted timestamp tokens of each word without needing addition inference. It also stabilizes the timestamps down to the word level to ensure chronology.
+This script modifies methods of Whisper's model to gain access to the predicted timestamp tokens of each word(token) without needing addition inference. It also stabilizes the timestamps down to the word(token) level to ensure chronology.
 
 ![image](https://user-images.githubusercontent.com/28970749/192950141-40ac8cbd-ccac-45da-b563-f8144d22c54e.png)
 
 ## TODO
-- [ ] Add ability to stabilize with multiple inferences
+- [ ] Add function to stabilize with multiple inferences
+- [ ] Add word timestamping (it is only token based right now)
 
 ## Dependency
 * [Whisper](https://github.com/openai/whisper)
@@ -26,8 +27,9 @@ possibly_results = model.transcribe('audio.mp3', ts_num=7) #stab=false to disabl
 ```
 
 #### Additional Info
+* The "word" timestamps are actually token timestamps. Since token:word is not always 1:1 (varies by language), you may need to do some additional processing to get individual word timings.
 * The timing can still be off sync depending on the model and audio.
-* Haven't done any extensive testing to conclude how to interpret the word timestamps. Whether it is beginning/middle/end of the word, it's up to you decide how to use the timestamps.
+* Haven't done any extensive testing to conclude how to interpret the word timestamps. Whether it is beginning/middle/end of the word(token), it's up to you decide how to use the timestamps.
 * The `unstable_word_timestamps` are left in the results, so you can possibly find better way to utilize them.
 
 ## License
