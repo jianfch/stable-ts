@@ -9,12 +9,10 @@ This script modifies methods of Whisper's model to gain access to the predicted 
 ## TODO
 - [ ] Add ability to stabilize with multiple inferences
 
-### Dependency
-
+## Dependency
 * [Whisper](https://github.com/openai/whisper)
 
 ### Executing script
-
 ```python
 import whisper
 from word_level_whisper import modify_model
@@ -25,16 +23,13 @@ word_timestamps = results['segments']['word_timestamps']
 ```
 
 #### Additional Info
-
 * The timing can still be off sync depending on the model and audio.
 * Haven't done any extensive testing to conclude how to interpret the word timestamps. Whether it is beginning/middle/end of the word, it's up to you decide how to use the timestamps.
 * The `unstable_word_timestamps` are left in the results, so you can possibly find better way to utilize them.
 
 ## License
-
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
 
 ## Acknowledgments
-
 Slight modification of the original work:
 * [Whisper](https://github.com/openai/whisper)
