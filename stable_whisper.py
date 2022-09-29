@@ -523,9 +523,8 @@ class DecodingTaskWordLevel(DecodingTask):
 
                 logits_clone = torch.clone(logits)
                 for _ in range(ts_num):
-                    logits_clone[0, ts_tokens[-1]] = -np.inf
-                    for _ in range(tokens.shape[0]):
-                        logits_clone[0, : self.tokenizer.timestamp_begin] = -np.inf
+                    logits_clone[0, ts_tokens[:, -1]] = -np.inf
+                    logits_clone[:, : self.tokenizer.timestamp_begin] = -np.inf
                     ts_tokens, _ = self.ts_decoder.update(ts_tokens, logits_clone, sum_logprobs_ts)
                 del logits_clone
 
