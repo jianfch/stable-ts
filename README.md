@@ -21,7 +21,7 @@ modify_model(model)
 results = model.transcribe('audio.mp3')
 word_timestamps = results['segments']['word_timestamps']
 
-#gather 7 timestamps tokens per worf from prediction instead of the default 5
+#gather 7 timestamps tokens per word from prediction instead of the default 5
 possibly_results = model.transcribe('audio.mp3', ts_num=7) #stab=false to disable stabilization
 ```
 
