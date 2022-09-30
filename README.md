@@ -1,7 +1,7 @@
 # Stabilizing Timestamps for Whisper
 
 ## Description
-This script modifies methods of Whisper's model to gain access to the predicted timestamp tokens of each word(token) without needing addition inference. It also stabilizes the timestamps down to the word(token) level to ensure chronology.
+This script modifies methods of Whisper's model to gain access to the predicted timestamp tokens of each word(token) without needing additional inference. It also stabilizes the timestamps down to the word(token) level to ensure chronology.
 
 ![image](https://user-images.githubusercontent.com/28970749/192950141-40ac8cbd-ccac-45da-b563-f8144d22c54e.png)
 
