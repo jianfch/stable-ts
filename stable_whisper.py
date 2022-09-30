@@ -12,8 +12,12 @@ from whisper.model import Whisper
 from whisper.decoding import DecodingTask
 from whisper.tokenizer import Tokenizer, get_tokenizer
 from types import MethodType
-from itertools import chain
+from itertools import chain, repeat
 from copy import deepcopy
+from math import floor
+import os
+from datetime import timedelta
+import json
 
 
 # no_caption changed to no_speech newer commits
@@ -28,14 +32,125 @@ def get_new_attrs(obj_, attr: str):
         raise NotImplementedError(attr)
 
 
-def check_ascending_sequence(seq: Union[List[Union[int, float]], np.ndarray]) -> bool:
-    return set(i <= j for i, j in zip(seq[:-1], seq[1:])) == {True}
+def check_ascending_sequence(seq: Union[List[Union[int, float]], np.ndarray], verbose=True) -> bool:
+    """
+    check if a sequence of numbers are in ascending order
+    """
+    is_ascending = True
+    for idx, (i, j) in enumerate(zip(seq[:-1], seq[1:])):
+        if i > j:
+            is_ascending = False
+            if verbose:
+                print(f'[Index{idx}]:{i} > [Index{idx+1}]:{j}')
+            else:
+                break
+
+    return is_ascending
+
+
+def is_equal_ts(a: (float, int, np.ndarray), b: (float, int, np.ndarray), rtol=1e-03):
+    """
+    check if timestamp a and timestamp b are equal within the relative tolerance (rtol)
+    """
+    return np.isclose(a, b, rtol=rtol)
+
+
+def check_is_same_results(res0: dict, res1: dict, check_unstable=False) -> bool:
+    """
+    check if res0 and res1 have same timestamps
+    """
+    ts_key = 'unstable_word_timestamps' if check_unstable else 'word_timestamps'
+    inner_ts_key = 'timestamps' if check_unstable else 'timestamp'
+
+    def _reduce(x):
+        if isinstance(x, np.ndarray):
+            return set(tuple(x)) == {True}
+        return x
+
+    t = set(set(_reduce(is_equal_ts(a[inner_ts_key], b[inner_ts_key])) for a, b in zip(i[ts_key], j[ts_key])) == {True}
+            for i, j in zip(res0['segments'], res1['segments']))
+    return t == {True}
+
+
+def to_srt(lines: List[dict], save_path: str = None) -> str:
+    """
+    subs: [{start:<start timestamp of text>, end:<end timestamp of text>, text:<str of text>}, ...]
+    """
+
+    def secs_to_hhmmss(secs: (float, int), decimal: int = 3):
+        td = timedelta(seconds=secs)
+        td_str = str(td).rsplit(',', maxsplit=1)[-1].strip()
+        if '.' in td_str:
+            td_str, micro_sec_str = td_str.split('.', maxsplit=1)
+            micro_sec_str = round(float(f'0.{micro_sec_str}'), decimal)
+            micro_sec_str = f'{micro_sec_str:0<{decimal + 2}}'[1:]
+        else:
+            micro_sec_str = '.' + ('0' * decimal)
+        td_str = f'{td_str:0>8}{micro_sec_str}'
+        return td_str
+
+    srt_str = '\n'.join(
+        f'{i}\n'
+        f'{secs_to_hhmmss(sub["start"]).replace(".", ",")} --> {secs_to_hhmmss(sub["end"]).replace(".", ",")}\n'
+        f'{sub["text"]}\n'
+        for i, sub in enumerate(lines, 1))
+
+    if save_path:
+        with open(save_path, 'w') as f:
+            f.write(srt_str)
+        print(f'Saved: {os.path.abspath(save_path)}')
+
+    return srt_str
+
+
+def group_word_timestamps(res: (dict, list), one_group=True):
+
+    def group_ts(ts_: List[dict], start) -> List[dict]:
+        _main_group: List[dict] = []
+        for w_ts in ts_:
+            if _main_group:
+                if (_main_group[-1]['end'] - _main_group[-1]['start']) > 0.02 and \
+                        _main_group[-1]['end'] < w_ts['timestamp']:
+                    _main_group.append(dict(start=_main_group[-1]['end'],
+                                            end=w_ts['timestamp'],
+                                            text=w_ts['word']))
+                else:
+                    _main_group[-1]['end'] = max(_main_group[-1]['end'], w_ts['timestamp'])
+                    _main_group[-1]['text'] += w_ts['word']
+            else:
+                _main_group.append(dict(start=start,
+                                        end=w_ts['timestamp'],
+                                        text=w_ts['word']))
+
+        return _main_group
+
+    segs: List[dict] = res['segments'] if isinstance(res, dict) else res
+    assert set('word_timestamps' in seg for seg in segs) == {True}, 'input contains missing word_timestamps'
+
+    grouped = (group_ts(seg['word_timestamps'], seg['start']) for seg in segs)
+    return list(chain.from_iterable(grouped) if one_group else grouped)
+
+
+def set_end_to_last_word(res: dict, end_before_period=False):
+    res = deepcopy(res)
+    for i in range(len(res['segments'])):
+        if end_before_period and \
+                res['segments'][i]['word_timestamps'][-1] == '.' and \
+                len(res['segments'][i]['word_timestamps']) > 1:
+            res['segments'][i]['end'] = res['segments'][i]['word_timestamps'][-2]['timestamp']
+        else:
+            res['segments'][i]['end'] = res['segments'][i]['word_timestamps'][-1]['timestamp']
+
+
+def results_to_srt(res: dict, srt_path, word_level=True, end_before_period=False):
+    lines = group_word_timestamps(res) if word_level else set_end_to_last_word(res['segments'], end_before_period)
+    to_srt(lines, srt_path)
 
 
 def _remove_overestimation(x: Union[np.ndarray, List[Union[int, float]]], alt_est: List[Union[list, np.ndarray]] = None,
                            max_: (int, float) = None, min_: (int, float) = None,
                            aggressive=False) -> np.ndarray:
-    x = np.array(x) if isinstance(x, list) else x.copy()
+    x = np.array(x) if isinstance(x, list) else deepcopy(x)
     if alt_est is not None:
         alt_est = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, alt_est))
     assert x.ndim == 1
@@ -67,7 +182,7 @@ def _remove_underestimation(x: Union[np.ndarray, List[Union[int, float]]],
                             alt_est: List[Union[list, np.ndarray]] = None,
                             min_: (int, float) = None, max_: (int, float) = None,
                             aggressive=False) -> np.ndarray:
-    x = np.array(x) if isinstance(x, list) else x.copy()
+    x = np.array(x) if isinstance(x, list) else deepcopy(x)
     if alt_est is not None:
         alt_est = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, alt_est))
     assert x.ndim == 1
@@ -99,8 +214,8 @@ def _remove_underestimation(x: Union[np.ndarray, List[Union[int, float]]],
 def _merge_max_min_estimation(mx: Union[np.ndarray, List[Union[int, float]]],
                               mn: Union[np.ndarray, List[Union[int, float]]],
                               alt_est: List[Union[list, np.ndarray]] = None) -> np.ndarray:
-    mx = np.array(mx) if isinstance(mx, list) else mx.copy()
-    mn = np.array(mn) if isinstance(mn, list) else mn.copy()
+    mx = np.array(mx) if isinstance(mx, list) else deepcopy(mx)
+    mn = np.array(mn) if isinstance(mn, list) else deepcopy(mn)
     if alt_est is not None:
         alt_est = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, alt_est))
     assert mx.ndim == 1 and mn.ndim == 1
@@ -172,7 +287,7 @@ def stabilize_timestamps(segments: List[dict], aggressive=False) -> List[dict]:
         warnings.warn(f'Segments {list(missing_ts_idx)} are missing unstable_word_timestamps. '
                       f'Word-level timestamp stabilization will skipped')
 
-    segments = segments.copy()
+    segments = deepcopy(segments)
     sectioned_segments: List[List] = [[]]
     for i, seg in enumerate(segments, 1):
         sectioned_segments[-1].append(seg)
@@ -190,11 +305,11 @@ def stabilize_timestamps(segments: List[dict], aggressive=False) -> List[dict]:
                                                                                   for s in segs)))
                                      for segs in sectioned_segments]
 
-    sectioned_stab_timestamps = [_stabilize_timestamps(**kwargs) for kwargs in sectioned_segments_timestamps]
+    sectioned_stab_timestamps = [_stabilize_timestamps(**kwargs).reshape(-1, 2) for kwargs in sectioned_segments_timestamps]
 
     for i in range(len(sectioned_segments)):
         for j in range(len(sectioned_segments[i])):
-            sectioned_segments[i][j]['start'] = sectioned_stab_timestamps[i][j]
+            sectioned_segments[i][j]['start'], sectioned_segments[i][j]['end'] = sectioned_stab_timestamps[i][j]
 
             if not missing_ts_idx:
                 top_word_ts = [ts_['timestamps'][0] for ts_ in sectioned_segments[i][j]['unstable_word_timestamps']]
@@ -211,6 +326,11 @@ def stabilize_timestamps(segments: List[dict], aggressive=False) -> List[dict]:
                 sectioned_segments[i][j]['word_timestamps'] = temp_stab_word_ts
 
     return list(chain.from_iterable(sectioned_segments))
+
+
+def save_as_json(results, path):
+    with open(path, 'w') as f:
+        json.dump(results, f)
 
 
 # modified version of whisper.transcribe.transcribe
@@ -298,7 +418,7 @@ def transcribe_word_level(
     task = decode_options.get("task", "transcribe")
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
 
-    def decode_with_fallback(segment: torch.Tensor) -> Union[List[DecodingResult], tuple]:
+    def decode_with_fallback(segment: torch.Tensor, max_ts: (float, Tensor) = None) -> Union[List[DecodingResult], tuple]:
         temperatures = [temperature] if isinstance(temperature, (int, float)) else temperature
         kwargs = {**decode_options}
         t = temperatures[0]
@@ -308,7 +428,7 @@ def transcribe_word_level(
             best_of = kwargs.get("best_of", None)
 
         options = DecodingOptions(**kwargs, temperature=t)
-        results, ts_tokens = model.decode(segment, options, ts_num=ts_num, alpha=alpha)
+        results, ts_tokens, ts_logits_ = model.decode(segment, options, ts_num=ts_num, alpha=alpha, max_ts=max_ts)
 
         kwargs.pop("beam_size", None)  # no beam search for t > 0
         kwargs.pop("patience", None)  # no patience for t > 0
@@ -323,13 +443,14 @@ def transcribe_word_level(
             ]
             if any(needs_fallback):
                 options = DecodingOptions(**kwargs, temperature=t)
-                retries, ts_tokens = model.decode(segment[needs_fallback], options,
-                                                  ts_num=ts_num, alpha=alpha)
+                retries, r_ts_tokens, r_ts_logits = model.decode(segment[needs_fallback], options,
+                                                                 ts_num=ts_num, alpha=alpha)
                 for retry_index, original_index in enumerate(np.nonzero(needs_fallback)[0]):
                     results[original_index] = retries[retry_index]
-                    ts_tokens[original_index] = ts_tokens[retry_index]
+                    ts_tokens[original_index] = r_ts_tokens[retry_index]
+                    ts_logits_[original_index] = r_ts_logits[retry_index]
 
-        return results, ts_tokens
+        return results, ts_tokens, ts_logits_
 
     seek = 0
     input_stride = exact_div(
@@ -342,20 +463,35 @@ def transcribe_word_level(
     all_segments = []
     prompt_reset_since = 0
 
+    def _to_list(x: (Tensor, None)):
+        if x is None:
+            return x
+        return x.tolist()
+
     def add_segment(
-            *, offset: float, start: float, end: float, text_tokens: torch.Tensor, result: DecodingResult,
-            start_timestamps: list = None, end_timestamps: list = None, word_timestamps: list = None
+            *, offset: float, start: float, end: float, text_tokens: Tensor, result: DecodingResult,
+            start_timestamps: list = None, end_timestamps: list = None, word_timestamps: Tensor = None,
+            start_ts_logits: list = None, end_ts_logits: list = None, word_ts_logits: Tensor = None
     ):
-        text = tokenizer.decode([token for token in text_tokens if token < tokenizer.eot])
+        no_eot_mask = text_tokens < tokenizer.eot
+        text_tokens_no_eot = text_tokens[no_eot_mask]
+        text = tokenizer.decode(text_tokens_no_eot)
 
         if len(text.strip()) == 0:  # skip empty text output
             return
 
         if word_timestamps is not None:
-            assert len(word_timestamps) == text_tokens.shape[0]
-            word_timestamps = [{'word': tokenizer.decode([token]), 'timestamps': timestamps_.tolist()}
-                               for token, timestamps_ in zip(text_tokens, word_timestamps)
-                               if token < tokenizer.eot]
+            assert word_timestamps.shape[0] == text_tokens.shape[0]
+            if word_ts_logits is None:
+                word_ts_fields = zip(text_tokens_no_eot, word_timestamps[no_eot_mask], repeat(None))
+            else:
+                assert word_ts_logits.shape[0] == text_tokens.shape[0]
+                word_ts_fields = zip(text_tokens_no_eot, word_timestamps[no_eot_mask], word_ts_logits[no_eot_mask])
+
+            word_timestamps = [dict(word=tokenizer.decode([token]),
+                                    timestamps=timestamps_.tolist(),
+                                    timestamp_logits=_to_list(ts_logits_))
+                               for token, timestamps_, ts_logits_ in word_ts_fields]
 
         if start_timestamps is not None and len(all_segments) == 0:
             start_timestamps = None
@@ -372,9 +508,12 @@ def transcribe_word_level(
                 "temperature": result.temperature,
                 "avg_logprob": result.avg_logprob,
                 "compression_ratio": result.compression_ratio,
-                "no_caption_prob": result.no_caption_prob if hasattr(result, 'no_caption_prob') else result.no_speech_prob,
+                "no_caption_prob": result.no_caption_prob if hasattr(result,
+                                                                     'no_caption_prob') else result.no_speech_prob,
                 "alt_start_timestamps": start_timestamps,
+                "start_ts_logits": start_ts_logits,
                 "alt_end_timestamps": end_timestamps,
+                "end_ts_logits": end_ts_logits,
                 "unstable_word_timestamps": word_timestamps,
                 'anchor_point': False
             }
@@ -394,11 +533,12 @@ def transcribe_word_level(
         segment_max_ts = segment_duration / time_precision
 
         decode_options["prompt"] = all_tokens[prompt_reset_since:]
-        result, finalized_ts_tokens = decode_with_fallback(segment)
+        result, finalized_ts_tokens, ts_logits = decode_with_fallback(segment, max_ts=segment_max_ts)
 
         result = result[0]
         tokens = torch.tensor(result.tokens)
         finalized_ts_tokens = torch.tensor(finalized_ts_tokens[0])
+        ts_logits = torch.tensor(ts_logits[0])
 
         if no_captions_threshold is not None:
             # no voice activity check
@@ -418,27 +558,33 @@ def transcribe_word_level(
             for current_slice in consecutive:
                 sliced_tokens = tokens[last_slice:current_slice]
                 sliced_ts_tokens = finalized_ts_tokens[last_slice:current_slice]
+                sliced_ts_logits = ts_logits[last_slice:current_slice]
                 start_timestamp_position = (
                         sliced_tokens[0].item() - tokenizer.timestamp_begin
                 )
                 end_timestamp_position = (
                         sliced_tokens[-1].item() - tokenizer.timestamp_begin
                 )
-                word_ts = [timestamp_offset + ((t - tokenizer.timestamp_begin) * time_precision)
-                           for t in sliced_ts_tokens]
+
+                word_ts = timestamp_offset + (sliced_ts_tokens - tokenizer.timestamp_begin) * time_precision
+
                 add_segment(
                     offset=timestamp_offset,
                     start=timestamp_offset + start_timestamp_position * time_precision,
-                    end=min(timestamp_offset + end_timestamp_position * time_precision, timestamp_offset+segment_duration),
+                    end=min(timestamp_offset + end_timestamp_position * time_precision,
+                            timestamp_offset + segment_duration),
                     text_tokens=sliced_tokens[1:-1],
                     result=result,
                     start_timestamps=word_ts[0].tolist(),
                     end_timestamps=word_ts[-1].tolist(),
-                    word_timestamps=word_ts[1:-1]
+                    word_timestamps=word_ts[1:-1],
+                    start_ts_logits=sliced_ts_logits[0].tolist(),
+                    end_ts_logits=sliced_ts_logits[-1].tolist(),
+                    word_ts_logits=sliced_ts_logits[1:-1]
                 )
                 last_slice = current_slice
             last_timestamp_position = (
-                    min(tokens[last_slice - 1].item() - tokenizer.timestamp_begin, segment_max_ts)
+                min(tokens[last_slice - 1].item() - tokenizer.timestamp_begin, segment_max_ts)
             )
             seek += last_timestamp_position * input_stride
             all_tokens.extend(tokens[: last_slice + 1].tolist())
@@ -451,8 +597,7 @@ def transcribe_word_level(
                 last_timestamp_position = min(timestamps[-1].item() - tokenizer.timestamp_begin, segment_max_ts)
                 duration = last_timestamp_position * time_precision
 
-            word_ts = [timestamp_offset + ((t - tokenizer.timestamp_begin) * time_precision)
-                       for t in finalized_ts_tokens]
+            word_ts = timestamp_offset + (finalized_ts_tokens - tokenizer.timestamp_begin) * time_precision
 
             add_segment(
                 offset=timestamp_offset,
@@ -460,7 +605,8 @@ def transcribe_word_level(
                 end=timestamp_offset + duration,
                 text_tokens=tokens,
                 result=result,
-                word_timestamps=word_ts
+                word_timestamps=word_ts,
+                word_ts_logits=ts_logits
             )
 
             seek += segment.shape[-1]
@@ -493,19 +639,23 @@ class DecodingTaskWordLevel(DecodingTask):
 
     def __init__(self, *args, **kwargs):
         super(DecodingTaskWordLevel, self).__init__(*args, **kwargs)
-        self.ts_decoder = deepcopy(self.decoder)
 
     # modified version of whisper.DecodingTask._main_loop
-    def _main_loop(self, audio_features: Tensor, tokens: Tensor, ts_num: int = None, alpha: float = None):
+    def _main_loop(self, audio_features: Tensor, tokens: Tensor, ts_num: int = None, alpha: float = None,
+                   max_ts: (float, Tensor) = None):
         assert audio_features.shape[0] == tokens.shape[0]
+        if max_ts is not None:
+            assert max_ts > -1
+            max_ts += self.tokenizer.timestamp_begin
+            max_ts = max(floor(max_ts), self.tokenizer.timestamp_begin) + 1
         n_batch = tokens.shape[0]
         sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
-        sum_logprobs_ts: Tensor = torch.zeros(n_batch, device=audio_features.device)
         no_caption_probs = [np.nan] * n_batch
 
         ts_num = 5 if ts_num is None else max(ts_num, 1)
         initial_tk_len = tokens.shape[-1]
         ts_tokens = torch.zeros([*tokens.shape[:-1], 1], device=tokens.device, dtype=tokens.dtype)
+        ts_logits = torch.zeros_like(ts_tokens)
         try:
             for i in range(self.sample_len):
                 if alpha:
@@ -521,12 +671,15 @@ class DecodingTaskWordLevel(DecodingTask):
                 # now we need to consider the logits at the last token only
                 logits = logits[:, -1]
 
+                if max_ts is not None:
+                    logits[:, max_ts:] = -np.inf  # prevent timestamp overshoot
+
                 logits_clone = torch.clone(logits)
-                for _ in range(ts_num):
-                    logits_clone[0, ts_tokens[-1]] = -np.inf
-                    for _ in range(tokens.shape[0]):
-                        logits_clone[0, : self.tokenizer.timestamp_begin] = -np.inf
-                    ts_tokens, _ = self.ts_decoder.update(ts_tokens, logits_clone, sum_logprobs_ts)
+                logits_clone[:, : self.tokenizer.timestamp_begin] = -np.inf
+                temp_ts_logits, temp_ts_token = torch.topk(logits_clone, ts_num)
+                ts_tokens = torch.cat([ts_tokens, temp_ts_token], -1)
+                ts_logits = torch.cat([ts_logits, temp_ts_logits], -1)
+
                 del logits_clone
 
                 # apply the logit filters, e.g. for suppressing or applying penalty to
@@ -542,13 +695,15 @@ class DecodingTaskWordLevel(DecodingTask):
             self.inference.cleanup_caching()
             ts_tokens = ts_tokens[..., 1:].reshape(
                 [*tokens.shape[:-1], tokens.shape[-1] - initial_tk_len, ts_num])
+            ts_logits = ts_logits[..., 1:].reshape(
+                [*tokens.shape[:-1], tokens.shape[-1] - initial_tk_len, ts_num])
 
-        return tokens, sum_logprobs, no_caption_probs, ts_tokens
+        return tokens, sum_logprobs, no_caption_probs, ts_tokens, ts_logits
 
     # modified version of whisper.DecodingTask.run
     @torch.no_grad()
-    def run(self, mel: Tensor, ts_num: int = None, alpha: float = None) \
-            -> Union[List[DecodingResult], Tuple[List[DecodingResult], List[List[int]]]]:
+    def run(self, mel: Tensor, ts_num: int = None, alpha: float = None, max_ts: (float, Tensor) = None) \
+            -> Union[List[DecodingResult], Tuple[List[DecodingResult], List[List[int]], List[List[int]]]]:
         self.decoder.reset()
         tokenizer: Tokenizer = self.tokenizer
         n_audio: int = mel.shape[0]
@@ -571,8 +726,9 @@ class DecodingTaskWordLevel(DecodingTask):
         tokens = tokens.repeat_interleave(self.n_group, dim=0).to(audio_features.device)
 
         # call the main sampling loop
-        tokens, sum_logprobs, no_caption_probs, ts_tokens = self._main_loop(audio_features, tokens,
-                                                                            ts_num=ts_num, alpha=alpha)
+        tokens, sum_logprobs, no_caption_probs, ts_tokens, ts_logits = self._main_loop(audio_features, tokens,
+                                                                                       ts_num=ts_num, alpha=alpha,
+                                                                                       max_ts=max_ts)
 
         # reshape the tensors to have (n_audio, n_group) as the first two dimensions
         audio_features = audio_features[:: self.n_group]
@@ -581,6 +737,7 @@ class DecodingTaskWordLevel(DecodingTask):
 
         tokens = tokens.reshape(n_audio, self.n_group, -1)
         ts_tokens = ts_tokens.reshape(n_audio, self.n_group, -1, ts_num)
+        ts_logits = ts_logits.reshape(n_audio, self.n_group, -1, ts_num)
         sum_logprobs = sum_logprobs.reshape(n_audio, self.n_group)
 
         # get the final candidates for each group, and slice between the first sampled token and EOT
@@ -590,11 +747,14 @@ class DecodingTaskWordLevel(DecodingTask):
         ]
         ts_tokens: List[List[Tensor]] = [[t[:len(tokens[i][j])] for j, t in enumerate(s)] for i, s in
                                          enumerate(ts_tokens)]
+        ts_logits: List[List[Tensor]] = [[t[:len(tokens[i][j])] for j, t in enumerate(s)] for i, s in
+                                         enumerate(ts_logits)]
 
         # select the top-ranked sample in each group
         selected = self.sequence_ranker.rank(tokens, sum_logprobs)
         tokens: List[List[int]] = [t[i].tolist() for i, t in zip(selected, tokens)]
         ts_tokens: List[List[int]] = [t[i].tolist() for i, t in zip(selected, ts_tokens)]
+        ts_logits: List[List[int]] = [t[i].tolist() for i, t in zip(selected, ts_logits)]
         texts: List[str] = [tokenizer.decode(t).strip() for t in tokens]
 
         sum_logprobs: List[float] = [lp[i] for i, lp in zip(selected, sum_logprobs)]
@@ -611,18 +771,19 @@ class DecodingTaskWordLevel(DecodingTask):
                        tokens=tokens,
                        text=text,
                        avg_logprob=avg_logprob,
-                       **(dict(no_caption_prob=no_caption_prob) if hasattr(DecodingResult, 'no_caption_prob') else dict(no_speech_prob=no_caption_prob)),
+                       **(dict(no_caption_prob=no_caption_prob) if hasattr(DecodingResult, 'no_caption_prob') else dict(
+                           no_speech_prob=no_caption_prob)),
                        temperature=self.options.temperature,
                        compression_ratio=compression_ratio(text),
                    )
                    for text, language, tokens, features, avg_logprob, no_caption_prob in zip(*fields)
-               ], ts_tokens
+               ], ts_tokens, ts_logits
 
 
 # modified version of whisper.decoding.decode
 @torch.no_grad()
 def decode_word_level(model: "Whisper", mel: Tensor, options: DecodingOptions = DecodingOptions(),
-                      ts_num: int = None, alpha: float = None) -> \
+                      ts_num: int = None, alpha: float = None, max_ts: (float, Tensor) = None) -> \
         Union[DecodingResult, List[DecodingResult], tuple]:
     """
     Performs decoding of 30-second audio segment(s), provided as Mel spectrogram(s).
@@ -645,6 +806,9 @@ def decode_word_level(model: "Whisper", mel: Tensor, options: DecodingOptions = 
         Amount of noise to add to audio to produce slightly difference results.
         audio_features *= torch.rand_like(audio_features) * alpha + 1
 
+    max_ts: (float, Tensor)
+        Max value timestamp token can have (before adjusted +tokenizer.timestamp_begin).
+
     Returns
     -------
     result: Union[DecodingResult, List[DecodingResult]]
@@ -654,12 +818,13 @@ def decode_word_level(model: "Whisper", mel: Tensor, options: DecodingOptions = 
     if single:
         mel = mel.unsqueeze(0)
 
-    result, ts_tokens = DecodingTaskWordLevel(model, options).run(mel, ts_num=ts_num, alpha=alpha)
+    result, ts_tokens, ts_logits = DecodingTaskWordLevel(model, options).run(mel, ts_num=ts_num,
+                                                                             alpha=alpha, max_ts=max_ts)
 
     if single:
         result = result[0]
 
-    return result, ts_tokens
+    return result, ts_tokens, ts_logits
 
 
 def modify_model(model: whisper.model.Whisper):
