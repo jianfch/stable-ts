@@ -74,7 +74,8 @@ def check_is_same_results(res0: dict, res1: dict, check_unstable=False) -> bool:
 
 def to_srt(lines: List[dict], save_path: str = None) -> str:
     """
-    subs: [{start:<start timestamp of text>, end:<end timestamp of text>, text:<str of text>}, ...]
+    lines: List[dict]
+        [{start:<start-timestamp-of-text>, end:<end-timestamp-of-text>, text:<str-of-text>}, ...]
     """
 
     def secs_to_hhmmss(secs: (float, int), decimal: int = 3):
@@ -103,13 +104,14 @@ def to_srt(lines: List[dict], save_path: str = None) -> str:
     return srt_str
 
 
-def group_word_timestamps(res: (dict, list), one_group=True):
+def group_word_timestamps(res: (dict, list), one_group=True, combine_compound=False):
 
     def group_ts(ts_: List[dict], start) -> List[dict]:
         _main_group: List[dict] = []
         for w_ts in ts_:
             if _main_group:
-                if (_main_group[-1]['end'] - _main_group[-1]['start']) > 0.02 and \
+                if (not combine_compound or w_ts['word'].startswith(' ')) and \
+                        (_main_group[-1]['end'] - _main_group[-1]['start']) > 0.02 and \
                         _main_group[-1]['end'] < w_ts['timestamp']:
                     _main_group.append(dict(start=_main_group[-1]['end'],
                                             end=w_ts['timestamp'],
@@ -131,22 +133,74 @@ def group_word_timestamps(res: (dict, list), one_group=True):
     return list(chain.from_iterable(grouped) if one_group else grouped)
 
 
-def set_end_to_last_word(res: dict, end_before_period=False) -> dict:
+def tighten_timestamps(res: dict, end_at_last_word=True, end_before_period=False, start_at_first_word=False) -> dict:
     res = deepcopy(res)
     for i in range(len(res['segments'])):
+        if start_at_first_word:
+            res['segments'][i]['start'] = res['segments'][i]['word_timestamps'][0]['timestamp']
         if end_before_period and \
                 res['segments'][i]['word_timestamps'][-1] == '.' and \
                 len(res['segments'][i]['word_timestamps']) > 1:
             res['segments'][i]['end'] = res['segments'][i]['word_timestamps'][-2]['timestamp']
-        else:
+        elif end_at_last_word:
             res['segments'][i]['end'] = res['segments'][i]['word_timestamps'][-1]['timestamp']
 
     return res
 
 
-def results_to_srt(res: dict, srt_path, word_level=True, end_before_period=False):
-    lines = group_word_timestamps(res) if word_level else set_end_to_last_word(res, end_before_period)['segments']
+def results_to_srt(res: dict, srt_path, word_level=True, combine_compound=False,
+                   end_at_last_word=False, end_before_period=False, start_at_first_word=False):
+    lines = group_word_timestamps(res, combine_compound=combine_compound) \
+        if word_level else \
+        (tighten_timestamps(res, end_before_period=end_before_period,
+                            start_at_first_word=start_at_first_word)['segments']
+         if any((end_at_last_word, end_before_period, start_at_first_word)) else res['segment'])
     to_srt(lines, srt_path)
+
+
+def results_to_sentence_srt(res: dict, srt_path,
+                            end_at_last_word=False,
+                            end_before_period=False,
+                            start_at_first_word=False):
+    """
+
+    Parameters
+    ----------
+    res: dict
+        results from modified model
+    srt_path: str
+        output path of srt
+    end_at_last_word: bool
+        set end-of-sentence to timestamp-of-last-token
+    end_before_period: bool
+        set end-of-sentence to timestamp-of-last-non-period-token
+    start_at_first_word: bool
+        set start-of-sentence to timestamp-of-first-token
+
+    """
+    strict = any((end_at_last_word, end_before_period, start_at_first_word))
+    segs = tighten_timestamps(res,
+                              end_at_last_word=end_at_last_word,
+                              end_before_period=end_before_period,
+                              start_at_first_word=start_at_first_word)['segments'] \
+        if strict else res['segments']
+    to_srt(segs, srt_path)
+
+
+def results_to_token_srt(res: dict, srt_path, combine_compound=False):
+    """
+
+    Parameters
+    ----------
+    res: dict
+        results from modified model
+    srt_path: str
+        output path of srt
+    combine_compound: bool
+        combine any compound words (only tested for English)
+
+    """
+    to_srt(group_word_timestamps(res, combine_compound=combine_compound), srt_path)
 
 
 def _remove_overestimation(x: Union[np.ndarray, List[Union[int, float]]], alt_est: List[Union[list, np.ndarray]] = None,
