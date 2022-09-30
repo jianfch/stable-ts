@@ -12,6 +12,12 @@ This script modifies methods of Whisper's model to gain access to the predicted 
 ## Dependency
 * [Whisper](https://github.com/openai/whisper)
 
+## Setup 
+```commandline
+git clone https://github.com/jianfch/stable-ts.git
+cd stable-ts
+```
+
 ### Executing script
 ```python
 import whisper
