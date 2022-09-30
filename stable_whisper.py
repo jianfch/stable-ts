@@ -131,7 +131,7 @@ def group_word_timestamps(res: (dict, list), one_group=True):
     return list(chain.from_iterable(grouped) if one_group else grouped)
 
 
-def set_end_to_last_word(res: dict, end_before_period=False):
+def set_end_to_last_word(res: dict, end_before_period=False) -> dict:
     res = deepcopy(res)
     for i in range(len(res['segments'])):
         if end_before_period and \
@@ -141,9 +141,11 @@ def set_end_to_last_word(res: dict, end_before_period=False):
         else:
             res['segments'][i]['end'] = res['segments'][i]['word_timestamps'][-1]['timestamp']
 
+    return res
+
 
 def results_to_srt(res: dict, srt_path, word_level=True, end_before_period=False):
-    lines = group_word_timestamps(res) if word_level else set_end_to_last_word(res['segments'], end_before_period)
+    lines = group_word_timestamps(res) if word_level else set_end_to_last_word(res, end_before_period)['segments']
     to_srt(lines, srt_path)
 
 
