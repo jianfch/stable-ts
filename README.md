@@ -28,17 +28,26 @@ modify_model(model)
 results = model.transcribe('audio.mp3')
 word_timestamps = results['segments']['word_timestamps']
 
-# gather 7 timestamps tokens per word from prediction instead of the default 5
-result = model.transcribe('audio.mp3', ts_num=7) #stab=false to disable stabilization
+# or to get more variation in token timestamps
+from stable_whisper import stabilize_timestamps
+
+result = model.transcribe('audio.mp3', ts_num=7, stab=False)  # stab=False disables stabilization; ts_num=7 increases unstable_timestamps to 7
+stab_segments = stabilize_timestamps(result['segments'], aggressive=True) # aggressive=True allows more variation
 ```
 
-### Generate token-level .srt
+### Generate .srt with stable timestamps
 ```python
-from stable_whipser import results_to_srt
-
-# after you get result from model
+# token-level 
+from stable_whipser import results_to_token_srt
+# after you get result from modified model
 # this treats the token timestamps as end time of the tokens
-results_to_srt(result, 'audio.srt', word_level=True)  # will combine tokens if their timestamps overlap
+results_to_token_srt(result, 'audio.srt')  # will combine tokens if their timestamps overlap
+```
+```python
+# sentence-level
+from stable_whipser import results_to_sentence_srt
+# after you get result from modified model
+results_to_sentence_srt(result, 'audio.srt')
 ```
 
 #### Additional Info
