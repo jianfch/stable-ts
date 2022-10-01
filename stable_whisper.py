@@ -16,7 +16,6 @@ from itertools import chain, repeat
 from copy import deepcopy
 from math import floor
 import os
-from datetime import timedelta
 import json
 
 
@@ -41,11 +40,23 @@ def check_ascending_sequence(seq: Union[List[Union[int, float]], np.ndarray], ve
         if i > j:
             is_ascending = False
             if verbose:
-                print(f'[Index{idx}]:{i} > [Index{idx+1}]:{j}')
+                print(f'[Index{idx}]:{i} > [Index{idx + 1}]:{j}')
             else:
                 break
 
     return is_ascending
+
+
+def check_ascending_sentence_ts(res: (dict, list)) -> bool:
+    segs = res['segments'] if isinstance(res, dict) else res
+    return check_ascending_sequence(list(chain.from_iterable((float(i['start']), float(i['end']))
+                                                             for i in segs)))
+
+
+def check_ascending_word_ts(res: (dict, list)) -> bool:
+    cc = group_word_timestamps(res['segments'] if isinstance(res, dict) else res)
+    return check_ascending_sequence((list(chain.from_iterable((float(i['start']), float(i['end']))
+                                                              for i in cc))))
 
 
 def is_equal_ts(a: (float, int, np.ndarray), b: (float, int, np.ndarray), rtol=1e-03):
@@ -55,10 +66,14 @@ def is_equal_ts(a: (float, int, np.ndarray), b: (float, int, np.ndarray), rtol=1
     return np.isclose(a, b, rtol=rtol)
 
 
-def check_is_same_results(res0: dict, res1: dict, check_unstable=False) -> bool:
+def check_is_same_results(res0: (dict, list), res1: (dict, list), check_unstable=False) -> bool:
     """
     check if res0 and res1 have same timestamps
     """
+    if isinstance(res0, dict):
+        res0 = res0['segments']
+    if isinstance(res1, dict):
+        res1 = res1['segments']
     ts_key = 'unstable_word_timestamps' if check_unstable else 'word_timestamps'
     inner_ts_key = 'timestamps' if check_unstable else 'timestamp'
 
@@ -78,21 +93,14 @@ def to_srt(lines: List[dict], save_path: str = None) -> str:
         [{start:<start-timestamp-of-text>, end:<end-timestamp-of-text>, text:<str-of-text>}, ...]
     """
 
-    def secs_to_hhmmss(secs: (float, int), decimal: int = 3):
-        td = timedelta(seconds=secs)
-        td_str = str(td).rsplit(',', maxsplit=1)[-1].strip()
-        if '.' in td_str:
-            td_str, micro_sec_str = td_str.split('.', maxsplit=1)
-            micro_sec_str = round(float(f'0.{micro_sec_str}'), decimal)
-            micro_sec_str = f'{micro_sec_str:0<{decimal + 2}}'[1:]
-        else:
-            micro_sec_str = '.' + ('0' * decimal)
-        td_str = f'{td_str:0>8}{micro_sec_str}'
-        return td_str
+    def secs_to_hhmmss(secs: (float, int)):
+        mm, ss = divmod(secs, 60)
+        hh, mm = divmod(mm, 60)
+        return f'{hh:0>2.0f}:{mm:0>2.0f}:{ss:0>6.3f}'.replace(".", ",")
 
     srt_str = '\n'.join(
         f'{i}\n'
-        f'{secs_to_hhmmss(sub["start"]).replace(".", ",")} --> {secs_to_hhmmss(sub["end"]).replace(".", ",")}\n'
+        f'{secs_to_hhmmss(sub["start"])} --> {secs_to_hhmmss(sub["end"])}\n'
         f'{sub["text"]}\n'
         for i, sub in enumerate(lines, 1))
 
@@ -105,32 +113,42 @@ def to_srt(lines: List[dict], save_path: str = None) -> str:
 
 
 def group_word_timestamps(res: (dict, list), one_group=True, combine_compound=False):
-
     def group_ts(ts_: List[dict], start) -> List[dict]:
-        _main_group: List[dict] = []
+        first_group: List[dict] = []
         for w_ts in ts_:
-            if _main_group:
+            if first_group:
                 if (not combine_compound or w_ts['word'].startswith(' ')) and \
-                        (_main_group[-1]['end'] - _main_group[-1]['start']) > 0.02 and \
-                        _main_group[-1]['end'] < w_ts['timestamp']:
-                    _main_group.append(dict(start=_main_group[-1]['end'],
+                        (w_ts['timestamp'] - first_group[-1]['start']) > 0.02 and \
+                        first_group[-1]['end'] < w_ts['timestamp']:
+                    first_group.append(dict(start=first_group[-1]['end'],
                                             end=w_ts['timestamp'],
                                             text=w_ts['word']))
                 else:
-                    _main_group[-1]['end'] = max(_main_group[-1]['end'], w_ts['timestamp'])
-                    _main_group[-1]['text'] += w_ts['word']
+                    first_group[-1]['end'] = max(first_group[-1]['end'], w_ts['timestamp'])
+                    first_group[-1]['text'] += w_ts['word']
             else:
-                _main_group.append(dict(start=start,
+                first_group.append(dict(start=start,
                                         end=w_ts['timestamp'],
                                         text=w_ts['word']))
 
-        return _main_group
+        return first_group
+
+    def group_zero_duration(first_group: List[dict]) -> List[dict]:
+        final_group: List[dict] = []
+        for ts_dict in first_group:
+            if not final_group or (ts_dict['end'] - ts_dict['start']) > 0:
+                final_group.append(ts_dict)
+            else:
+                final_group[-1]['end'] = ts_dict['end']
+                final_group[-1]['text'] += ts_dict['text']
+
+        return final_group
 
     segs: List[dict] = res['segments'] if isinstance(res, dict) else res
     assert set('word_timestamps' in seg for seg in segs) == {True}, 'input contains missing word_timestamps'
 
     grouped = (group_ts(seg['word_timestamps'], seg['start']) for seg in segs)
-    return list(chain.from_iterable(grouped) if one_group else grouped)
+    return group_zero_duration(list(chain.from_iterable(grouped))) if one_group else list(grouped)
 
 
 def tighten_timestamps(res: dict, end_at_last_word=True, end_before_period=False, start_at_first_word=False) -> dict:
@@ -154,7 +172,7 @@ def results_to_srt(res: dict, srt_path, word_level=True, combine_compound=False,
         if word_level else \
         (tighten_timestamps(res, end_before_period=end_before_period,
                             start_at_first_word=start_at_first_word)['segments']
-         if any((end_at_last_word, end_before_period, start_at_first_word)) else res['segment'])
+         if any((end_at_last_word, end_before_period, start_at_first_word)) else res['segments'])
     to_srt(lines, srt_path)
 
 
@@ -201,6 +219,43 @@ def results_to_token_srt(res: dict, srt_path, combine_compound=False):
 
     """
     to_srt(group_word_timestamps(res, combine_compound=combine_compound), srt_path)
+
+
+def _get_min_estimation(estimations: List[Union[list, np.ndarray]],
+                        min_: (int, float) = None,
+                        max_: (int, float) = None) -> np.ndarray:
+    estimations = deepcopy(estimations)
+    estimations = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, estimations))
+    prev_min = min_ or 0
+    curr_max = max_ or np.max(estimations[-1])
+
+    min_est = []
+    for curr_est in estimations:
+        curr_min = curr_est[np.logical_and(curr_max > curr_est, curr_est > prev_min)]
+        curr_min = np.min(curr_min) if curr_min.shape[0] else prev_min
+        min_est.append(curr_min)
+        prev_min = curr_min
+
+    return np.array(min_est)
+
+
+def _get_max_estimation(estimations: List[Union[list, np.ndarray]],
+                        max_: (int, float) = None,
+                        min_: (int, float) = None) -> np.ndarray:
+    estimations = deepcopy(estimations)
+    estimations = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, estimations))
+    prev_max = max_ or np.max(estimations[-1])
+    curr_min = np.min(estimations[0]) if min_ is None else min_
+
+    max_est = []
+    for curr_est in reversed(estimations):
+        curr_max = curr_est[np.logical_and(prev_max > curr_est, curr_est > curr_min)]
+        curr_max = np.max(curr_max) if curr_max.shape[0] else prev_max
+        max_est.append(curr_max)
+        prev_max = curr_max
+
+    max_est.reverse()
+    return np.array(max_est)
 
 
 def _remove_overestimation(x: Union[np.ndarray, List[Union[int, float]]], alt_est: List[Union[list, np.ndarray]] = None,
@@ -327,6 +382,28 @@ def _merge_max_min_estimation(mx: Union[np.ndarray, List[Union[int, float]]],
     return mn
 
 
+def _avg_merge_min_max(mx: Union[np.ndarray, List[Union[int, float]]],
+                       mn: Union[np.ndarray, List[Union[int, float]]],
+                       alt_timestamps: List[Union[List[Union[int, float]], np.ndarray]] = None,
+                       max_: (int, float) = None, min_: (int, float) = None):
+    mx = np.array(mx) if isinstance(mx, list) else deepcopy(mx)
+    mn = np.array(mn) if isinstance(mn, list) else deepcopy(mn)
+    assert mx.ndim == mn.ndim == 1
+    assert mx.shape[0] == mn.shape[0]
+
+    avg_ = (mx + mn) / 2
+
+    if check_ascending_sequence(avg_, verbose=False):
+        return avg_
+
+    if not max_:
+        max_ = max(mx[-1], mn[-1])
+    if min_ is None:
+        min_ = min(mn[0], mx[0])
+
+    return _stabilize_timestamps(avg_, alt_timestamps, max_=max_, min_=min_)
+
+
 def _stabilize_timestamps(timestamps: Union[np.ndarray, List[Union[int, float]]],
                           alt_timestamps: List[Union[List[Union[int, float]], np.ndarray]] = None,
                           max_: (int, float) = None, min_: (int, float) = None, aggressive=False) -> np.ndarray:
@@ -335,9 +412,34 @@ def _stabilize_timestamps(timestamps: Union[np.ndarray, List[Union[int, float]]]
     return _merge_max_min_estimation(mx, mn, alt_timestamps)
 
 
-def stabilize_timestamps(segments: List[dict], aggressive=False) -> List[dict]:
-    missing_ts_idx = set(map(lambda x: None if x[1].get('unstable_word_timestamps') else x[0], enumerate(segments))) \
-                     - {None}
+def _stabilize_more_timestamps(timestamps: List[Union[list, np.ndarray]],
+                               max_: (int, float) = None, min_: (int, float) = None, average=True) -> np.ndarray:
+    mx = _get_max_estimation(timestamps, max_=max_, min_=min_)
+    mn = _get_min_estimation(timestamps, max_=max_, min_=min_)
+    if average:
+        return _avg_merge_min_max(mx, mn, timestamps, max_=max_, min_=min_)
+    return _merge_max_min_estimation(mx, mn, timestamps)
+
+
+def stabilize_timestamps(segments: Union[List[dict], dict],
+                         top_focus=False, aggressive=False, average=True) -> List[dict]:
+    """
+
+    Parameters
+    ----------
+    segments: Union[List[dict], dict]
+        result['segments'] or result
+    top_focus: bool
+        adhere closely to the top predictions
+    aggressive: bool
+        only if top_focus=True, allow greater variation in unstable_word_timestamps
+    average: bool
+        only if top_focus=False, average min and max of unstable_word_timestamps
+
+    """
+    if isinstance(segments, dict):
+        segments = segments['segments']
+    missing_ts_idx = set(map(lambda x: None if x[1].get('unstable_word_timestamps') else x[0], enumerate(segments))) - {None}
     no_word_timestamps = len(missing_ts_idx) == len(segments)
     if not no_word_timestamps and missing_ts_idx:
         warnings.warn(f'Segments {list(missing_ts_idx)} are missing unstable_word_timestamps. '
@@ -361,19 +463,29 @@ def stabilize_timestamps(segments: List[dict], aggressive=False) -> List[dict]:
                                                                                   for s in segs)))
                                      for segs in sectioned_segments]
 
-    sectioned_stab_timestamps = [_stabilize_timestamps(**kwargs).reshape(-1, 2) for kwargs in sectioned_segments_timestamps]
+    sectioned_stab_timestamps = [_stabilize_timestamps(**kwargs).reshape(-1, 2) for kwargs in
+                                 sectioned_segments_timestamps]
 
     for i in range(len(sectioned_segments)):
         for j in range(len(sectioned_segments[i])):
             sectioned_segments[i][j]['start'], sectioned_segments[i][j]['end'] = sectioned_stab_timestamps[i][j]
 
             if not missing_ts_idx:
-                top_word_ts = [ts_['timestamps'][0] for ts_ in sectioned_segments[i][j]['unstable_word_timestamps']]
-                alt_word_ts = [ts_['timestamps'][1:] for ts_ in sectioned_segments[i][j]['unstable_word_timestamps']]
-                temp_stab_word_ts = _stabilize_timestamps(top_word_ts, alt_word_ts,
-                                                          max_=sectioned_segments[i][j]['end'],
-                                                          min_=sectioned_segments[i][j]['start'],
-                                                          aggressive=aggressive)
+                if top_focus:
+                    top_word_ts = [ts_['timestamps'][0] for ts_ in
+                                   sectioned_segments[i][j]['unstable_word_timestamps']]
+                    alt_word_ts = [ts_['timestamps'][1:] for ts_ in
+                                   sectioned_segments[i][j]['unstable_word_timestamps']]
+                    temp_stab_word_ts = _stabilize_timestamps(top_word_ts, alt_word_ts,
+                                                              max_=sectioned_segments[i][j]['end'],
+                                                              min_=sectioned_segments[i][j]['start'],
+                                                              aggressive=aggressive)
+                else:
+                    word_ts = [ts_['timestamps'] for ts_ in sectioned_segments[i][j]['unstable_word_timestamps']]
+                    temp_stab_word_ts = _stabilize_more_timestamps(word_ts,
+                                                                   max_=sectioned_segments[i][j]['end'],
+                                                                   min_=sectioned_segments[i][j]['start'],
+                                                                   average=average)
 
                 temp_stab_word_ts = [{'word': sectioned_segments[i][j]['unstable_word_timestamps'][k]['word'],
                                       'timestamp': temp_stab_word_ts[k]}
@@ -474,7 +586,8 @@ def transcribe_word_level(
     task = decode_options.get("task", "transcribe")
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
 
-    def decode_with_fallback(segment: torch.Tensor, max_ts: (float, Tensor) = None) -> Union[List[DecodingResult], tuple]:
+    def decode_with_fallback(segment: torch.Tensor, max_ts: (float, Tensor) = None) -> Union[
+        List[DecodingResult], tuple]:
         temperatures = [temperature] if isinstance(temperature, (int, float)) else temperature
         kwargs = {**decode_options}
         t = temperatures[0]
