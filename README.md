@@ -26,13 +26,12 @@ from stable_whisper import modify_model
 model = whisper.load_model('base', 'cuda')
 modify_model(model)
 results = model.transcribe('audio.mp3')
-word_timestamps = results['segments']['word_timestamps']
+stab_segments = results['segments']
+first_segment_token_timestamps = stab_segment[0]['word_timestamps']
 
-# or to get more variation in token timestamps
+# or to get token timestamps that adhere more to the top prediction
 from stable_whisper import stabilize_timestamps
-
-result = model.transcribe('audio.mp3', ts_num=7, stab=False)  # stab=False disables stabilization; ts_num=7 increases unstable_timestamps to 7
-stab_segments = stabilize_timestamps(result['segments'], aggressive=True) # aggressive=True allows more variation
+stab_segments = stabilize_timestamps(result, top_focus=True)
 ```
 
 ### Generate .srt with stable timestamps
