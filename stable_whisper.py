@@ -784,8 +784,9 @@ def transcribe_word_level(
             seek += segment.shape[-1]
             all_tokens.extend(tokens.tolist())
 
-        all_segments[-1]['anchor_point'] = True
-        all_segments[-1]['next_offset'] = float(seek * HOP_LENGTH / SAMPLE_RATE)
+        if all_segments:
+            all_segments[-1]['anchor_point'] = True
+            all_segments[-1]['next_offset'] = float(seek * HOP_LENGTH / SAMPLE_RATE)
         if result.temperature > 0.5:
             # do not feed the prompt tokens if a high temperature was used
             prompt_reset_since = len(all_tokens)
