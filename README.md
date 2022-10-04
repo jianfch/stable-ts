@@ -13,6 +13,14 @@ This script modifies methods of Whisper's model to gain access to the predicted 
 * [Whisper](https://github.com/openai/whisper)
 
 ## Setup 
+1. Install [Whisper](https://github.com/openai/whisper#setup)
+2. Check if Whisper is installed correctly by running a quick test
+```python
+import whisper
+model = whisper.load_model('base', 'cuda')
+assert model.transcribe('audio.mp3').get('segments')
+```
+3. Clone repo
 ```commandline
 git clone https://github.com/jianfch/stable-ts.git
 cd stable-ts
@@ -25,6 +33,7 @@ from stable_whisper import modify_model
 
 model = whisper.load_model('base', 'cuda')
 modify_model(model)
+# modified model should run just like the regular model but with additional hyperparameters and extra data in results
 results = model.transcribe('audio.mp3')
 stab_segments = results['segments']
 first_segment_token_timestamps = stab_segment[0]['word_timestamps']
