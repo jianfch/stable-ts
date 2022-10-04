@@ -439,6 +439,9 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
     """
     if isinstance(segments, dict):
         segments = segments['segments']
+    if not segments:
+        warnings.warn('No Segments Found')
+        return []
     missing_ts_idx = set(map(lambda x: None if x[1].get('unstable_word_timestamps') else x[0], enumerate(segments))) - {None}
     no_word_timestamps = len(missing_ts_idx) == len(segments)
     if not no_word_timestamps and missing_ts_idx:
