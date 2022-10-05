@@ -442,7 +442,8 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
     if not segments:
         warnings.warn('No Segments Found')
         return []
-    missing_ts_idx = set(map(lambda x: None if x[1].get('unstable_word_timestamps') else x[0], enumerate(segments))) - {None}
+    missing_ts_idx = set(map(lambda x: None if x[1].get('unstable_word_timestamps') else x[0], enumerate(segments))) - {
+        None}
     no_word_timestamps = len(missing_ts_idx) == len(segments)
     if not no_word_timestamps and missing_ts_idx:
         warnings.warn(f'Segments {list(missing_ts_idx)} are missing unstable_word_timestamps. '
@@ -513,7 +514,7 @@ def transcribe_word_level(
         temperature: Union[float, Tuple[float, ...]] = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
         compression_ratio_threshold: Optional[float] = 2.4,
         logprob_threshold: Optional[float] = -1.0,
-        no_captions_threshold: Optional[float] = 0.6,
+        no_speech_threshold: Optional[float] = 0.6,
         stab=True, ts_num: int = None, alpha: float = None,
         **decode_options):
     """
@@ -540,8 +541,8 @@ def transcribe_word_level(
     logprob_threshold: float
         If the average log probability over sampled tokens is below this value, treat as failed
 
-    no_captions_threshold: float
-        If the no_captions probability is higher than this value AND the average log probability
+    no_speech_threshold: float
+        If the no_speech probability is higher than this value AND the average log probability
         over sampled tokens is below `logprob_threshold`, consider the segment as silent
 
     stab: bool
@@ -563,6 +564,12 @@ def transcribe_word_level(
     A dictionary containing the resulting text ("text") and segment-level details ("segments"), and
     the spoken language ("language"), which is detected when `decode_options["language"]` is None.
     """
+
+    if 'no_captions_threshold' in decode_options:
+        warnings.warn('no_captions_threshold is deprecated. '
+                      'Please use no_speech_threshold instead.', DeprecationWarning, stacklevel=2)
+        no_speech_threshold = decode_options.pop('no_captions_threshold')
+
     dtype = torch.float16 if decode_options.get("fp16", True) else torch.float32
     if model.device == torch.device("cpu"):
         if torch.cuda.is_available():
@@ -680,8 +687,7 @@ def transcribe_word_level(
                 "temperature": result.temperature,
                 "avg_logprob": result.avg_logprob,
                 "compression_ratio": result.compression_ratio,
-                "no_caption_prob": result.no_caption_prob if hasattr(result,
-                                                                     'no_caption_prob') else result.no_speech_prob,
+                "no_speech_prob": get_new_attrs(result, 'no_caption_prob'),
                 "alt_start_timestamps": start_timestamps,
                 "start_ts_logits": start_ts_logits,
                 "alt_end_timestamps": end_timestamps,
@@ -712,11 +718,11 @@ def transcribe_word_level(
         finalized_ts_tokens = torch.tensor(finalized_ts_tokens[0])
         ts_logits = torch.tensor(ts_logits[0])
 
-        if no_captions_threshold is not None:
+        if no_speech_threshold is not None:
             # no voice activity check
-            should_skip = get_new_attrs(result, 'no_caption_prob') > no_captions_threshold
+            should_skip = get_new_attrs(result, 'no_caption_prob') > no_speech_threshold
             if logprob_threshold is not None and result.avg_logprob > logprob_threshold:
-                # don't skip if the logprob is high enough, despite the no_captions_prob
+                # don't skip if the logprob is high enough, despite the no_speech_prob
                 should_skip = False
 
             if should_skip:
@@ -823,7 +829,7 @@ class DecodingTaskWordLevel(DecodingTask):
             max_ts = max(floor(max_ts), self.tokenizer.timestamp_begin) + 1
         n_batch = tokens.shape[0]
         sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
-        no_caption_probs = [np.nan] * n_batch
+        no_speech_probs = [np.nan] * n_batch
 
         ts_num = 5 if ts_num is None else max(ts_num, 1)
         initial_tk_len = tokens.shape[-1]
@@ -837,9 +843,9 @@ class DecodingTaskWordLevel(DecodingTask):
                 else:
                     logits = self.inference.logits(tokens, audio_features)
 
-                if i == 0 and get_new_attrs(self.tokenizer, 'no_captions') is not None:  # save no_caption_probs
+                if i == 0 and get_new_attrs(self.tokenizer, 'no_captions') is not None:  # save no_speech_probs
                     probs_at_sot = logits[:, self.sot_index].float().softmax(dim=-1)
-                    no_caption_probs = probs_at_sot[:, get_new_attrs(self.tokenizer, 'no_captions')].tolist()
+                    no_speech_probs = probs_at_sot[:, get_new_attrs(self.tokenizer, 'no_captions')].tolist()
 
                 # now we need to consider the logits at the last token only
                 logits = logits[:, -1]
@@ -871,7 +877,7 @@ class DecodingTaskWordLevel(DecodingTask):
             ts_logits = ts_logits[..., 1:].reshape(
                 [*tokens.shape[:-1], tokens.shape[-1] - initial_tk_len, ts_num])
 
-        return tokens, sum_logprobs, no_caption_probs, ts_tokens, ts_logits
+        return tokens, sum_logprobs, no_speech_probs, ts_tokens, ts_logits
 
     # modified version of whisper.DecodingTask.run
     @torch.no_grad()
@@ -899,14 +905,14 @@ class DecodingTaskWordLevel(DecodingTask):
         tokens = tokens.repeat_interleave(self.n_group, dim=0).to(audio_features.device)
 
         # call the main sampling loop
-        tokens, sum_logprobs, no_caption_probs, ts_tokens, ts_logits = self._main_loop(audio_features, tokens,
+        tokens, sum_logprobs, no_speech_probs, ts_tokens, ts_logits = self._main_loop(audio_features, tokens,
                                                                                        ts_num=ts_num, alpha=alpha,
                                                                                        max_ts=max_ts)
 
         # reshape the tensors to have (n_audio, n_group) as the first two dimensions
         audio_features = audio_features[:: self.n_group]
-        no_caption_probs = no_caption_probs[:: self.n_group]
-        assert audio_features.shape[0] == len(no_caption_probs) == n_audio
+        no_speech_probs = no_speech_probs[:: self.n_group]
+        assert audio_features.shape[0] == len(no_speech_probs) == n_audio
 
         tokens = tokens.reshape(n_audio, self.n_group, -1)
         ts_tokens = ts_tokens.reshape(n_audio, self.n_group, -1, ts_num)
@@ -933,7 +939,7 @@ class DecodingTaskWordLevel(DecodingTask):
         sum_logprobs: List[float] = [lp[i] for i, lp in zip(selected, sum_logprobs)]
         avg_logprobs: List[float] = [lp / (len(t) + 1) for t, lp in zip(tokens, sum_logprobs)]
 
-        fields = (texts, languages, tokens, audio_features, avg_logprobs, no_caption_probs)
+        fields = (texts, languages, tokens, audio_features, avg_logprobs, no_speech_probs)
         if len(set(map(len, fields))) != 1:
             raise RuntimeError(f"inconsistent result lengths: {list(map(len, fields))}")
 
@@ -944,12 +950,12 @@ class DecodingTaskWordLevel(DecodingTask):
                        tokens=tokens,
                        text=text,
                        avg_logprob=avg_logprob,
-                       **(dict(no_caption_prob=no_caption_prob) if hasattr(DecodingResult, 'no_caption_prob') else dict(
-                           no_speech_prob=no_caption_prob)),
+                       **(dict(no_caption_prob=no_speech_prob) if hasattr(DecodingResult, 'no_caption_prob') else dict(
+                           no_speech_prob=no_speech_prob)),
                        temperature=self.options.temperature,
                        compression_ratio=compression_ratio(text),
                    )
-                   for text, language, tokens, features, avg_logprob, no_caption_prob in zip(*fields)
+                   for text, language, tokens, features, avg_logprob, no_speech_prob in zip(*fields)
                ], ts_tokens, ts_logits
 
 
