@@ -54,7 +54,7 @@ def check_ascending_sentence_ts(res: (dict, list)) -> bool:
 
 
 def check_ascending_word_ts(res: (dict, list)) -> bool:
-    cc = group_word_timestamps(res['segments'] if isinstance(res, dict) else res)
+    cc = group_word_timestamps(res['segments'] if isinstance(res, dict) else res, ts_key='word_timestamps')
     return check_ascending_sequence((list(chain.from_iterable((float(i['start']), float(i['end']))
                                                               for i in cc))))
 
@@ -112,7 +112,7 @@ def to_srt(lines: List[dict], save_path: str = None) -> str:
     return srt_str
 
 
-def group_word_timestamps(res: (dict, list), one_group=True, combine_compound=False):
+def group_word_timestamps(res: (dict, list), one_group=True, combine_compound=False, ts_key='whole_word_timestamps'):
     def group_ts(ts_: List[dict], start) -> List[dict]:
         first_group: List[dict] = []
         for w_ts in ts_:
@@ -145,9 +145,9 @@ def group_word_timestamps(res: (dict, list), one_group=True, combine_compound=Fa
         return final_group
 
     segs: List[dict] = res['segments'] if isinstance(res, dict) else res
-    assert set('word_timestamps' in seg for seg in segs) == {True}, 'input contains missing word_timestamps'
+    assert set(ts_key in seg for seg in segs) == {True}, f'input contains missing {ts_key}'
 
-    grouped = (group_ts(seg['word_timestamps'], seg['start']) for seg in segs)
+    grouped = (group_ts(seg[ts_key], seg['start']) for seg in segs)
     return group_zero_duration(list(chain.from_iterable(grouped))) if one_group else list(grouped)
 
 
@@ -168,12 +168,14 @@ def tighten_timestamps(res: dict, end_at_last_word=True, end_before_period=False
 
 def results_to_srt(res: dict, srt_path, word_level=True, combine_compound=False,
                    end_at_last_word=False, end_before_period=False, start_at_first_word=False):
-    lines = group_word_timestamps(res, combine_compound=combine_compound) \
-        if word_level else \
-        (tighten_timestamps(res, end_before_period=end_before_period,
-                            start_at_first_word=start_at_first_word)['segments']
-         if any((end_at_last_word, end_before_period, start_at_first_word)) else res['segments'])
-    to_srt(lines, srt_path)
+
+    if word_level:
+        results_to_word_srt(res, srt_path, combine_compound=combine_compound)
+    else:
+        results_to_sentence_srt(res, srt_path,
+                                end_at_last_word=end_at_last_word,
+                                end_before_period=end_before_period,
+                                start_at_first_word=start_at_first_word)
 
 
 def results_to_sentence_srt(res: dict, srt_path,
@@ -205,6 +207,22 @@ def results_to_sentence_srt(res: dict, srt_path,
     to_srt(segs, srt_path)
 
 
+def results_to_word_srt(res: dict, srt_path, combine_compound=False):
+    """
+
+    Parameters
+    ----------
+    res: dict
+        results from modified model
+    srt_path: str
+        output path of srt
+    combine_compound: bool
+        concatenate words without inbetween spacing
+
+    """
+    to_srt(group_word_timestamps(res, combine_compound=combine_compound), srt_path)
+
+
 def results_to_token_srt(res: dict, srt_path, combine_compound=False):
     """
 
@@ -215,10 +233,10 @@ def results_to_token_srt(res: dict, srt_path, combine_compound=False):
     srt_path: str
         output path of srt
     combine_compound: bool
-        combine any compound words (only tested for English)
+        concatenate words without inbetween spacing
 
     """
-    to_srt(group_word_timestamps(res, combine_compound=combine_compound), srt_path)
+    to_srt(group_word_timestamps(res, combine_compound=combine_compound, ts_key='word_timestamps'), srt_path)
 
 
 def _get_min_estimation(estimations: List[Union[list, np.ndarray]],
@@ -492,6 +510,7 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
                                                                    average=average)
 
                 temp_stab_word_ts = [{'word': sectioned_segments[i][j]['unstable_word_timestamps'][k]['word'],
+                                      'token': sectioned_segments[i][j]['unstable_word_timestamps'][k]['token'],
                                       'timestamp': temp_stab_word_ts[k]}
                                      for k in range(temp_stab_word_ts.shape[0])]
 
@@ -503,6 +522,53 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
 def save_as_json(results, path):
     with open(path, 'w') as f:
         json.dump(results, f)
+
+
+def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict]):
+    merge_non_space = tokenizer.language in ['en']
+    if isinstance(segments, dict):
+        segments = segments['segments']
+    if not segments:
+        print('No segments found, whole-word timestamps cannot be added.')
+        return
+
+    missing_idx = set(-1 if seg.get('word_timestamps') else i for i, seg in enumerate(segments)) - {-1}
+
+    if missing_idx:
+        if len(missing_idx) == len(segments):
+            print('No word_timestamps found, whole-word timestamps cannot be added.')
+            return
+        print(f'Some word_timestamps not found, '
+              f'whole-word timestamps cannot be added to the following segments: {tuple(missing_idx)}')
+
+    failed_idx = []
+
+    for seg_idx, seg in enumerate(segments):
+        if seg.get('word_timestamps'):
+            prev_idx = 0
+            remaining_text = seg['text']
+            whole_word_timestamps: List[dict] = []
+            for wts_idx in range(1, len(seg['word_timestamps'])+1):
+                max_ts = seg['word_timestamps'][wts_idx-1]['timestamp']
+                tokens = [wts['token'] for wts in seg['word_timestamps'][prev_idx: wts_idx]]
+                temp_whole_word = tokenizer.decode(tokens)
+                if temp_whole_word == remaining_text[:len(temp_whole_word)]:
+                    prev_idx = wts_idx
+                    remaining_text = remaining_text[len(temp_whole_word):]
+                    if not merge_non_space or temp_whole_word.startswith(' ') or not whole_word_timestamps:
+                        whole_word_timestamps.append(dict(word=temp_whole_word, timestamp=max_ts))
+                    else:
+                        whole_word_timestamps[-1]['word'] += temp_whole_word
+                        whole_word_timestamps[-1]['timestamp'] = max_ts
+            if remaining_text:
+                failed_idx.append(seg_idx)
+                whole_word_timestamps = []
+            seg['whole_word_timestamps'] = whole_word_timestamps or None
+        else:
+            seg['whole_word_timestamps'] = None
+
+    if failed_idx:
+        print(f'Failed to add whole-word timestamps to the following segments: {tuple(failed_idx)}')
 
 
 # modified version of whisper.transcribe.transcribe
@@ -668,12 +734,10 @@ def transcribe_word_level(
                 word_ts_fields = zip(text_tokens_no_eot, word_timestamps[no_eot_mask], word_ts_logits[no_eot_mask])
 
             word_timestamps = [dict(word=tokenizer.decode([token]),
+                                    token=token.item(),
                                     timestamps=timestamps_.tolist(),
                                     timestamp_logits=_to_list(ts_logits_))
                                for token, timestamps_, ts_logits_ in word_ts_fields]
-
-        if start_timestamps is not None and len(all_segments) == 0:
-            start_timestamps = None
 
         all_segments.append(
             {
@@ -802,6 +866,7 @@ def transcribe_word_level(
 
     if stab:
         all_segments = stabilize_timestamps(all_segments)
+        add_whole_word_ts(tokenizer, all_segments)
         if verbose:
             print('\nSTABILIZED\n')
             for seg_ in all_segments:
