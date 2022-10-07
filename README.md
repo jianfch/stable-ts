@@ -7,7 +7,7 @@ This script modifies methods of Whisper's model to gain access to the predicted 
 
 ## TODO
 - [ ] Add function to stabilize with multiple inferences
-- [ ] Add word timestamping (it is only token based right now)
+- [x] Add word timestamping (previously only token based)
 
 ## Dependency
 * [Whisper](https://github.com/openai/whisper)
@@ -36,26 +36,27 @@ modify_model(model)
 # modified model should run just like the regular model but with additional hyperparameters and extra data in results
 results = model.transcribe('audio.mp3')
 stab_segments = results['segments']
-first_segment_token_timestamps = stab_segment[0]['word_timestamps']
+first_segment_word_timestamps = stab_segments[0]['whole_word_timestamps']
 
 # or to get token timestamps that adhere more to the top prediction
 from stable_whisper import stabilize_timestamps
-stab_segments = stabilize_timestamps(result, top_focus=True)
+stab_segments = stabilize_timestamps(results, top_focus=True)
 ```
 
 ### Generate .srt with stable timestamps
 ```python
-# token-level 
-from stable_whipser import results_to_token_srt
-# after you get result from modified model
-# this treats the token timestamps as end time of the tokens
-results_to_token_srt(result, 'audio.srt')  # will combine tokens if their timestamps overlap
+# word-level 
+from stable_whisper import results_to_word_srt
+# after you get results from modified model
+# this treats a word timestamp as end time of the word
+# and combine words if their timestamps overlap
+results_to_word_srt(results, 'audio.srt')  #combine_compound=True if compound words are separate
 ```
 ```python
 # sentence-level
-from stable_whipser import results_to_sentence_srt
-# after you get result from modified model
-results_to_sentence_srt(result, 'audio.srt')
+from stable_whisper import results_to_sentence_srt
+# after you get results from modified model
+results_to_sentence_srt(results, 'audio.srt')
 ```
 
 #### Additional Info
