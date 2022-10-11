@@ -105,7 +105,7 @@ def to_srt(lines: List[dict], save_path: str = None) -> str:
         for i, sub in enumerate(lines, 1))
 
     if save_path:
-        with open(save_path, 'w') as f:
+        with open(save_path, 'w', encoding='utf-8') as f:
             f.write(srt_str)
         print(f'Saved: {os.path.abspath(save_path)}')
 
@@ -520,7 +520,7 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
 
 
 def save_as_json(results, path):
-    with open(path, 'w') as f:
+    with open(path, 'w', encoding='utf-8') as f:
         json.dump(results, f)
 
 
