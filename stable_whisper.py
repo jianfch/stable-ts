@@ -591,7 +591,8 @@ def transcribe_word_level(
         compression_ratio_threshold: Optional[float] = 2.4,
         logprob_threshold: Optional[float] = -1.0,
         no_speech_threshold: Optional[float] = 0.6,
-        stab=True, ts_num: int = None, alpha: float = None,
+        condition_on_previous_text: bool = True,
+        stab=True, ts_num: int = None, alpha: float = None, print_unstab=False,
         **decode_options):
     """
     Transcribe an audio file using Whisper
@@ -605,7 +606,7 @@ def transcribe_word_level(
         The path to the audio file to open, or the audio waveform
 
     verbose: bool
-        Whether to display the text being decoded to the console
+        Whether to display the text (with finalized timestamps) being decoded to the console
 
     temperature: Union[float, Tuple[float, ...]]
         Temperature for sampling. It can be a tuple of temperatures, which will be successfully used
@@ -621,6 +622,11 @@ def transcribe_word_level(
         If the no_speech probability is higher than this value AND the average log probability
         over sampled tokens is below `logprob_threshold`, consider the segment as silent
 
+    condition_on_previous_text: bool
+        if True, the previous output of the model is provided as a prompt for the next window;
+        disabling may make the text inconsistent across windows, but the model becomes less prone to
+        getting stuck in a failure loop, such as repetition looping or timestamps going out of sync.
+
     stab: bool
         Stabilizing timestamps by cross compare timestamps and using additional top timestamp predictions
         to fill in when appropriate to ensure timestamps are chronological.
@@ -631,6 +637,9 @@ def transcribe_word_level(
     alpha: float
         Amount of noise to add to audio to produce slightly difference results.
         audio_features *= torch.rand_like(audio_features) * alpha + 1
+
+    print_unstab: bool
+        Whether to display the text (without stabilize timestamps) being decoded to the console
 
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
@@ -770,7 +779,7 @@ def transcribe_word_level(
                 'anchor_point': False
             }
         )
-        if verbose and not stab:
+        if print_unstab or (verbose and not stab):
             print(f'[{format_timestamp(start)} --> {format_timestamp(end)}] "{text}"')
             if word_timestamps is not None:
                 ts_str = (f' ->[{format_timestamp(ts_["timestamps"][0])}] "{ts_["word"].strip()}"' for ts_ in
@@ -867,7 +876,7 @@ def transcribe_word_level(
         if all_segments:
             all_segments[-1]['anchor_point'] = True
             all_segments[-1]['next_offset'] = float(seek * HOP_LENGTH / SAMPLE_RATE)
-        if result.temperature > 0.5:
+        if not condition_on_previous_text or result.temperature > 0.5:
             # do not feed the prompt tokens if a high temperature was used
             prompt_reset_since = len(all_tokens)
 
