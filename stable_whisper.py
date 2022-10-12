@@ -87,7 +87,7 @@ def check_is_same_results(res0: (dict, list), res1: (dict, list), check_unstable
     return t == {True}
 
 
-def to_srt(lines: List[dict], save_path: str = None) -> str:
+def to_srt(lines: List[dict], save_path: str = None, strip=False) -> str:
     """
     lines: List[dict]
         [{start:<start-timestamp-of-text>, end:<end-timestamp-of-text>, text:<str-of-text>}, ...]
@@ -101,7 +101,7 @@ def to_srt(lines: List[dict], save_path: str = None) -> str:
     srt_str = '\n'.join(
         f'{i}\n'
         f'{secs_to_hhmmss(sub["start"])} --> {secs_to_hhmmss(sub["end"])}\n'
-        f'{sub["text"]}\n'
+        f'{sub["text"].strip() if strip else sub["text"]}\n'
         for i, sub in enumerate(lines, 1))
 
     if save_path:
@@ -167,21 +167,23 @@ def tighten_timestamps(res: dict, end_at_last_word=True, end_before_period=False
 
 
 def results_to_srt(res: dict, srt_path, word_level=True, combine_compound=False,
-                   end_at_last_word=False, end_before_period=False, start_at_first_word=False):
+                   end_at_last_word=False, end_before_period=False, start_at_first_word=False, strip=False):
 
     if word_level:
-        results_to_word_srt(res, srt_path, combine_compound=combine_compound)
+        results_to_word_srt(res, srt_path, combine_compound=combine_compound, strip=strip)
     else:
         results_to_sentence_srt(res, srt_path,
                                 end_at_last_word=end_at_last_word,
                                 end_before_period=end_before_period,
-                                start_at_first_word=start_at_first_word)
+                                start_at_first_word=start_at_first_word,
+                                strip=strip)
 
 
 def results_to_sentence_srt(res: dict, srt_path,
                             end_at_last_word=False,
                             end_before_period=False,
-                            start_at_first_word=False):
+                            start_at_first_word=False,
+                            strip=True):
     """
 
     Parameters
@@ -196,6 +198,8 @@ def results_to_sentence_srt(res: dict, srt_path,
         set end-of-sentence to timestamp-of-last-non-period-token
     start_at_first_word: bool
         set start-of-sentence to timestamp-of-first-token
+    strip: bool
+        perform strip() on each sentence
 
     """
     strict = any((end_at_last_word, end_before_period, start_at_first_word))
@@ -204,10 +208,10 @@ def results_to_sentence_srt(res: dict, srt_path,
                               end_before_period=end_before_period,
                               start_at_first_word=start_at_first_word)['segments'] \
         if strict else res['segments']
-    to_srt(segs, srt_path)
+    to_srt(segs, srt_path, strip=strip)
 
 
-def results_to_word_srt(res: dict, srt_path, combine_compound=False):
+def results_to_word_srt(res: dict, srt_path, combine_compound=False, strip=False):
     """
 
     Parameters
@@ -218,12 +222,15 @@ def results_to_word_srt(res: dict, srt_path, combine_compound=False):
         output path of srt
     combine_compound: bool
         concatenate words without inbetween spacing
+    strip: bool
+        perform strip() on each word
 
     """
-    to_srt(group_word_timestamps(res, combine_compound=combine_compound), srt_path)
+    to_srt(group_word_timestamps(res, combine_compound=combine_compound),
+           srt_path, strip=strip)
 
 
-def results_to_token_srt(res: dict, srt_path, combine_compound=False):
+def results_to_token_srt(res: dict, srt_path, combine_compound=False, strip=False):
     """
 
     Parameters
@@ -234,9 +241,12 @@ def results_to_token_srt(res: dict, srt_path, combine_compound=False):
         output path of srt
     combine_compound: bool
         concatenate words without inbetween spacing
+    strip: bool
+        perform strip() on each token
 
     """
-    to_srt(group_word_timestamps(res, combine_compound=combine_compound, ts_key='word_timestamps'), srt_path)
+    to_srt(group_word_timestamps(res, combine_compound=combine_compound, ts_key='word_timestamps'),
+           srt_path, strip=strip)
 
 
 def _get_min_estimation(estimations: List[Union[list, np.ndarray]],
