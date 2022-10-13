@@ -534,8 +534,9 @@ def save_as_json(results, path):
         json.dump(results, f)
 
 
-def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict]):
-    merge_non_space = tokenizer.language in ['en']
+def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], merge_non_space: bool = None):
+    merge_non_space = (tokenizer.language in ['en'] or tokenizer.language is None) \
+        if merge_non_space is None else merge_non_space
     if isinstance(segments, dict):
         segments = segments['segments']
     if not segments:
