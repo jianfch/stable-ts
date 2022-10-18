@@ -17,7 +17,7 @@ This script modifies methods of Whisper's model to gain access to the predicted 
 2. Check if Whisper is installed correctly by running a quick test
 ```python
 import whisper
-model = whisper.load_model('base', 'cuda')
+model = whisper.load_model('base')
 assert model.transcribe('audio.mp3').get('segments')
 ```
 3. Clone repo
