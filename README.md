@@ -31,7 +31,7 @@ cd stable-ts
 import whisper
 from stable_whisper import modify_model
 
-model = whisper.load_model('base', 'cuda')
+model = whisper.load_model('base')
 modify_model(model)
 # modified model should run just like the regular model but with additional hyperparameters and extra data in results
 results = model.transcribe('audio.mp3')
