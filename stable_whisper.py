@@ -460,9 +460,11 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
     top_focus: bool
         adhere closely to the top predictions
     aggressive: bool
-        only if top_focus=True, allow greater variation in unstable_word_timestamps
+        only if top_focus=True, 
+        allow greater variation in word_timestamps/whole_word_timestamps
     average: bool
-        only if top_focus=False, average min and max of unstable_word_timestamps
+        only if top_focus=False, 
+        average min and max of unstable_word_timestamps to get word_timestamps/whole_word_timestamps
 
     """
     if isinstance(segments, dict):
