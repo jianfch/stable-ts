@@ -460,10 +460,10 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
     top_focus: bool
         adhere closely to the top predictions
     aggressive: bool
-        only if top_focus=True, 
+        only if top_focus=True,
         allow greater variation in word_timestamps/whole_word_timestamps
     average: bool
-        only if top_focus=False, 
+        only if top_focus=False,
         average min and max of unstable_word_timestamps to get word_timestamps/whole_word_timestamps
 
     """
@@ -730,6 +730,11 @@ def transcribe_word_level(
     all_segments = []
     prompt_reset_since = 0
 
+    initial_prompt = decode_options.pop("initial_prompt", None) or []
+    if initial_prompt:
+        initial_prompt = tokenizer.encode(" " + initial_prompt.strip())
+        all_tokens.extend(initial_prompt)
+
     def _to_list(x: (Tensor, None)):
         if x is None:
             return x
@@ -898,7 +903,7 @@ def transcribe_word_level(
                               seg_['word_timestamps'])
                     print('\n'.join(ts_str), end='\n\n')
 
-    return dict(text=tokenizer.decode(all_tokens), segments=all_segments, language=language)
+    return dict(text=tokenizer.decode(all_tokens[len(initial_prompt):]), segments=all_segments, language=language)
 
 
 class DecodingTaskWordLevel(DecodingTask):
