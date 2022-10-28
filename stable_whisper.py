@@ -539,6 +539,7 @@ def save_as_json(results, path):
 def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], merge_non_space: bool = None):
     merge_non_space = (tokenizer.language in ['en'] or tokenizer.language is None) \
         if merge_non_space is None else merge_non_space
+    merge_punct = tokenizer.language in ['ja', 'zh']
     if isinstance(segments, dict):
         segments = segments['segments']
     if not segments:
@@ -568,7 +569,8 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
                 if temp_whole_word == remaining_text[:len(temp_whole_word)]:
                     prev_idx = wts_idx
                     remaining_text = remaining_text[len(temp_whole_word):]
-                    if not merge_non_space or temp_whole_word.startswith(' ') or not whole_word_timestamps:
+                    if not whole_word_timestamps or (not merge_non_space or temp_whole_word.startswith(' ')) and \
+                            (not merge_punct or not temp_whole_word.startswith(tuple('，！？；：。。︁︒、．⋯…‥'))):
                         whole_word_timestamps.append(dict(word=temp_whole_word, timestamp=max_ts))
                     else:
                         whole_word_timestamps[-1]['word'] += temp_whole_word
