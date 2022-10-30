@@ -1,3 +1,4 @@
+import ffmpeg
 import whisper
 import warnings
 import numpy as np
@@ -14,7 +15,6 @@ from whisper.tokenizer import Tokenizer, get_tokenizer
 from types import MethodType
 from itertools import chain, repeat
 from copy import deepcopy
-from math import floor
 import os
 import json
 
@@ -168,7 +168,6 @@ def tighten_timestamps(res: dict, end_at_last_word=True, end_before_period=False
 
 def results_to_srt(res: dict, srt_path, word_level=True, combine_compound=False,
                    end_at_last_word=False, end_before_period=False, start_at_first_word=False, strip=False):
-
     if word_level:
         results_to_word_srt(res, srt_path, combine_compound=combine_compound, strip=strip)
     else:
@@ -208,6 +207,20 @@ def results_to_sentence_srt(res: dict, srt_path,
                               end_before_period=end_before_period,
                               start_at_first_word=start_at_first_word)['segments'] \
         if strict else res['segments']
+
+    max_idx = len(segs) - 1
+    i = 1
+    while i <= max_idx:
+        if not (segs[i]['end'] - segs[i]['start']):
+            if segs[i - 1]['end'] == segs[i]['end']:
+                segs[i - 1]['text'] += (' ' + segs[i]['text'].strip())
+                del segs[i]
+                max_idx -= 1
+                continue
+            else:
+                segs[i]['start'] = segs[i - 1]['end']
+        i += 1
+
     to_srt(segs, srt_path, strip=strip)
 
 
@@ -458,7 +471,7 @@ def stabilize_timestamps(segments: Union[List[dict], dict],
     segments: Union[List[dict], dict]
         result['segments'] or result
     top_focus: bool
-        adhere closely to the top predictions
+        adhere closely to the top predictions for word timestamps
     aggressive: bool
         only if top_focus=True,
         allow greater variation in word_timestamps/whole_word_timestamps
@@ -536,9 +549,15 @@ def save_as_json(results, path):
         json.dump(results, f)
 
 
-def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], merge_non_space: bool = None):
+def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], merge_non_space: bool = None,
+                      prepend_punctuations: Union[List[str], Tuple[str]] = None,
+                      append_punctuations: Union[List[str], Tuple[str]] = None):
     merge_non_space = (tokenizer.language in ['en'] or tokenizer.language is None) \
         if merge_non_space is None else merge_non_space
+    if prepend_punctuations is None:
+        prepend_punctuations = r'“¿([{'
+    if append_punctuations is None:
+        append_punctuations = r'.。,，!！?？:：”)]}、'
     if isinstance(segments, dict):
         segments = segments['segments']
     if not segments:
@@ -560,17 +579,22 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
         if seg.get('word_timestamps'):
             prev_idx = 0
             remaining_text = seg['text']
+            has_prepend = False
             whole_word_timestamps: List[dict] = []
-            for wts_idx in range(1, len(seg['word_timestamps'])+1):
-                max_ts = seg['word_timestamps'][wts_idx-1]['timestamp']
+            for wts_idx in range(1, len(seg['word_timestamps']) + 1):
+                max_ts = seg['word_timestamps'][wts_idx - 1]['timestamp']
                 tokens = [wts['token'] for wts in seg['word_timestamps'][prev_idx: wts_idx]]
                 temp_whole_word = tokenizer.decode(tokens)
                 if temp_whole_word == remaining_text[:len(temp_whole_word)]:
                     prev_idx = wts_idx
                     remaining_text = remaining_text[len(temp_whole_word):]
-                    if not merge_non_space or temp_whole_word.startswith(' ') or not whole_word_timestamps:
+                    if (not merge_non_space or temp_whole_word.startswith(' ') or not whole_word_timestamps) and \
+                            temp_whole_word not in append_punctuations and \
+                            not has_prepend:
+                        has_prepend = temp_whole_word.strip() in prepend_punctuations
                         whole_word_timestamps.append(dict(word=temp_whole_word, timestamp=max_ts))
                     else:
+                        has_prepend = False
                         whole_word_timestamps[-1]['word'] += temp_whole_word
                         whole_word_timestamps[-1]['timestamp'] = max_ts
             if remaining_text:
@@ -584,6 +608,81 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
         print(f'Failed to add whole-word timestamps to the following segments: {tuple(failed_idx)}')
 
 
+def load_audio_waveform(audio: str, h: int, w: int) -> np.ndarray:
+    """
+
+    Parameters
+    ----------
+    audio: str:
+        Audio path
+    h: int
+        Height of waveform image
+    w: int
+        Width of waveform image
+
+    Returns
+    -------
+    Audio waveform image as a NumPy array, in uint8 dtype.
+    """
+    try:
+        waveform, _ = (
+            ffmpeg.input(audio, threads=0)
+                .filter('aformat', channel_layouts='mono')
+                .filter('highpass', f='200').filter('lowpass', f='3000')
+                .filter('showwavespic', s=f'{w}x{h}')
+                .output('-', pix_fmt='gray', format='rawvideo')
+                .run(cmd="ffmpeg", capture_stdout=True, capture_stderr=True)
+        )
+    except ffmpeg.Error as e:
+        raise RuntimeError(f"Failed to load audio in waveform: {e.stderr.decode()}") from e
+    else:
+        return np.frombuffer(waveform, dtype=np.uint8).reshape(h, w)
+
+
+def remove_lower_quantile(waveform: np.ndarray,
+                          upper_quantile: float = None,
+                          lower_quantile: float = None,
+                          lower_threshold: float = None) -> np.ndarray:
+    """
+    Removes lower quantile of amplitude from waveform image
+    """
+    if upper_quantile is None:
+        upper_quantile = 0.85
+    if lower_quantile is None:
+        lower_quantile = 0.15
+    if lower_threshold is None:
+        lower_threshold = 0.15
+    waveform = deepcopy(waveform)
+    wave_sums = waveform.sum(0)
+    mx = np.quantile(wave_sums, upper_quantile, 0)
+    mn = np.quantile(wave_sums, lower_quantile, 0)
+    mn_threshold = (mx - mn) * lower_threshold + mn
+    waveform[:, wave_sums < mn_threshold] = 0
+    return waveform
+
+
+def wave_to_ts_filter(waveform: np.ndarray, suppress_middle=True,
+                      max_index: (list, int) = None) -> np.ndarray:
+    """
+    Returns A NumPy array mask of sections with amplitude zero
+    """
+    assert waveform.ndim <= 2, f'waveform have at most 2 dims but found {waveform.ndim}'
+    if waveform.ndim == 1:
+        wave_sum = waveform
+    else:
+        wave_sum = waveform.sum(-2)
+
+    wave_filter = wave_sum.astype(bool)
+
+    if not suppress_middle:
+        nonzero_indices = wave_filter.nonzero()[0]
+        wave_filter[nonzero_indices[0]:nonzero_indices[-1] + 1] = True
+    if max_index is not None:
+        wave_filter[max_index + 1:] = False
+
+    return ~wave_filter
+
+
 # modified version of whisper.transcribe.transcribe
 def transcribe_word_level(
         model: "Whisper",
@@ -595,7 +694,14 @@ def transcribe_word_level(
         logprob_threshold: Optional[float] = -1.0,
         no_speech_threshold: Optional[float] = 0.6,
         condition_on_previous_text: bool = True,
-        stab=True, ts_num: int = None, alpha: float = None, print_unstab=False,
+        stab=True, top_focus=False, ts_num: int = 10,
+        alpha: float = None, print_unstab=False,
+        suppress_silence: bool = True,
+        suppress_middle: bool = True,
+        suppress_word_ts: bool = True,
+        remove_background: bool = True,
+        prepend_punctuations: Union[List[str], Tuple[str]] = None,
+        append_punctuations: Union[List[str], Tuple[str]] = None,
         **decode_options):
     """
     Transcribe an audio file using Whisper
@@ -634,8 +740,11 @@ def transcribe_word_level(
         Stabilizing timestamps by cross compare timestamps and using additional top timestamp predictions
         to fill in when appropriate to ensure timestamps are chronological.
 
+    top_focus: bool
+        Adhere closely to the top predictions for token timestamps stabilization
+
     ts_num: int
-        Number of top timestamp predictions to save for each word for postprocessing stabilization (default: 5).
+        Number of top timestamp predictions to save for each word for postprocessing stabilization (default: 10).
 
     alpha: float
         Amount of noise to add to audio to produce slightly difference results.
@@ -643,6 +752,30 @@ def transcribe_word_level(
 
     print_unstab: bool
         Whether to display the text (without stabilize timestamps) being decoded to the console
+
+    suppress_silence: bool
+        Suppress timestamp tokens that are marked as silent
+
+    suppress_middle: bool
+        Suppress any silent timestamps tokens of middle of the segment instead of only beginning and ending
+
+    suppress_word_ts: bool
+        Suppress timestamp tokens of words that are marked as silent
+
+    remove_background: bool
+        Whether to remove background noise from waveform so that it is marked silent. Determined by parameters:
+            upper_quantile: float
+                The upper quantile of amplitude to determine a max amplitude, mx (Default: 0.85)
+            lower_quantile: float
+                The lower quantile of amplitude to determine a min amplitude, mn (Default: 0.15)
+            lower_threshold: float
+                Suppressed sections of waveform where amplitude < lower_threshold*(mx-mn) + mn. (Default: 0.15)
+
+    prepend_punctuations: Union[List[str], Tuple[str]]
+        Punctuations to prepend to next word (Default: “¿([{)
+
+    append_punctuations: Union[List[str], Tuple[str]]
+        Punctuations to append to previous word (Default: .。,，!！?？:：”)]}、)
 
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
@@ -669,6 +802,9 @@ def transcribe_word_level(
     if dtype == torch.float32:
         decode_options["fp16"] = False
 
+    if 'max_initial_timestamp' not in decode_options:
+        decode_options['max_initial_timestamp'] = None
+
     mel = log_mel_spectrogram(audio)
 
     if decode_options.get("language", None) is None:
@@ -684,8 +820,8 @@ def transcribe_word_level(
     task = decode_options.get("task", "transcribe")
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
 
-    def decode_with_fallback(segment: torch.Tensor, max_ts: (float, Tensor) = None) -> Union[
-        List[DecodingResult], tuple]:
+    def decode_with_fallback(segment: torch.Tensor, suppress_ts_mask: Tensor = None) \
+            -> Union[List[DecodingResult], tuple]:
         temperatures = [temperature] if isinstance(temperature, (int, float)) else temperature
         kwargs = {**decode_options}
         t = temperatures[0]
@@ -695,7 +831,9 @@ def transcribe_word_level(
             best_of = kwargs.get("best_of", None)
 
         options = DecodingOptions(**kwargs, temperature=t)
-        results, ts_tokens, ts_logits_ = model.decode(segment, options, ts_num=ts_num, alpha=alpha, max_ts=max_ts)
+        results, ts_tokens, ts_logits_ = model.decode(segment, options, ts_num=ts_num, alpha=alpha,
+                                                      suppress_ts_mask=suppress_ts_mask,
+                                                      suppress_word_ts=suppress_word_ts)
 
         kwargs.pop("beam_size", None)  # no beam search for t > 0
         kwargs.pop("patience", None)  # no patience for t > 0
@@ -711,7 +849,9 @@ def transcribe_word_level(
             if any(needs_fallback):
                 options = DecodingOptions(**kwargs, temperature=t)
                 retries, r_ts_tokens, r_ts_logits = model.decode(segment[needs_fallback], options,
-                                                                 ts_num=ts_num, alpha=alpha)
+                                                                 ts_num=ts_num, alpha=alpha,
+                                                                 suppress_ts_mask=suppress_ts_mask,
+                                                                 suppress_word_ts=suppress_word_ts)
                 for retry_index, original_index in enumerate(np.nonzero(needs_fallback)[0]):
                     results[original_index] = retries[retry_index]
                     ts_tokens[original_index] = r_ts_tokens[retry_index]
@@ -794,6 +934,14 @@ def transcribe_word_level(
                           word_timestamps)
                 print('\n'.join(ts_str), end='\n\n')
 
+    if suppress_silence:
+        ts_scale = HOP_LENGTH / SAMPLE_RATE / time_precision
+        wf = load_audio_waveform(audio, 100, int(mel.shape[-1] * ts_scale))
+
+    upper_quantile = decode_options.pop('upper_quantile', 0.85)
+    lower_quantile = decode_options.pop('lower_quantile', 0.15)
+    lower_threshold = decode_options.pop('lower_threshold', 0.15)
+
     while seek < mel.shape[-1]:
         timestamp_offset = float(seek * HOP_LENGTH / SAMPLE_RATE)
         remaining_duration = float((mel.shape[-1] - seek) * HOP_LENGTH / SAMPLE_RATE)
@@ -801,8 +949,28 @@ def transcribe_word_level(
         segment_duration = min(float(segment.shape[-1] * HOP_LENGTH / SAMPLE_RATE), remaining_duration)
         segment_max_ts = segment_duration / time_precision
 
+        if suppress_silence:
+            wf_seek = int(seek * ts_scale)
+            segment_wf = wf[..., wf_seek:wf_seek + 1501]
+            if remove_background:
+                segment_wf = remove_lower_quantile(segment_wf.astype(np.float32),
+                                                   upper_quantile=upper_quantile,
+                                                   lower_quantile=lower_quantile,
+                                                   lower_threshold=lower_threshold)
+            segment_wf = pad_or_trim(segment_wf, 1501)
+            suppress_ts_mask = torch.from_numpy(wave_to_ts_filter(segment_wf,
+                                                                  suppress_middle=suppress_middle,
+                                                                  max_index=int(segment_max_ts)))
+
+            if suppress_ts_mask.all():  # segment is silent
+                seek += segment.shape[-1]  # fast-forward to the next segment boundary
+                continue
+        else:
+            suppress_ts_mask = None
+
         decode_options["prompt"] = all_tokens[prompt_reset_since:]
-        result, finalized_ts_tokens, ts_logits = decode_with_fallback(segment, max_ts=segment_max_ts)
+        result, finalized_ts_tokens, ts_logits = decode_with_fallback(segment,
+                                                                      suppress_ts_mask=suppress_ts_mask)
 
         result = result[0]
         tokens = torch.tensor(result.tokens)
@@ -892,8 +1060,10 @@ def transcribe_word_level(
         all_segments[-1]['alt_start_timestamps'] = all_segments[-2]['alt_end_timestamps']
 
     if stab:
-        all_segments = stabilize_timestamps(all_segments)
-        add_whole_word_ts(tokenizer, all_segments)
+        all_segments = stabilize_timestamps(all_segments, top_focus=top_focus)
+        add_whole_word_ts(tokenizer, all_segments,
+                          prepend_punctuations=prepend_punctuations,
+                          append_punctuations=append_punctuations)
         if verbose:
             print('\nSTABILIZED\n')
             for seg_ in all_segments:
@@ -913,12 +1083,8 @@ class DecodingTaskWordLevel(DecodingTask):
 
     # modified version of whisper.DecodingTask._main_loop
     def _main_loop(self, audio_features: Tensor, tokens: Tensor, ts_num: int = None, alpha: float = None,
-                   max_ts: (float, Tensor) = None):
+                   suppress_ts_mask: Tensor = None, suppress_word_ts: bool = False):
         assert audio_features.shape[0] == tokens.shape[0]
-        if max_ts is not None:
-            assert max_ts > -1
-            max_ts += self.tokenizer.timestamp_begin
-            max_ts = max(floor(max_ts), self.tokenizer.timestamp_begin) + 1
         n_batch = tokens.shape[0]
         sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
         no_speech_probs = [np.nan] * n_batch
@@ -942,10 +1108,9 @@ class DecodingTaskWordLevel(DecodingTask):
                 # now we need to consider the logits at the last token only
                 logits = logits[:, -1]
 
-                if max_ts is not None:
-                    logits[:, max_ts:] = -np.inf  # prevent timestamp overshoot
-
                 logits_clone = torch.clone(logits)
+                if suppress_word_ts and suppress_ts_mask is not None:
+                    logits_clone[:, self.tokenizer.timestamp_begin:][:, suppress_ts_mask] = -np.inf
                 logits_clone[:, : self.tokenizer.timestamp_begin] = -np.inf
                 temp_ts_logits, temp_ts_token = torch.topk(logits_clone, ts_num)
                 ts_tokens = torch.cat([ts_tokens, temp_ts_token], -1)
@@ -953,9 +1118,15 @@ class DecodingTaskWordLevel(DecodingTask):
 
                 del logits_clone
 
+                # if suppress_ts_mask is not None:
+                #     logits[:, self.tokenizer.timestamp_begin:][suppress_ts_mask] = -np.inf
+
                 # apply the logit filters, e.g. for suppressing or applying penalty to
                 for logit_filter in self.logit_filters:
                     logit_filter.apply(logits, tokens)
+
+                if suppress_ts_mask is not None:
+                    logits[:, self.tokenizer.timestamp_begin:][:, suppress_ts_mask] = -np.inf
 
                 # expand the tokens tensor with the selected next tokens
                 tokens, completed = self.decoder.update(tokens, logits, sum_logprobs)
@@ -964,22 +1135,24 @@ class DecodingTaskWordLevel(DecodingTask):
                     break
         finally:
             self.inference.cleanup_caching()
+            new_ts_token_count = tokens.shape[-1] - initial_tk_len
             ts_tokens = ts_tokens[..., 1:].reshape(
-                [*tokens.shape[:-1], tokens.shape[-1] - initial_tk_len, ts_num])
+                [*tokens.shape[:-1], new_ts_token_count, ts_num])
             ts_logits = ts_logits[..., 1:].reshape(
-                [*tokens.shape[:-1], tokens.shape[-1] - initial_tk_len, ts_num])
+                [*tokens.shape[:-1], new_ts_token_count, ts_num])
 
         return tokens, sum_logprobs, no_speech_probs, ts_tokens, ts_logits
 
     # modified version of whisper.DecodingTask.run
     @torch.no_grad()
-    def run(self, mel: Tensor, ts_num: int = None, alpha: float = None, max_ts: (float, Tensor) = None) \
+    def run(self, mel: Tensor, ts_num: int = None, alpha: float = None, suppress_ts_mask: Tensor = None,
+            suppress_word_ts=False) \
             -> Union[List[DecodingResult], Tuple[List[DecodingResult], List[List[int]], List[List[int]]]]:
         self.decoder.reset()
         tokenizer: Tokenizer = self.tokenizer
         n_audio: int = mel.shape[0]
 
-        ts_num = 5 if ts_num is None else max(ts_num, 1)
+        ts_num = 10 if ts_num is None else max(ts_num, 1)
 
         audio_features: Tensor = self._get_audio_features(mel)  # encoder forward pass
         tokens: Tensor = torch.tensor([self.initial_tokens]).expand(n_audio, -1)
@@ -998,8 +1171,9 @@ class DecodingTaskWordLevel(DecodingTask):
 
         # call the main sampling loop
         tokens, sum_logprobs, no_speech_probs, ts_tokens, ts_logits = self._main_loop(audio_features, tokens,
-                                                                                       ts_num=ts_num, alpha=alpha,
-                                                                                       max_ts=max_ts)
+                                                                                      ts_num=ts_num, alpha=alpha,
+                                                                                      suppress_ts_mask=suppress_ts_mask,
+                                                                                      suppress_word_ts=suppress_word_ts)
 
         # reshape the tensors to have (n_audio, n_group) as the first two dimensions
         audio_features = audio_features[:: self.n_group]
@@ -1054,7 +1228,8 @@ class DecodingTaskWordLevel(DecodingTask):
 # modified version of whisper.decoding.decode
 @torch.no_grad()
 def decode_word_level(model: "Whisper", mel: Tensor, options: DecodingOptions = DecodingOptions(),
-                      ts_num: int = None, alpha: float = None, max_ts: (float, Tensor) = None) -> \
+                      ts_num: int = None, alpha: float = None, suppress_ts_mask: Tensor = None,
+                      suppress_word_ts=False) -> \
         Union[DecodingResult, List[DecodingResult], tuple]:
     """
     Performs decoding of 30-second audio segment(s), provided as Mel spectrogram(s).
@@ -1077,8 +1252,11 @@ def decode_word_level(model: "Whisper", mel: Tensor, options: DecodingOptions = 
         Amount of noise to add to audio to produce slightly difference results.
         audio_features *= torch.rand_like(audio_features) * alpha + 1
 
-    max_ts: (float, Tensor)
-        Max value timestamp token can have (before adjusted +tokenizer.timestamp_begin).
+    suppress_ts_mask: (list, Tensor)
+        Mask suppress to timestamp token(s) for decoding
+
+    suppress_word_ts: bool
+        Use suppress_ts_mask to suppress timestamp tokens of words
 
     Returns
     -------
@@ -1090,7 +1268,9 @@ def decode_word_level(model: "Whisper", mel: Tensor, options: DecodingOptions = 
         mel = mel.unsqueeze(0)
 
     result, ts_tokens, ts_logits = DecodingTaskWordLevel(model, options).run(mel, ts_num=ts_num,
-                                                                             alpha=alpha, max_ts=max_ts)
+                                                                             alpha=alpha,
+                                                                             suppress_ts_mask=suppress_ts_mask,
+                                                                             suppress_word_ts=suppress_word_ts)
 
     if single:
         result = result[0]
