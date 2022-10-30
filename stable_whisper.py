@@ -608,7 +608,7 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
         print(f'Failed to add whole-word timestamps to the following segments: {tuple(failed_idx)}')
 
 
-def load_audio_waveform(audio: str, h: int, w: int) -> np.ndarray:
+def _load_audio_waveform(audio: str, h: int, w: int) -> np.ndarray:
     """
 
     Parameters
@@ -639,10 +639,10 @@ def load_audio_waveform(audio: str, h: int, w: int) -> np.ndarray:
         return np.frombuffer(waveform, dtype=np.uint8).reshape(h, w)
 
 
-def remove_lower_quantile(waveform: np.ndarray,
-                          upper_quantile: float = None,
-                          lower_quantile: float = None,
-                          lower_threshold: float = None) -> np.ndarray:
+def _remove_lower_quantile(waveform: np.ndarray,
+                           upper_quantile: float = None,
+                           lower_quantile: float = None,
+                           lower_threshold: float = None) -> np.ndarray:
     """
     Removes lower quantile of amplitude from waveform image
     """
@@ -661,8 +661,8 @@ def remove_lower_quantile(waveform: np.ndarray,
     return waveform
 
 
-def wave_to_ts_filter(waveform: np.ndarray, suppress_middle=True,
-                      max_index: (list, int) = None) -> np.ndarray:
+def _wave_to_ts_filter(waveform: np.ndarray, suppress_middle=True,
+                       max_index: (list, int) = None) -> np.ndarray:
     """
     Returns A NumPy array mask of sections with amplitude zero
     """
@@ -763,7 +763,8 @@ def transcribe_word_level(
         Suppress timestamp tokens of words that are marked as silent
 
     remove_background: bool
-        Whether to remove background noise from waveform so that it is marked silent. Determined by parameters:
+        Whether to remove background noise from waveform so that it is marked silent.
+        Determined by parameters part of decode_options (i.e. specify like other options here):
             upper_quantile: float
                 The upper quantile of amplitude to determine a max amplitude, mx (Default: 0.85)
             lower_quantile: float
@@ -936,7 +937,7 @@ def transcribe_word_level(
 
     if suppress_silence:
         ts_scale = HOP_LENGTH / SAMPLE_RATE / time_precision
-        wf = load_audio_waveform(audio, 100, int(mel.shape[-1] * ts_scale))
+        wf = _load_audio_waveform(audio, 100, int(mel.shape[-1] * ts_scale))
 
     upper_quantile = decode_options.pop('upper_quantile', 0.85)
     lower_quantile = decode_options.pop('lower_quantile', 0.15)
@@ -953,14 +954,14 @@ def transcribe_word_level(
             wf_seek = int(seek * ts_scale)
             segment_wf = wf[..., wf_seek:wf_seek + 1501]
             if remove_background:
-                segment_wf = remove_lower_quantile(segment_wf.astype(np.float32),
-                                                   upper_quantile=upper_quantile,
-                                                   lower_quantile=lower_quantile,
-                                                   lower_threshold=lower_threshold)
+                segment_wf = _remove_lower_quantile(segment_wf.astype(np.float32),
+                                                    upper_quantile=upper_quantile,
+                                                    lower_quantile=lower_quantile,
+                                                    lower_threshold=lower_threshold)
             segment_wf = pad_or_trim(segment_wf, 1501)
-            suppress_ts_mask = torch.from_numpy(wave_to_ts_filter(segment_wf,
-                                                                  suppress_middle=suppress_middle,
-                                                                  max_index=int(segment_max_ts)))
+            suppress_ts_mask = torch.from_numpy(_wave_to_ts_filter(segment_wf,
+                                                                   suppress_middle=suppress_middle,
+                                                                   max_index=int(segment_max_ts)))
 
             if suppress_ts_mask.all():  # segment is silent
                 seek += segment.shape[-1]  # fast-forward to the next segment boundary
