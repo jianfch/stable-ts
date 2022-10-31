@@ -608,13 +608,13 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
         print(f'Failed to add whole-word timestamps to the following segments: {tuple(failed_idx)}')
 
 
-def _load_audio_waveform(audio: str, h: int, w: int) -> np.ndarray:
+def _load_audio_waveform(audio: Union[str, bytes, np.ndarray, torch.Tensor], h: int, w: int) -> np.ndarray:
     """
 
     Parameters
     ----------
-    audio: str:
-        Audio path
+    audio: Union[str, bytes, np.ndarray, torch.Tensor], shape = (*)
+        The path to audio or bytes of audio file or a NumPy array or Tensor containing the audio waveform in 16 kHz
     h: int
         Height of waveform image
     w: int
@@ -624,18 +624,42 @@ def _load_audio_waveform(audio: str, h: int, w: int) -> np.ndarray:
     -------
     Audio waveform image as a NumPy array, in uint8 dtype.
     """
+
     try:
-        waveform, _ = (
-            ffmpeg.input(audio, threads=0)
-                .filter('aformat', channel_layouts='mono')
+        if isinstance(audio, str):
+            stream = ffmpeg.input(audio, threads=0)
+            inp = None
+
+        else:
+            if isinstance(audio, bytes):
+                stream = ffmpeg.input('pipe:', threads=0)
+                inp = audio
+            else:
+                warnings.warn('A resampled input causes an unexplained temporal shift in waveform image '
+                              'that will skew the timestamp suppression and may result in inaccurate timestamps.\n'
+                              'Use audio_for_mask for transcribe() to provide the original audio track '
+                              'as the path or bytes of the audio file.',
+                              stacklevel=2)
+                stream = ffmpeg.input('pipe:', threads=0, ac=1, format='s16le')
+                if isinstance(audio, torch.Tensor):
+                    audio = np.array(audio)
+                inp = (audio * 32768.0).astype(np.int16).tobytes()
+
+        waveform, err = (
+            stream.filter('aformat', channel_layouts='mono')
                 .filter('highpass', f='200').filter('lowpass', f='3000')
                 .filter('showwavespic', s=f'{w}x{h}')
                 .output('-', pix_fmt='gray', format='rawvideo')
-                .run(cmd="ffmpeg", capture_stdout=True, capture_stderr=True)
+                .run(cmd="ffmpeg", capture_stdout=True, capture_stderr=True, input=inp)
         )
     except ffmpeg.Error as e:
         raise RuntimeError(f"Failed to load audio in waveform: {e.stderr.decode()}") from e
     else:
+        if not waveform:
+            partial_file = b'partial file' in err and b'Output file is empty' in err
+            add_msg = '\nMetadata for decoding are likely at end of file, try to use path of audio instead.' \
+                if partial_file and isinstance(audio, bytes) else ''
+            raise RuntimeError(f"Failed to load audio in waveform: {err.decode()}" + add_msg)
         return np.frombuffer(waveform, dtype=np.uint8).reshape(h, w)
 
 
@@ -702,6 +726,7 @@ def transcribe_word_level(
         remove_background: bool = True,
         prepend_punctuations: Union[List[str], Tuple[str]] = None,
         append_punctuations: Union[List[str], Tuple[str]] = None,
+        audio_for_mask: (str, bytes) = None,
         **decode_options):
     """
     Transcribe an audio file using Whisper
@@ -777,6 +802,11 @@ def transcribe_word_level(
 
     append_punctuations: Union[List[str], Tuple[str]]
         Punctuations to append to previous word (Default: .。,，!！?？:：”)]}、)
+
+    audio_for_mask: (str, bytes)
+        Original audio track as path or bytes of audio file.
+        Since resampled audio may shift the waveform image,
+        this is an alternative to 'audio' option to generate suppression mask from the original audio.
 
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
@@ -937,7 +967,7 @@ def transcribe_word_level(
 
     if suppress_silence:
         ts_scale = HOP_LENGTH / SAMPLE_RATE / time_precision
-        wf = _load_audio_waveform(audio, 100, int(mel.shape[-1] * ts_scale))
+        wf = _load_audio_waveform(audio_for_mask or audio, 100, int(mel.shape[-1] * ts_scale))
 
     upper_quantile = decode_options.pop('upper_quantile', 0.85)
     lower_quantile = decode_options.pop('lower_quantile', 0.15)
