@@ -1293,7 +1293,7 @@ class BeamSearchDecoderWordLevel(BeamSearchDecoder):
 class DecodingTaskWordLevel(DecodingTask):
 
     def __init__(self, *args, **kwargs):
-        self.ts_num: int = kwargs.pop('ts_num', 10)
+        self.ts_num: int = kwargs.pop('ts_num', None) or 10
         self.alpha: float = kwargs.pop('alpha', None)  # experimental
         self.suppress_ts_mask: Tensor = kwargs.pop('suppress_ts_mask', None)
         self.suppress_word_ts: bool = kwargs.pop('suppress_word_ts', True)
@@ -1319,8 +1319,6 @@ class DecodingTaskWordLevel(DecodingTask):
         n_batch = tokens.shape[0]
         sum_logprobs: Tensor = torch.zeros(n_batch, device=audio_features.device)
         no_speech_probs = [np.nan] * n_batch
-
-        # ts = None
 
         try:
             for i in range(self.sample_len):
@@ -1447,7 +1445,7 @@ def decode_word_level(model: "Whisper", mel: Tensor, options: DecodingOptions = 
         A dataclass that contains all necessary options for decoding 30-second segments
 
     ts_num: int
-        Number of additional top timestamp predictions to save for each word for postprocessing stabilization (default: 5).
+        Number of additional top timestamp predictions to save for each word for postprocessing stabilization (default: 10)
 
     alpha: float
         Amount of noise to add to audio to produce slightly difference results.
