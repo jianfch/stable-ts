@@ -873,9 +873,9 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
                 if temp_whole_word == remaining_text[:len(temp_whole_word)]:
                     prev_idx = wts_idx
                     remaining_text = remaining_text[len(temp_whole_word):]
-                    if (not merge_non_space or temp_whole_word.startswith(' ') or not whole_word_timestamps) and \
-                            temp_whole_word not in append_punctuations and \
-                            not has_prepend:
+                    if ((not merge_non_space or temp_whole_word.startswith(' ') or not whole_word_timestamps) and
+                            temp_whole_word not in append_punctuations and
+                            not has_prepend) or not len(whole_word_timestamps):
                         has_prepend = temp_whole_word.strip() in prepend_punctuations
                         whole_word_timestamps.append(dict(word=temp_whole_word, timestamp=max_ts))
                     else:
