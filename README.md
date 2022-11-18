@@ -1,7 +1,7 @@
 # Stabilizing Timestamps for Whisper
 
 ## Description
-This script modifies methods of Whisper's model to gain access to the predicted timestamp tokens of each word (token) without needing additional inference. It also stabilizes the timestamps down to the word (token) level to ensure chronology.
+This script modifies methods of Whisper's model to gain access to the predicted timestamp tokens of each word (token) without needing additional inference. It also stabilizes the timestamps down to the word (token) level to ensure chronology. Additionally, it can suppress gaps in speech for more accurate timestamps.
 
 ![image](https://user-images.githubusercontent.com/28970749/192950141-40ac8cbd-ccac-45da-b563-f8144d22c54e.png)
 
@@ -53,11 +53,25 @@ from stable_whisper import results_to_word_srt
 results_to_word_srt(results, 'audio.srt')  #combine_compound=True if compound words are separate
 ```
 ```python
-# sentence-level
+# sentence/phrase-level
 from stable_whisper import results_to_sentence_srt
 # after you get results from modified model
 results_to_sentence_srt(results, 'audio.srt')
+# below is from large model default settings
 ```
+
+https://user-images.githubusercontent.com/28970749/202782436-0d56140b-5d52-4f33-b32b-317a19ad32ca.mp4
+
+
+```python
+# sentence/phrase-level & word-level
+from stable_whisper import results_to_sentence_word_ass
+# after you get results from modified model
+results_to_sentence_word_ass(results, 'audio.ass')
+# below is from large model default settings
+```
+
+https://user-images.githubusercontent.com/28970749/202782412-dfa027f8-7073-4023-8ce5-285a2c26c03f.mp4
 
 #### Additional Info
 * Since the sentence/segment-level timestamps are predicted directly, they are always more accurate and precise than word/token-level timestamps.
