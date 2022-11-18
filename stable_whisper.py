@@ -880,8 +880,12 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
                         whole_word_timestamps.append(dict(word=temp_whole_word, timestamp=max_ts))
                     else:
                         has_prepend = False
-                        whole_word_timestamps[-1]['word'] += temp_whole_word
-                        whole_word_timestamps[-1]['timestamp'] = max_ts
+                        if len(whole_word_timestamps):
+                            whole_word_timestamps[-1]['word'] += temp_whole_word
+                            whole_word_timestamps[-1]['timestamp'] = max_ts
+                        else:
+                            whole_word_timestamps.append(
+                                dict(word=temp_whole_word, timestamp=max_ts))
             if remaining_text:
                 failed_idx.append(seg_idx)
                 whole_word_timestamps = []
