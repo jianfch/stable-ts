@@ -846,7 +846,7 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
     if isinstance(segments, dict):
         segments = segments['segments']
     if not segments:
-        warnings.warn('No segments found, whole-word timestamps cannot be added.')
+        warnings.warn('No segments found, whole-word timestamps cannot be added.', stacklevel=2)
         return
 
     missing_idx = set(-1 if seg.get('word_timestamps') else i for i, seg in enumerate(segments)) - {-1}
