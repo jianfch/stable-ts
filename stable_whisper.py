@@ -20,6 +20,8 @@ from copy import deepcopy
 import os
 import json
 
+MIN_DUR = 0.02
+
 
 # no_caption changed to no_speech newer commits
 def get_new_attrs(obj_, attr: str):
@@ -114,52 +116,75 @@ def to_srt(lines: List[dict], save_path: str = None, strip=False) -> str:
     return srt_str
 
 
-def group_word_timestamps(res: (dict, list), one_group=True, combine_compound=False,
+def group_word_timestamps(res: (dict, List[dict]), one_group=True, combine_compound=False,
                           ts_key='whole_word_timestamps', min_dur: float = None):
-
     if min_dur is None:
-        min_dur = 0.02
+        min_dur = MIN_DUR
+
+    assert min_dur > 0, 'min_dur must be greater than 0'
 
     def group_ts(ts_: List[dict], start) -> List[dict]:
-        first_group: List[dict] = []
-        for w_ts in ts_:
-            if first_group:
-                if (not combine_compound or w_ts['word'].startswith(' ')) and \
-                        (w_ts['timestamp'] - first_group[-1]['start']) >= min_dur and \
-                        first_group[-1]['end'] < w_ts['timestamp']:
-                    first_group.append(dict(start=first_group[-1]['end'],
-                                            end=w_ts['timestamp'],
-                                            text=w_ts['word']))
-                else:
-                    first_group[-1]['end'] = max(first_group[-1]['end'], w_ts['timestamp'])
-                    first_group[-1]['text'] += w_ts['word']
+        group0: List[dict] = []
+        for w_ts_i, w_ts in enumerate(ts_):
+            curr_end = w_ts['timestamp']
+            if group0:
+                curr_start = group0[-1]['end']
+                if not combine_compound or w_ts['word'].startswith(' '):
+                    if group0[-1]['end'] - group0[-1]['start'] >= min_dur:
+                        curr_dur = curr_end - curr_start
+                        prev_word_len = len(group0[-1]['text'])
+                        is_last = w_ts == ts_[-1]
+                        next_dur = max(min_dur, curr_dur) if is_last else (ts_[w_ts_i + 1]['timestamp'] - curr_end)
+                        next_word_len = prev_word_len if is_last else len(ts_[w_ts_i + 1]['word'])
+                        if curr_dur >= min_dur or \
+                                not is_last or \
+                                (next_dur < min_dur) or \
+                                next_dur < curr_dur or \
+                                next_word_len < prev_word_len:
+                            group0.append(dict(start=curr_start,
+                                               end=curr_end,
+                                               text=w_ts['word']))
+                            continue
+
+                group0[-1]['end'] = max(curr_start, curr_end)
+                group0[-1]['text'] += w_ts['word']
             else:
-                first_group.append(dict(start=start,
-                                        end=w_ts['timestamp'],
-                                        text=w_ts['word']))
+                group0.append(dict(start=start,
+                                   end=curr_end,
+                                   text=w_ts['word']))
 
-        return first_group
+        return group0
 
-    def group_zero_duration(first_group: List[dict]) -> List[dict]:
-        final_group: List[dict] = []
-        for ts_dict in first_group:
-            if not final_group or (ts_dict['end'] - ts_dict['start']) > 0:
-                final_group.append(ts_dict)
+    def group_ts_final(first_group: List[dict]) -> List[dict]:
+
+        group1: List[dict] = []
+        prev_ts_dict_dur = 0
+        for i, ts_dict in enumerate(first_group):
+            ni = i + 1
+            curr_ts_dict_dur = ts_dict['end'] - ts_dict['start']
+            next_ts_dict_dur = first_group[ni]['end'] - first_group[ni]['start'] if ni < len(first_group) else 0
+            merge_with_prev = curr_ts_dict_dur < min_dur and (
+                    prev_ts_dict_dur < next_ts_dict_dur or ni == len(first_group))
+
+            if merge_with_prev and group1:
+                group1[-1]['end'] = ts_dict['end']
+                group1[-1]['text'] += ts_dict['text']
             else:
-                final_group[-1]['end'] = ts_dict['end']
-                final_group[-1]['text'] += ts_dict['text']
+                group1.append(ts_dict)
 
-        return final_group
+        return group1
 
     segs: List[dict] = res['segments'] if isinstance(res, dict) else res
     assert set(ts_key in seg for seg in segs) == {True}, f'input contains missing {ts_key}'
 
     grouped = (group_ts(seg[ts_key], seg['start']) for seg in segs)
-    return group_zero_duration(list(chain.from_iterable(grouped))) if one_group else list(grouped)
+    return group_ts_final(list(chain.from_iterable(grouped))) if one_group else list(grouped)
 
 
 def tighten_timestamps(res: dict, end_at_last_word=True, end_before_period=False, start_at_first_word=False) -> dict:
     res = deepcopy(res)
+    if not any((end_at_last_word, end_before_period, start_at_first_word)):
+        return res
     for i in range(len(res['segments'])):
         if start_at_first_word:
             res['segments'][i]['start'] = res['segments'][i]['word_timestamps'][0]['timestamp']
@@ -199,21 +224,19 @@ def results_to_sentence_srt(res: dict, srt_path,
     srt_path: str
         output path of srt
     end_at_last_word: bool
-        set end-of-sentence to timestamp-of-last-token
+        set end-of-segment to timestamp-of-last-token
     end_before_period: bool
-        set end-of-sentence to timestamp-of-last-non-period-token
+        set end-of-segment to timestamp-of-last-non-period-token
     start_at_first_word: bool
-        set start-of-sentence to timestamp-of-first-token
+        set start-of-segment to timestamp-of-first-token
     strip: bool
-        perform strip() on each sentence
+        perform strip() on each segment
 
     """
-    strict = any((end_at_last_word, end_before_period, start_at_first_word))
     segs = tighten_timestamps(res,
                               end_at_last_word=end_at_last_word,
                               end_before_period=end_before_period,
-                              start_at_first_word=start_at_first_word)['segments'] \
-        if strict else res['segments']
+                              start_at_first_word=start_at_first_word)['segments']
 
     max_idx = len(segs) - 1
     i = 1
@@ -271,6 +294,257 @@ def results_to_token_srt(res: dict, srt_path, combine_compound=False, strip=Fals
     """
     to_srt(group_word_timestamps(res, combine_compound=combine_compound, ts_key='word_timestamps', min_dur=min_dur),
            srt_path, strip=strip)
+
+
+def results_to_sentence_word_ass(res: (dict, list), ass_path: str,
+                                 color: str = None, underline=True,
+                                 prefmt: str = None, suffmt: str = None,
+                                 font: str = None, font_size: int = 48,
+                                 end_at_last_word=False,
+                                 end_before_period=False,
+                                 start_at_first_word=False,
+                                 combine_compound=False,
+                                 min_dur: float = None,
+                                 force_max_len: int = None,
+                                 strip=True, **kwargs):
+    """
+
+    Generate Advanced SubStation Alpha (ASS) file from results to
+    display both phrase-level & word-level timestamp simultaneously by:
+     -using segment-level timestamps display phrases as usual
+     -using word-level timestamps change formats (e.g. color/underline) of the word in the displayed segment
+    
+    Note: ass file is used in the same way as srt, vtt, etc. 
+
+    Parameters
+    ----------
+    res: dict
+        results from modified model
+    ass_path: str
+        output path (e.g. caption.ass)
+    color: str
+        color code for a word at its corresponding timestamp
+        <bbggrr> reverse order hexadecimal RGB value (e.g. FF0000 is full intensity blue. Default: 00FF00)
+    underline: bool
+        whether to underline a word at its corresponding timestamp
+    prefmt: str
+        used to specify format for word-level timestamps (must be use with 'suffmt' and overrides 'color'&'underline')
+        appears as such in the .ass file:
+            Hi, {<prefmt>}how{<suffmt>} are you?
+        reference [Appendix A: Style override codes] in http://www.tcax.org/docs/ass-specs.htm
+    suffmt: str
+        used to specify format for word-level timestamps (must be use with 'prefmt' and overrides 'color'&'underline')
+        appears as such in the .ass file:
+            Hi, {<prefmt>}how{<suffmt>} are you?
+        reference [Appendix A: Style override codes] in http://www.tcax.org/docs/ass-specs.htm
+    font: str
+        word font (default: Arial)
+    font_size: int
+        word font size (default: 48)
+    end_at_last_word: bool
+        set end-of-segment to timestamp-of-last-token
+    end_before_period: bool
+        set end-of-segment to timestamp-of-last-non-period-token
+    start_at_first_word: bool
+        set start-of-segment to timestamp-of-first-token
+    combine_compound: bool
+        concatenate words without inbetween spacing
+    min_dur: bool
+        minimum duration for each token (i.e. concat the tokens if it is less than specified value; Default 0.02)
+    force_max_len: int
+        force a max number of characters per phrase. Ignored if None (Default: None)
+    strip: bool
+        perform strip() on each segment
+    kwargs:
+        used for format styles:
+        'Name', 'Fontname', 'Fontsize', 'PrimaryColour', 'SecondaryColour', 'OutlineColour', 'BackColour', 'Bold',
+        'Italic', 'Underline', 'StrikeOut', 'ScaleX', 'ScaleY', 'Spacing', 'Angle', 'BorderStyle', 'Outline',
+        'Shadow', 'Alignment', 'MarginL', 'MarginR', 'MarginV', 'Encoding'
+
+    """
+
+    if min_dur is None:
+        min_dur = MIN_DUR
+
+    fmt_style_dict = {'Name': 'Default', 'Fontname': 'Arial', 'Fontsize': '48', 'PrimaryColour': '&Hffffff',
+                      'SecondaryColour': '&Hffffff', 'OutlineColour': '&H0', 'BackColour': '&H0', 'Bold': '0',
+                      'Italic': '0', 'Underline': '0', 'StrikeOut': '0', 'ScaleX': '100', 'ScaleY': '100',
+                      'Spacing': '0', 'Angle': '0', 'BorderStyle': '1', 'Outline': '1', 'Shadow': '0',
+                      'Alignment': '2', 'MarginL': '10', 'MarginR': '10', 'MarginV': '10', 'Encoding': '0'}
+
+    for k, v in filter(lambda x: 'colour' in x[0].lower() and not str(x[1]).startswith('&H'), kwargs.items()):
+        kwargs[k] = f'&H{kwargs[k]}'
+
+    fmt_style_dict.update((k, v) for k, v in kwargs.items() if k in fmt_style_dict)
+
+    if font:
+        fmt_style_dict.update(Fontname=font)
+    if font_size:
+        fmt_style_dict.update(Fontsize=font_size)
+
+    fmts = f'Format: {", ".join(map(str, fmt_style_dict.keys()))}'
+
+    styles = f'Style: {",".join(map(str, fmt_style_dict.values()))}'
+
+    ass_str = \
+        """[Script Info]
+ScriptType: v4.00+
+PlayResX: 384
+PlayResY: 288
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+{}
+{}
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+
+""".format(fmts, styles)
+
+    segments = tighten_timestamps(res,
+                                  end_at_last_word=end_at_last_word,
+                                  end_before_period=end_before_period,
+                                  start_at_first_word=start_at_first_word)['segments']
+
+    if prefmt or suffmt:
+        if suffmt:
+            assert prefmt, 'prefmt must be used along with suffmt'
+        else:
+            suffmt = r'\r'
+    else:
+        if not color:
+            color = 'HFF00'
+        underline_code = r'\u1' if underline else ''
+
+        prefmt = r'{\1c&' + f'{color.upper()}&{underline_code}' + '}'
+        suffmt = r'{\r}'
+
+    def secs_to_hhmmss(secs: (float, int)):
+        mm, ss = divmod(secs, 60)
+        hh, mm = divmod(mm, 60)
+        return f'{hh:0>1.0f}:{mm:0>2.0f}:{ss:0>2.2f}'
+
+    def dialogue(words: List[str], idx, start, end) -> str:
+        text = ''.join((f'{prefmt}{word}{suffmt}'
+                        if not word.startswith(' ') or word == ' ' else
+                        f' {prefmt}{word.strip()}{suffmt}')
+                       if curr_idx == idx else
+                       word
+                       for curr_idx, word in enumerate(words))
+        return f"Dialogue: 0,{secs_to_hhmmss(start)},{secs_to_hhmmss(end)}," \
+               f"Default,,0,0,0,,{text.strip() if strip else text}"
+
+    def split_extra_words(words_tss_: list):
+        curr_words_len_ = 0
+        word_tss_split = []
+        for wts_ in words_tss_:
+            curr_words_len_ += len(wts_['text'])
+            if curr_words_len_ > force_max_len or not word_tss_split:
+                if strip:
+                    wts_['text'] = wts_['text'].strip()
+                word_tss_split.append([wts_])
+                curr_words_len_ = len(wts_['text'])
+            else:
+                word_tss_split[-1].append(wts_)
+        return word_tss_split
+
+    def merge_grouped_wtss(wtss0: List[dict], wtss1: List[dict]):
+        last_idx = -2 if len(wtss0) >= 2 and wtss0[-1]['text'] == ' ' else -1
+        if wtss0[last_idx]['end'] - wtss0[last_idx]['start'] < min_dur or wtss1[0]['end'] - wtss1[0]['start'] < min_dur:
+            wtss0[last_idx]['end'] = wtss1[0]['end']
+            wtss0[last_idx]['text'] += wtss1[0]['text']
+            wtss = (wtss0 + wtss1[1:]) if last_idx == -1 else (wtss0[:-1] + wtss1[1:])
+        else:
+            wtss = wtss0 + wtss1
+        return wtss
+
+    prev_extra_word_tss = []
+    word_tss_ls = []
+
+    for seg_i, seg in enumerate(segments):
+
+        seg_grouped = group_word_timestamps([seg], combine_compound=combine_compound, min_dur=min_dur)
+
+        merge_prev = False
+        if prev_extra_word_tss:
+            if prev_extra_word_tss[-1]['end'] is None:
+                prev_extra_word_tss[-1]['end'] = seg['start']
+            word_timestamps = merge_grouped_wtss(prev_extra_word_tss, seg_grouped)
+            if word_tss_ls and (word_tss_ls[-1][-1]['end'] - word_tss_ls[-1][0]['start'] < min_dur):
+                word_timestamps = merge_grouped_wtss(word_tss_ls[-1], word_timestamps)
+                merge_prev = True
+            prev_extra_word_tss = []
+        else:
+            word_timestamps = seg_grouped
+
+        cut = False
+        if force_max_len:
+            curr_len = 0
+            for word_i, curr_wts in enumerate(word_timestamps):
+                curr_len += len(curr_wts['text'].strip() if word_i == 0 and strip else curr_wts['text'])
+                if word_i != 0 and curr_len > force_max_len:
+
+                    remaining_word_tss = word_timestamps[word_i:]
+                    if merge_prev:
+                        word_tss_ls[-1] = word_timestamps[:word_i]
+                    else:
+                        word_tss_ls.append(word_timestamps[:word_i])
+
+                    next_seg_text = segments[seg_i + 1]['text'] if seg_i < len(segments) - 1 else ''
+
+                    remaining_words_len = sum(map(lambda x: len(x[1].strip()) if x == 0 and strip else len(x[1]),
+                                                  enumerate(remaining_word_tss)))
+                    next_seg_text_len = len(next_seg_text.strip() if strip else next_seg_text)
+                    if next_seg_text_len + remaining_words_len + 1 > force_max_len \
+                            or word_i == len(word_timestamps) - 1:
+                        word_tss_ls.extend(split_extra_words(remaining_word_tss))
+                    else:
+                        prev_extra_word_tss = remaining_word_tss + [dict(text=' ',
+                                                                         start=remaining_word_tss[-1]['end'],
+                                                                         end=None)]
+                    cut = True
+                    break
+        if not cut:
+            word_tss_ls.append(word_timestamps)
+
+    final_phrase_word_ts = []
+    prev_len = 0
+
+    for twtss_i, temp_word_timestamps in enumerate(word_tss_ls):
+        is_last = twtss_i == len(word_tss_ls) - 1
+        dur = temp_word_timestamps[-1]['end'] - temp_word_timestamps[0]['start']
+        if dur < min_dur:
+            temp_word_timestamps = [dict(text=''.join(wts['text'] for wts in temp_word_timestamps),
+                                         start=temp_word_timestamps[0]['start'],
+                                         end=temp_word_timestamps[-1]['end'])]
+            word_tss_ls[twtss_i] = temp_word_timestamps
+        prev_dur = final_phrase_word_ts[-1]['end'] - final_phrase_word_ts[-prev_len]['start'] if twtss_i != 0 else 0
+        next_dur = word_tss_ls[twtss_i + 1][-1]['end'] - word_tss_ls[twtss_i + 1][0]['start'] \
+            if not is_last else 0
+        next_len = len(word_tss_ls[twtss_i + 1]) if not is_last else 0
+        replace_last = (dur < min_dur <= prev_dur and
+                        twtss_i != 0 and
+                        (prev_dur < next_dur or
+                         (prev_dur == next_dur and prev_len <= next_len) or
+                         is_last))
+        if replace_last:
+            temp_word_timestamps = merge_grouped_wtss(word_tss_ls[twtss_i - 1], temp_word_timestamps)
+            final_phrase_word_ts = final_phrase_word_ts[:-prev_len]
+        prev_len = len(temp_word_timestamps)
+        curr_words = [wts['text'] for wts in temp_word_timestamps]
+        for wts_i, word_ts in enumerate(temp_word_timestamps):
+            f_word_ts = dict(words=curr_words, idx=wts_i,
+                             start=word_ts['start'], end=word_ts['end'])
+            final_phrase_word_ts.append(f_word_ts)
+
+    ass_str += '\n'.join(map(lambda x: dialogue(**x), final_phrase_word_ts))
+    
+    if not ass_path.endswith('.ass'):
+        ass_path += '.ass'
+        
+    with open(ass_path, 'w') as f:
+        f.write(ass_str)
 
 
 def _get_min_estimation(estimations: List[Union[list, np.ndarray]],
@@ -619,7 +893,8 @@ def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], m
         print(f'Failed to add whole-word timestamps to the following segments: {tuple(failed_idx)}')
 
 
-def _load_audio_waveform(audio: Union[str, bytes, np.ndarray, torch.Tensor], h: int, w: int) -> np.ndarray:
+def _load_audio_waveform(audio: Union[str, bytes, np.ndarray, torch.Tensor],
+                         h: int, w: int, ignore_shift=False) -> np.ndarray:
     """
 
     Parameters
@@ -630,6 +905,8 @@ def _load_audio_waveform(audio: Union[str, bytes, np.ndarray, torch.Tensor], h: 
         Height of waveform image
     w: int
         Width of waveform image
+    ignore_shift: bool
+        ignore warning if NumpPy array or PyTorch Tensor is used for audio
 
     Returns
     -------
@@ -646,11 +923,12 @@ def _load_audio_waveform(audio: Union[str, bytes, np.ndarray, torch.Tensor], h: 
                 stream = ffmpeg.input('pipe:', threads=0)
                 inp = audio
             else:
-                warnings.warn('A resampled input causes an unexplained temporal shift in waveform image '
-                              'that will skew the timestamp suppression and may result in inaccurate timestamps.\n'
-                              'Use audio_for_mask for transcribe() to provide the original audio track '
-                              'as the path or bytes of the audio file.',
-                              stacklevel=2)
+                if not ignore_shift:
+                    warnings.warn('A resampled input causes an unexplained temporal shift in waveform image '
+                                  'that will skew the timestamp suppression and may result in inaccurate timestamps.\n'
+                                  'Use audio_for_mask for transcribe() to provide the original audio track '
+                                  'as the path or bytes of the audio file.',
+                                  stacklevel=2)
                 stream = ffmpeg.input('pipe:', threads=0, ac=1, format='s16le')
                 if isinstance(audio, torch.Tensor):
                     audio = np.array(audio)
@@ -658,10 +936,10 @@ def _load_audio_waveform(audio: Union[str, bytes, np.ndarray, torch.Tensor], h: 
 
         waveform, err = (
             stream.filter('aformat', channel_layouts='mono')
-                .filter('highpass', f='200').filter('lowpass', f='3000')
-                .filter('showwavespic', s=f'{w}x{h}')
-                .output('-', pix_fmt='gray', format='rawvideo')
-                .run(cmd="ffmpeg", capture_stdout=True, capture_stderr=True, input=inp)
+            .filter('highpass', f='200').filter('lowpass', f='3000')
+            .filter('showwavespic', s=f'{w}x{h}')
+            .output('-', pix_fmt='gray', format='rawvideo', vframes=1)
+            .run(cmd="ffmpeg", capture_stdout=True, capture_stderr=True, input=inp)
         )
     except ffmpeg.Error as e:
         raise RuntimeError(f"Failed to load audio in waveform: {e.stderr.decode()}") from e
@@ -869,6 +1147,8 @@ def transcribe_word_level(
     task = decode_options.get("task", "transcribe")
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
 
+    ignore_shift = decode_options.pop('ignore_shift', False)
+
     def decode_with_fallback(segment: torch.Tensor, suppress_ts_mask: Tensor = None) \
             -> Union[List[DecodingResult], tuple]:
         temperatures = [temperature] if isinstance(temperature, (int, float)) else temperature
@@ -984,8 +1264,26 @@ def transcribe_word_level(
                 print('\n'.join(ts_str), end='\n\n')
 
     if suppress_silence:
+        all_silent = False
         ts_scale = HOP_LENGTH / SAMPLE_RATE / time_precision
-        wf = _load_audio_waveform(audio_for_mask or audio, 100, int(mel.shape[-1] * ts_scale))
+        wfh, wfw = 100, int(mel.shape[-1] * ts_scale)
+        wf = _load_audio_waveform(audio_for_mask or audio, wfh, wfw, ignore_shift=ignore_shift)
+        if not wf.any():
+            if audio_for_mask:
+                wf = _load_audio_waveform(whisper.load_audio(audio) if isinstance(audio, str) else audio,
+                                          wfh, wfw, ignore_shift=True)
+            else:
+                if isinstance(audio, str):
+                    wf = _load_audio_waveform(whisper.load_audio(audio), wfh, wfw, ignore_shift=True)
+                else:
+                    all_silent = True
+
+            if not all_silent:
+                all_silent = not wf.any()
+            if all_silent:
+                warnings.warn('The audio appears to be entirely silent. suppress_silence will be set to False',
+                              stacklevel=2)
+                suppress_silence = False
 
     upper_quantile = decode_options.pop('upper_quantile', 0.85)
     lower_quantile = decode_options.pop('lower_quantile', 0.15)
