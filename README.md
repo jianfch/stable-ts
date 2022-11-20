@@ -20,19 +20,16 @@ import whisper
 model = whisper.load_model('base')
 assert model.transcribe('audio.mp3').get('segments')
 ```
-3. Clone repo
+3. Install stable-ts
 ```commandline
-git clone https://github.com/jianfch/stable-ts.git
-cd stable-ts
+pip install stable-ts
 ```
 
 ### Executing script
 ```python
-import whisper
-from stable_whisper import modify_model
+from stable_whisper import load_model
 
-model = whisper.load_model('base')
-modify_model(model)
+model = load_model('base')
 # modified model should run just like the regular model but with additional hyperparameters and extra data in results
 results = model.transcribe('audio.mp3')
 stab_segments = results['segments']
@@ -50,7 +47,7 @@ from stable_whisper import results_to_word_srt
 # after you get results from modified model
 # this treats a word timestamp as end time of the word
 # and combines words if their timestamps overlap
-results_to_word_srt(results, 'audio.srt')  #combine_compound=True if compound words are separate
+results_to_word_srt(results, 'audio.srt')  # combine_compound=True will merge words with no prepended space
 ```
 ```python
 # sentence/phrase-level
@@ -82,5 +79,4 @@ https://user-images.githubusercontent.com/28970749/202782412-dfa027f8-7073-4023-
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
 
 ## Acknowledgments
-Slight modification of the original work:
-* [Whisper](https://github.com/openai/whisper)
+Includes slight modification of the original work: [Whisper](https://github.com/openai/whisper)
