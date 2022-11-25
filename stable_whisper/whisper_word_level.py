@@ -17,6 +17,7 @@ from types import MethodType
 from itertools import repeat
 from stable_whisper.audio import load_audio_waveform_img, remove_lower_quantile, wave_to_ts_filter
 from stable_whisper.stabilization import stabilize_timestamps, add_whole_word_ts
+from tqdm import tqdm
 
 
 __all__ = ['transcribe_word_level', 'decode_word_level', 'modify_model', 'load_model']
@@ -46,7 +47,7 @@ def transcribe_word_level(
         no_speech_threshold: Optional[float] = 0.6,
         condition_on_previous_text: bool = True,
         stab=True, top_focus=False, ts_num: int = 10,
-        alpha: float = None, print_unstab=False,
+        alpha: float = None, print_unstab=False, pbar=False,
         suppress_silence: bool = True,
         suppress_middle: bool = True,
         suppress_word_ts: bool = True,
@@ -68,7 +69,8 @@ def transcribe_word_level(
         The path to the audio file to open, or the audio waveform
 
     verbose: bool
-        Whether to display the decoded text (with finalized timestamps) to the console
+        Whether to display the decoded text (with finalized timestamps) to the console (Default: False)
+        User print_unstab for previous behavior of verbose but with token timestamps
 
     temperature: Union[float, Tuple[float, ...]]
         Temperature for sampling. It can be a tuple of temperatures, which will be successfully used
@@ -104,8 +106,11 @@ def transcribe_word_level(
         audio_features *= torch.rand_like(audio_features) * alpha + 1
 
     print_unstab: bool
-        Whether to display the text (without stabilize timestamps) being decoded to the console
-        (i.e. behaves like verbose before model was modified)
+        Whether to display the text (without stabilize timestamps) being decoded to the console (Default: False)
+        (i.e. behaves like verbose before model was modified and progress bar will be disabled if True)
+
+    pbar: bool
+        Whether to enable progress bar for the decoding process (Default: False). Ignored if print_unstab=True
 
     suppress_silence: bool
         Suppress timestamp tokens that are marked as silent
@@ -327,120 +332,131 @@ def transcribe_word_level(
     lower_quantile = decode_options.pop('lower_quantile', 0.15)
     lower_threshold = decode_options.pop('lower_threshold', 0.15)
 
-    while seek < mel.shape[-1]:
-        timestamp_offset = float(seek * HOP_LENGTH / SAMPLE_RATE)
-        remaining_duration = float((mel.shape[-1] - seek) * HOP_LENGTH / SAMPLE_RATE)
-        segment = pad_or_trim(mel[:, :, seek:], N_FRAMES).to(model.device).to(dtype)
-        segment_duration = min(float(segment.shape[-1] * HOP_LENGTH / SAMPLE_RATE), remaining_duration)
-        segment_max_ts = segment_duration / time_precision
+    num_frames = mel.shape[-1]
 
-        if suppress_silence:
-            wf_seek = int(seek * ts_scale)
-            segment_wf = wf[..., wf_seek:wf_seek + 1501]
-            if remove_background and \
-                    (1 - segment_wf.sum(0).clip(max=1).mean()) < silence_threshold:
-                segment_wf = remove_lower_quantile(segment_wf.astype(np.float32),
-                                                   upper_quantile=upper_quantile,
-                                                   lower_quantile=lower_quantile,
-                                                   lower_threshold=lower_threshold)
-            segment_wf = pad_or_trim(segment_wf, 1501)
-            suppress_ts_mask = torch.from_numpy(wave_to_ts_filter(segment_wf,
-                                                                  suppress_middle=suppress_middle,
-                                                                  max_index=int(segment_max_ts)))
+    with tqdm(total=num_frames, unit='frames', disable=(print_unstab or not pbar)) as tqdm_pbar:
 
-            if suppress_ts_mask.all():  # segment is silent
-                seek += segment.shape[-1]  # fast-forward to the next segment boundary
-                continue
-        else:
-            suppress_ts_mask = None
+        def update_pbar():
+            if not tqdm_pbar.disable:
+                tqdm_pbar.update(min(num_frames, seek) - tqdm_pbar.n)
 
-        decode_options["prompt"] = all_tokens[prompt_reset_since:]
-        result, finalized_ts_tokens, ts_logits = decode_with_fallback(segment,
-                                                                      suppress_ts_mask=suppress_ts_mask)
+        while seek < mel.shape[-1]:
+            timestamp_offset = float(seek * HOP_LENGTH / SAMPLE_RATE)
+            remaining_duration = float((mel.shape[-1] - seek) * HOP_LENGTH / SAMPLE_RATE)
+            segment = pad_or_trim(mel[:, :, seek:], N_FRAMES).to(model.device).to(dtype)
+            segment_duration = min(float(segment.shape[-1] * HOP_LENGTH / SAMPLE_RATE), remaining_duration)
+            segment_max_ts = segment_duration / time_precision
 
-        result = result[0]
-        tokens = torch.tensor(result.tokens)
-        finalized_ts_tokens = torch.tensor(finalized_ts_tokens[0])
-        ts_logits = torch.tensor(ts_logits[0])
+            if suppress_silence:
+                wf_seek = int(seek * ts_scale)
+                segment_wf = wf[..., wf_seek:wf_seek + 1501]
+                if remove_background and \
+                        (1 - segment_wf.sum(0).clip(max=1).mean()) < silence_threshold:
+                    segment_wf = remove_lower_quantile(segment_wf.astype(np.float32),
+                                                       upper_quantile=upper_quantile,
+                                                       lower_quantile=lower_quantile,
+                                                       lower_threshold=lower_threshold)
+                segment_wf = pad_or_trim(segment_wf, 1501)
+                suppress_ts_mask = torch.from_numpy(wave_to_ts_filter(segment_wf,
+                                                                      suppress_middle=suppress_middle,
+                                                                      max_index=int(segment_max_ts)))
 
-        if no_speech_threshold is not None:
-            # no voice activity check
-            should_skip = _get_new_attrs(result, 'no_caption_prob') > no_speech_threshold
-            if logprob_threshold is not None and result.avg_logprob > logprob_threshold:
-                # don't skip if the logprob is high enough, despite the no_speech_prob
-                should_skip = False
+                if suppress_ts_mask.all():  # segment is silent
+                    seek += segment.shape[-1]  # fast-forward to the next segment boundary
+                    update_pbar()
+                    continue
+            else:
+                suppress_ts_mask = None
 
-            if should_skip:
-                seek += segment.shape[-1]  # fast-forward to the next segment boundary
-                continue
+            decode_options["prompt"] = all_tokens[prompt_reset_since:]
+            result, finalized_ts_tokens, ts_logits = decode_with_fallback(segment,
+                                                                          suppress_ts_mask=suppress_ts_mask)
 
-        timestamp_tokens: torch.Tensor = tokens.ge(tokenizer.timestamp_begin)
-        consecutive = torch.where(timestamp_tokens[:-1] & timestamp_tokens[1:])[0].add_(1)
-        if len(consecutive) > 0:  # if the output contains two consecutive timestamp tokens
-            last_slice = 0
-            for current_slice in consecutive:
-                sliced_tokens = tokens[last_slice:current_slice]
-                sliced_ts_tokens = finalized_ts_tokens[last_slice:current_slice]
-                sliced_ts_logits = ts_logits[last_slice:current_slice]
-                start_timestamp_position = (
-                        sliced_tokens[0].item() - tokenizer.timestamp_begin
+            result = result[0]
+            tokens = torch.tensor(result.tokens)
+            finalized_ts_tokens = torch.tensor(finalized_ts_tokens[0])
+            ts_logits = torch.tensor(ts_logits[0])
+
+            if no_speech_threshold is not None:
+                # no voice activity check
+                should_skip = _get_new_attrs(result, 'no_caption_prob') > no_speech_threshold
+                if logprob_threshold is not None and result.avg_logprob > logprob_threshold:
+                    # don't skip if the logprob is high enough, despite the no_speech_prob
+                    should_skip = False
+
+                if should_skip:
+                    seek += segment.shape[-1]  # fast-forward to the next segment boundary
+                    continue
+
+            timestamp_tokens: torch.Tensor = tokens.ge(tokenizer.timestamp_begin)
+            consecutive = torch.where(timestamp_tokens[:-1] & timestamp_tokens[1:])[0].add_(1)
+            if len(consecutive) > 0:  # if the output contains two consecutive timestamp tokens
+                last_slice = 0
+                for current_slice in consecutive:
+                    sliced_tokens = tokens[last_slice:current_slice]
+                    sliced_ts_tokens = finalized_ts_tokens[last_slice:current_slice]
+                    sliced_ts_logits = ts_logits[last_slice:current_slice]
+                    start_timestamp_position = (
+                            sliced_tokens[0].item() - tokenizer.timestamp_begin
+                    )
+                    end_timestamp_position = (
+                            sliced_tokens[-1].item() - tokenizer.timestamp_begin
+                    )
+
+                    word_ts = timestamp_offset + sliced_ts_tokens * time_precision
+
+                    add_segment(
+                        offset=timestamp_offset,
+                        start=timestamp_offset + start_timestamp_position * time_precision,
+                        end=min(timestamp_offset + end_timestamp_position * time_precision,
+                                timestamp_offset + segment_duration),
+                        text_tokens=sliced_tokens[1:-1],
+                        result=result,
+                        start_timestamps=word_ts[0].tolist(),
+                        end_timestamps=word_ts[-1].tolist(),
+                        word_timestamps=word_ts[1:-1],
+                        start_ts_logits=sliced_ts_logits[0].tolist(),
+                        end_ts_logits=sliced_ts_logits[-1].tolist(),
+                        word_ts_logits=sliced_ts_logits[1:-1]
+                    )
+                    last_slice = current_slice
+                last_timestamp_position = (
+                    min(tokens[last_slice - 1].item() - tokenizer.timestamp_begin, segment_max_ts)
                 )
-                end_timestamp_position = (
-                        sliced_tokens[-1].item() - tokenizer.timestamp_begin
-                )
+                seek += last_timestamp_position * input_stride
+                all_tokens.extend(tokens[: last_slice + 1].tolist())
+            else:
+                duration = segment_duration
+                timestamps = tokens[timestamp_tokens.nonzero().flatten()]
+                if len(timestamps) > 0:
+                    # no consecutive timestamps but it has a timestamp; use the last one.
+                    # single timestamp at the end means no speech after the last timestamp.
+                    last_timestamp_position = min(timestamps[-1].item() - tokenizer.timestamp_begin, segment_max_ts)
+                    duration = last_timestamp_position * time_precision
 
-                word_ts = timestamp_offset + sliced_ts_tokens * time_precision
+                word_ts = timestamp_offset + finalized_ts_tokens * time_precision
 
                 add_segment(
                     offset=timestamp_offset,
-                    start=timestamp_offset + start_timestamp_position * time_precision,
-                    end=min(timestamp_offset + end_timestamp_position * time_precision,
-                            timestamp_offset + segment_duration),
-                    text_tokens=sliced_tokens[1:-1],
+                    start=timestamp_offset,
+                    end=timestamp_offset + duration,
+                    text_tokens=tokens,
                     result=result,
-                    start_timestamps=word_ts[0].tolist(),
-                    end_timestamps=word_ts[-1].tolist(),
-                    word_timestamps=word_ts[1:-1],
-                    start_ts_logits=sliced_ts_logits[0].tolist(),
-                    end_ts_logits=sliced_ts_logits[-1].tolist(),
-                    word_ts_logits=sliced_ts_logits[1:-1]
+                    word_timestamps=word_ts,
+                    word_ts_logits=ts_logits
                 )
-                last_slice = current_slice
-            last_timestamp_position = (
-                min(tokens[last_slice - 1].item() - tokenizer.timestamp_begin, segment_max_ts)
-            )
-            seek += last_timestamp_position * input_stride
-            all_tokens.extend(tokens[: last_slice + 1].tolist())
-        else:
-            duration = segment_duration
-            timestamps = tokens[timestamp_tokens.nonzero().flatten()]
-            if len(timestamps) > 0:
-                # no consecutive timestamps but it has a timestamp; use the last one.
-                # single timestamp at the end means no speech after the last timestamp.
-                last_timestamp_position = min(timestamps[-1].item() - tokenizer.timestamp_begin, segment_max_ts)
-                duration = last_timestamp_position * time_precision
 
-            word_ts = timestamp_offset + finalized_ts_tokens * time_precision
+                seek += segment.shape[-1]
+                all_tokens.extend(tokens.tolist())
 
-            add_segment(
-                offset=timestamp_offset,
-                start=timestamp_offset,
-                end=timestamp_offset + duration,
-                text_tokens=tokens,
-                result=result,
-                word_timestamps=word_ts,
-                word_ts_logits=ts_logits
-            )
+            if all_segments:
+                all_segments[-1]['anchor_point'] = True
+                all_segments[-1]['next_offset'] = float(seek * HOP_LENGTH / SAMPLE_RATE)
+            if not condition_on_previous_text or result.temperature > 0.5:
+                # do not feed the prompt tokens if a high temperature was used
+                prompt_reset_since = len(all_tokens)
 
-            seek += segment.shape[-1]
-            all_tokens.extend(tokens.tolist())
-
-        if all_segments:
-            all_segments[-1]['anchor_point'] = True
-            all_segments[-1]['next_offset'] = float(seek * HOP_LENGTH / SAMPLE_RATE)
-        if not condition_on_previous_text or result.temperature > 0.5:
-            # do not feed the prompt tokens if a high temperature was used
-            prompt_reset_since = len(all_tokens)
+            update_pbar()
 
     if len(all_segments) > 1 and all_segments[-1]['alt_start_timestamps'] is None:
         all_segments[-1]['alt_start_timestamps'] = all_segments[-2]['alt_end_timestamps']
@@ -451,7 +467,7 @@ def transcribe_word_level(
                           prepend_punctuations=prepend_punctuations,
                           append_punctuations=append_punctuations)
         if verbose:
-            print('\nSTABILIZED\n')
+            print('\nSTABILIZED:')
             for seg_ in all_segments:
                 print(f'[{format_timestamp(seg_["start"])} --> {format_timestamp(seg_["end"])}] "{seg_["text"]}"')
                 if seg_['word_timestamps']:
