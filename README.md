@@ -12,7 +12,12 @@ This script modifies methods of Whisper's model to gain access to the predicted 
 ## Dependency
 * [Whisper](https://github.com/openai/whisper)
 
-## Setup 
+## Setup
+#### Option 1: Install from source (one line)
+```
+pip install git+https://github.com/jianfch/stable-ts.git
+```
+#### Option 2: Install Whisper (repo) and stable-ts (PyPi) separately
 1. Install [Whisper](https://github.com/openai/whisper#setup)
 2. Check if Whisper is installed correctly by running a quick test
 ```python
