@@ -1,5 +1,9 @@
 from setuptools import setup
-import stable_whisper
+
+
+def version() -> str:
+    with open('./stable_whisper/_version.py') as f:
+        return f.read().split('=')[-1].strip().strip('"').strip("'")
 
 
 def read_me() -> str:
@@ -9,7 +13,7 @@ def read_me() -> str:
 
 setup(
     name="stable-ts",
-    version=stable_whisper.__version__,
+    version=version(),
     description="Stabilizing timestamps of OpenAI's Whisper outputs down to word-level.",
     long_description=read_me(),
     long_description_content_type='text/markdown',
@@ -19,10 +23,7 @@ setup(
     license="MIT",
     packages=['stable_whisper'],
     install_requires=[
-      "whisper"
-    ],
-    dependency_links=[
-        "https://github.com/openai/whisper"
+      "whisper @ git+https://github.com/openai/whisper.git"
     ],
     include_package_data=False
 )
