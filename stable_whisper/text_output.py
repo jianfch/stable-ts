@@ -377,3 +377,105 @@ def save_as_json(results: dict, path: str):
 def open_results(json_path: str):
     with open(json_path, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def add_values_to_dict(segs, parameter):
+    values = []
+    for i in range(len(segs)):
+        values.append(segs[i][parameter])
+    return values
+
+def results_to_sentence_csv(res: dict, csv_path,
+                            end_at_last_word=False,
+                            end_before_period=False,
+                            start_at_first_word=False,
+                            strip=True):
+    """
+    Parameters
+    ----------
+    res: dict
+        results from modified model
+    srt_path: str
+        output path of srt
+    end_at_last_word: bool
+        set end-of-segment to timestamp-of-last-token
+    end_before_period: bool
+        set end-of-segment to timresults_to_sentence_csvestamp-of-last-non-period-token
+    start_at_first_word: bool
+        set start-of-segment to timestamp-of-first-token
+    strip: bool
+        perform strip() on each segment
+    """
+    import pandas as pd
+    segs = tighten_timestamps(res,
+                              end_at_last_word=end_at_last_word,
+                              end_before_period=end_before_period,
+                              start_at_first_word=start_at_first_word)['segments']
+
+    max_idx = len(segs) - 1
+    i = 1
+    while i <= max_idx:
+        if not (segs[i]['end'] - segs[i]['start']):
+            if segs[i - 1]['end'] == segs[i]['end']:
+                segs[i - 1]['text'] += (' ' + segs[i]['text'].strip())
+                del segs[i]
+                max_idx -= 1
+                #print(segs[i])
+                continue
+            else:
+                segs[i]['start'] = segs[i - 1]['end']
+        i += 1
+
+    start = add_values_to_dict(segs, "start")
+    end = add_values_to_dict(segs, "end")
+    text = add_values_to_dict(segs, "text")
+    dict = {'start': start, 'end': end, 'text': text}
+    df = pd.DataFrame(dict)
+    df.to_csv(csv_path, header=False, index=False, encoding='utf-8-sig')
+
+
+def results_to_sentence_json(res: dict, json_path,
+                            end_at_last_word=False,
+                            end_before_period=False,
+                            start_at_first_word=False,
+                            strip=True):
+    """
+    Parameters
+    ----------
+    res: dict
+        results from modified model
+    srt_path: str
+        output path of srt
+    end_at_last_word: bool
+        set end-of-segment to timestamp-of-last-token
+    end_before_period: bool
+        set end-of-segment to timresults_to_sentence_csvestamp-of-last-non-period-token
+    start_at_first_word: bool
+        set start-of-segment to timestamp-of-first-token
+    strip: bool
+        perform strip() on each segment
+    """
+    segs = tighten_timestamps(res,
+                              end_at_last_word=end_at_last_word,
+                              end_before_period=end_before_period,
+                              start_at_first_word=start_at_first_word)['segments']
+
+    max_idx = len(segs) - 1
+    i = 1
+    while i <= max_idx:
+        if not (segs[i]['end'] - segs[i]['start']):
+            if segs[i - 1]['end'] == segs[i]['end']:
+                segs[i - 1]['text'] += (' ' + segs[i]['text'].strip())
+                del segs[i]
+                max_idx -= 1
+                continue
+            else:
+                segs[i]['start'] = segs[i - 1]['end']
+        i += 1
+
+    json_file = []
+    for i in range(len(segs)):
+        entry = {"start":segs[i]["start"], "end":segs[i]["end"], "text":segs[i]["text"]}
+        json_file.append(entry)
+    with open(json_path, "w", encoding='utf-8') as f:
+        json.dump(json_file, f, indent=4)
