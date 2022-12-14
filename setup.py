@@ -23,6 +23,7 @@ setup(
     license="MIT",
     packages=['stable_whisper'],
     install_requires=[
+      "numpy",
       "whisper @ git+https://github.com/openai/whisper.git"
     ],
     include_package_data=False
