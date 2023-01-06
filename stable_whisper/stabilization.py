@@ -66,7 +66,10 @@ def check_is_same_results(res0: (dict, list), res1: (dict, list), check_unstable
 
 
 def group_word_timestamps(res: (dict, List[dict]), one_group=True, combine_compound=False,
-                          ts_key='whole_word_timestamps', min_dur: float = None):
+                          ts_key: str = None, min_dur: float = None):
+    if ts_key is None:
+        ts_key = 'whole_word_timestamps'
+
     if min_dur is None:
         min_dur = MIN_DUR
 
