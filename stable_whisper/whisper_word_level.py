@@ -310,23 +310,29 @@ def transcribe_word_level(
         all_silent = False
         ts_scale = HOP_LENGTH / SAMPLE_RATE / time_precision
         wfh, wfw = 100, int(mel.shape[-1] * ts_scale)
-        wf = load_audio_waveform_img(audio_for_mask or audio, wfh, wfw, ignore_shift=ignore_shift)
-        if not wf.any():
-            if audio_for_mask:
-                wf = load_audio_waveform_img(load_audio(audio) if isinstance(audio, str) else audio,
-                                             wfh, wfw, ignore_shift=True)
-            else:
-                if isinstance(audio, str):
-                    wf = load_audio_waveform_img(load_audio(audio), wfh, wfw, ignore_shift=True)
+        if wfw == 0:            
+            warnings.warn(f'suppress_silence will be set to False because '
+                          f'audio duration shorter than the model\'s time precision ({time_precision} s).',
+                          stacklevel=2)
+            suppress_silence = False
+        else:
+            wf = load_audio_waveform_img(audio_for_mask or audio, wfh, wfw, ignore_shift=ignore_shift)
+            if not wf.any():
+                if audio_for_mask:
+                    wf = load_audio_waveform_img(load_audio(audio) if isinstance(audio, str) else audio,
+                                                 wfh, wfw, ignore_shift=True)
                 else:
-                    all_silent = True
+                    if isinstance(audio, str):
+                        wf = load_audio_waveform_img(load_audio(audio), wfh, wfw, ignore_shift=True)
+                    else:
+                        all_silent = True
 
-            if not all_silent:
-                all_silent = not wf.any()
-            if all_silent:
-                warnings.warn('The audio appears to be entirely silent. suppress_silence will be set to False',
-                              stacklevel=2)
-                suppress_silence = False
+                if not all_silent:
+                    all_silent = not wf.any()
+                if all_silent:
+                    warnings.warn('The audio appears to be entirely silent. suppress_silence will be set to False',
+                                  stacklevel=2)
+                    suppress_silence = False
 
     upper_quantile = decode_options.pop('upper_quantile', 0.85)
     lower_quantile = decode_options.pop('lower_quantile', 0.15)
