@@ -19,8 +19,10 @@ def prep_wf_mask(wf: (torch.Tensor, np.ndarray), sr: int, output_size: int = Non
                          size=output_size,
                          mode='linear',
                          align_corners=False)[0]
-    assert kernel_size % 2, f'kernel_size must be odd but got {kernel_size}'
     p = kernel_size // 2
+    if kernel_size is None or kernel_size == 1 or p >= wf.shape[-1]:
+        return wf.mul(255).round()[0]
+    assert kernel_size % 2, f'kernel_size must be odd but got {kernel_size}'
     return avg_pool1d(pad(wf.mul(255).round(), (p, p), 'reflect'), kernel_size=kernel_size, stride=1)[0]
 
 
