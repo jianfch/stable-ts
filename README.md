@@ -1,7 +1,7 @@
 # Stabilizing Timestamps for Whisper
 
 ## Description
-This script modifies and adds more robust decoding logic on top of OpenAI's Whisper to produce more accurate segment-level timestamps and obtain to word-level timestamps with extra inference.
+This script modifies and adds more robust decoding logic on top of OpenAI's Whisper to produce more accurate segment-level timestamps and obtain to word-level timestamps without extra inference.
 
 ![image](https://user-images.githubusercontent.com/28970749/218944014-b915af81-1cf5-4522-a823-e0f476fcc550.png)
 
