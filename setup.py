@@ -1,8 +1,9 @@
+import os
 from setuptools import setup
 
 
 def version() -> str:
-    with open('./stable_whisper/_version.py') as f:
+    with open(os.path.join(os.path.dirname(__file__), 'stable_whisper/_version.py')) as f:
         return f.read().split('=')[-1].strip().strip('"').strip("'")
 
 
@@ -23,7 +24,17 @@ setup(
     license="MIT",
     packages=['stable_whisper'],
     install_requires=[
-      "openai-whisper @ git+https://github.com/openai/whisper.git"
+        "numpy",
+        "torch",
+        "torchaudio",
+        "tqdm",
+        "more-itertools",
+        "transformers>=4.19.0",
+        "ffmpeg-python==0.2.0",
+        "openai-whisper @ git+https://github.com/openai/whisper.git"
     ],
+    entry_points={
+        "console_scripts": ["stable=stable_whisper.whisper_word_level:cli"],
+    },
     include_package_data=False
 )

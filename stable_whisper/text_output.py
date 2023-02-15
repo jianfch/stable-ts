@@ -6,7 +6,7 @@ from stable_whisper.stabilization import group_word_timestamps, tighten_timestam
 
 __all__ = ['results_to_sentence_srt', 'results_to_word_srt', 'results_to_token_srt',
            'results_to_sentence_word_ass', 'to_srt', 'results_to_srt', 'save_as_json',
-           'open_results', 'finalize_segment_word_ts']
+           'load_results', 'finalize_segment_word_ts']
 
 
 def _save_as_file(content: str, path: str):
@@ -31,6 +31,9 @@ def to_srt(lines: List[dict], save_path: str = None, strip=False) -> str:
         f'{secs_to_hhmmss(sub["start"])} --> {secs_to_hhmmss(sub["end"])}\n'
         f'{sub["text"].strip() if strip else sub["text"]}\n'
         for i, sub in enumerate(lines, 1))
+
+    if not save_path.endswith('.srt'):
+        save_path += '.srt'
 
     if save_path:
         _save_as_file(srt_str, save_path)
@@ -74,7 +77,7 @@ def finalize_segment_word_ts(res: (dict, list),
         set start-of-segment to timestamp-of-first-token (Default: False)
     combine_compound: bool
         concatenate words without inbetween spacing (Default: False)
-    min_dur: bool
+    min_dur: float
         minimum duration for each word (i.e. concat the word if it is less than specified value; Default 0.02)
         Note: it applies to token instead of word if [ts_key]='word_timestamps'
     force_max_len: int
@@ -114,7 +117,6 @@ def finalize_segment_word_ts(res: (dict, list),
         else:
             wtss = wtss0 + wtss1
         return wtss
-
     segments = tighten_timestamps(res,
                                   end_at_last_word=end_at_last_word,
                                   end_before_period=end_before_period,
@@ -267,13 +269,13 @@ def results_to_sentence_srt(res: dict, srt_path,
     srt_path: str
         output path of srt
     end_at_last_word: bool
-        set end-of-segment to timestamp-of-last-token
+        set end of segment to timestamp of last token
     end_before_period: bool
-        set end-of-segment to timestamp-of-last-non-period-token
+        set end of segment to timestamp of last non-period token
     start_at_first_word: bool
-        set start-of-segment to timestamp-of-first-token
+        set start of segment to timestamp of first-token
     force_max_len: int
-        limit a max number of characters per phrase. Ignored if None (Default: None)
+        limit a max number of characters per segment. Ignored if None (Default: None)
         Note: character count is still allow to go under this number for stability reasons.
     strip: bool
         perform strip() on each segment
@@ -309,7 +311,7 @@ def results_to_word_srt(res: dict, srt_path, combine_compound=False, strip=False
         concatenate words without inbetween spacing
     strip: bool
         perform strip() on each word
-    min_dur: bool
+    min_dur: float
         minimum duration for each word (i.e. concat the words if it is less than specified value; Default 0.02)
 
     """
@@ -334,7 +336,7 @@ def results_to_token_srt(res: dict, srt_path, combine_compound=False, strip=Fals
         concatenate words without inbetween spacing
     strip: bool
         perform strip() on each token
-    min_dur: bool
+    min_dur: float
         minimum duration for each token (i.e. concat the tokens if it is less than specified value; Default 0.02)
 
     """
@@ -393,17 +395,17 @@ def results_to_sentence_word_ass(res: (dict, list), ass_path: str,
     font_size: int
         word font size (default: 48)
     end_at_last_word: bool
-        set end-of-segment to timestamp-of-last-token
+        set end of segment to timestamp of last token
     end_before_period: bool
-        set end-of-segment to timestamp-of-last-non-period-token
+        set end of segment to timestamp of last non-period token
     start_at_first_word: bool
-        set start-of-segment to timestamp-of-first-token
+        set start of segment to timestamp of first-token
     combine_compound: bool
         concatenate words without inbetween spacing
-    min_dur: bool
+    min_dur: float
         minimum duration for each word (i.e. concat the word if it is less than specified value; Default 0.02)
     force_max_len: int
-        force a max number of characters per phrase. Ignored if None (Default: None)
+        force a max number of characters per segment. Ignored if None (Default: None)
     strip: bool
         perform strip() on each segment
     kwargs:
@@ -488,13 +490,15 @@ def results_to_sentence_word_ass(res: (dict, list), ass_path: str,
 
 
 def save_as_json(results: dict, path: str):
+    if not path.endswith('.json'):
+        path += '.json'
     results = json.dumps(results)
     _save_as_file(results, path)
 
 
-def open_results(json_path: str):
+def load_results(json_path: str):
     """
-    Read results saved as json.
+    Load results saved as json.
     """
     with open(json_path, 'r', encoding='utf-8') as f:
         return json.load(f)
