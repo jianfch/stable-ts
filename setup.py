@@ -34,7 +34,7 @@ setup(
         "openai-whisper==20230124"
     ],
     entry_points={
-        "console_scripts": ["stable=stable_whisper.whisper_word_level:cli"],
+        "console_scripts": ["stable-ts=stable_whisper.whisper_word_level:cli"],
     },
     include_package_data=False
 )
