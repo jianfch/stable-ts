@@ -492,7 +492,7 @@ def results_to_sentence_word_ass(res: (dict, list), ass_path: str,
 def save_as_json(results: dict, path: str):
     if not path.endswith('.json'):
         path += '.json'
-    results = json.dumps(results)
+    results = json.dumps(results, allow_nan=True)
     _save_as_file(results, path)
 
 
