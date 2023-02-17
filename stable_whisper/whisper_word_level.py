@@ -40,6 +40,7 @@ def transcribe_word_level(
         time_scale: float = None,
         prepend_punctuations: Union[List[str], Tuple[str]] = None,
         append_punctuations: Union[List[str], Tuple[str]] = None,
+        sync_empty: bool = False,
         **decode_options):
     """
     Transcribe an audio file using Whisper
@@ -141,6 +142,9 @@ def transcribe_word_level(
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
 
+    sync_empty: bool
+        Whether to synchronize CUDA device and empty cache after each prediction.
+
     Returns
     -------
     A dictionary containing the resulting text ("text") and segment-level details ("segments"), and
@@ -208,7 +212,8 @@ def transcribe_word_level(
         options = DecodingOptions(**kwargs, temperature=t)
         results, ts_tokens, ts_logits_ = model.decode(segment, options, ts_num=decode_ts_num, alpha=alpha,
                                                       suppress_ts_mask=suppress_ts_mask,
-                                                      suppress_word_ts=suppress_word_ts)
+                                                      suppress_word_ts=suppress_word_ts,
+                                                      sync_empty=sync_empty)
 
         kwargs.pop("beam_size", None)  # no beam search for t > 0
         kwargs.pop("patience", None)  # no patience for t > 0
@@ -226,7 +231,8 @@ def transcribe_word_level(
                 retries, r_ts_tokens, r_ts_logits = model.decode(segment[needs_fallback], options,
                                                                  ts_num=decode_ts_num, alpha=alpha,
                                                                  suppress_ts_mask=suppress_ts_mask,
-                                                                 suppress_word_ts=suppress_word_ts)
+                                                                 suppress_word_ts=suppress_word_ts,
+                                                                 sync_empty=sync_empty)
                 for retry_index, original_index in enumerate(np.nonzero(needs_fallback)[0]):
                     results[original_index] = retries[retry_index]
                     ts_tokens[original_index] = r_ts_tokens[retry_index]
@@ -545,7 +551,7 @@ def modify_model(model: Whisper):
 
 # modified version of whisper.load_model
 def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
-               download_root: str = None, in_memory: bool = False) -> Whisper:
+               download_root: str = None, in_memory: bool = False, cpu_preload: bool = True) -> Whisper:
     """
      Load a modified Whisper ASR model
 
@@ -560,13 +566,20 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
         path to download the model files; by default, it uses "~/.cache/whisper"
     in_memory: bool
         whether to preload the model weights into host memory
-
+    cpu_preload: bool
+        load model into CPU memory first then move model to specified device;
+        this reduces GPU memory usage when loading model
     Returns
     -------
     model : Whisper
         The Whisper ASR model instance
     """
-    model = whisper.load_model(name, device=device, download_root=download_root, in_memory=in_memory)
+    if device is None:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if cpu_preload:
+        model = whisper.load_model(name, device='cpu', download_root=download_root, in_memory=in_memory).to(device=device)
+    else:
+        model = whisper.load_model(name, device=device, download_root=download_root, in_memory=in_memory)
     modify_model(model)
     return model
 
@@ -603,6 +616,9 @@ def cli():
                         help="the path to save model files; uses ~/.cache/whisper by default")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu",
                         help="device to use for PyTorch inference")
+    parser.add_argument("--cpu_preload", type=str2bool, default=True,
+                        help="load model into CPU memory first then move model to specified device; "
+                             "this reduces GPU memory usage when loading model.")
     parser.add_argument("--output_dir", "-d", type=str,
                         help="directory to save the outputs;"
                              "if a path in [output] does not have parent, that output will be save to this directory")
@@ -621,6 +637,8 @@ def cli():
     parser.add_argument("--print_stab", '-ps', action='store_true',
                         help="whether to display the decoded text "
                              "(with stabilized word-level timestamps) to the console.")
+    parser.add_argument("--sync_empty", action='store_true',
+                        help="whether to synchronize CUDA device and empty cache after each prediction")
 
     parser.add_argument("--task", type=str, default="transcribe",
                         choices=["transcribe", "translate"],
@@ -753,6 +771,7 @@ def cli():
 
     args = parser.parse_args().__dict__
     debug = args.pop('debug')
+    cpu_preload = args.pop('cpu_preload')
 
     model_name: str = args.pop("model")
     model_dir: str = args.pop("model_dir")
@@ -863,7 +882,7 @@ def cli():
             print(f'{input_path}  ->  {output_path}')
         print('\n')
 
-    model = load_model(model_name, device=device, download_root=model_dir)
+    model = load_model(model_name, device=device, download_root=model_dir, cpu_preload=cpu_preload)
 
     for input_path, output_path in zip(inputs, outputs):
         if is_json(input_path):

@@ -183,6 +183,7 @@ class DecodingTaskWordLevel(DecodingTask):
         self.alpha: float = kwargs.pop('alpha', None)  # experimental
         self.suppress_ts_mask: torch.Tensor = kwargs.pop('suppress_ts_mask', None)
         self.suppress_word_ts: bool = kwargs.pop('suppress_word_ts', True)
+        self.sync_empty: bool = kwargs.pop('sync_empty', False)
         super(DecodingTaskWordLevel, self).__init__(*args, **kwargs)
         if hasattr(self.decoder, 'beam_size'):
             self.decoder = BeamSearchDecoderWordLevel(self.decoder.beam_size,
@@ -221,12 +222,14 @@ class DecodingTaskWordLevel(DecodingTask):
                 # now we need to consider the logits at the last token only
                 logits = logits[:, -1]
 
-                # ts_logits = F.avg_pool1d(F.pad(F.log_softmax(logits[:, self.tokenizer.timestamp_begin:], dim=-1), (1, 1), 'reflect'),
-                #                  kernel_size=3, stride=1)
                 ts_logits = logits[:, self.tokenizer.timestamp_begin:].clone()
                 if self.suppress_word_ts:
                     _suppress_ts(ts_logits, self.suppress_ts_mask)
                 ts = _ts_topk(ts_logits, k=self.ts_num, prev_ts=self.decoder.ts)
+                if self.sync_empty:
+                    del ts_logits
+                    torch.cuda.synchronize(audio_features.device)
+                    torch.cuda.empty_cache()
 
                 # apply the logit filters, e.g. for suppressing or applying penalty to
                 for logit_filter in self.logit_filters:
@@ -315,7 +318,7 @@ class DecodingTaskWordLevel(DecodingTask):
 @torch.no_grad()
 def decode_word_level(model: "Whisper", mel: torch.Tensor, options: DecodingOptions = DecodingOptions(),
                       ts_num: int = None, alpha: float = None, suppress_ts_mask: torch.Tensor = None,
-                      suppress_word_ts=False) -> \
+                      suppress_word_ts=False, sync_empty=False) -> \
         Union[DecodingResult, List[DecodingResult], tuple]:
     """
     Performs decoding of 30-second audio segment(s), provided as Mel spectrogram(s).
@@ -344,6 +347,9 @@ def decode_word_level(model: "Whisper", mel: torch.Tensor, options: DecodingOpti
     suppress_word_ts: bool
         Use suppress_ts_mask to suppress timestamp tokens of words
 
+    sync_empty: bool
+        Whether to synchronize CUDA device and empty cache after each prediction.
+
     Returns
     -------
     result: Union[DecodingResult, List[DecodingResult]]
@@ -357,7 +363,8 @@ def decode_word_level(model: "Whisper", mel: torch.Tensor, options: DecodingOpti
                                        ts_num=ts_num,
                                        alpha=alpha,
                                        suppress_ts_mask=suppress_ts_mask,
-                                       suppress_word_ts=suppress_word_ts).run(mel)
+                                       suppress_word_ts=suppress_word_ts,
+                                       sync_empty=sync_empty).run(mel)
 
     if single:
         result = result[0]
