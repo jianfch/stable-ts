@@ -13,17 +13,29 @@ def prep_wf_mask(wf: (torch.Tensor, np.ndarray), sr: int, output_size: int = Non
         wf = torch.from_numpy(wf).float()
     else:
         wf = wf.float()
+    assert wf.dim() < 3, f'waveform must be 1D or 2D, but got {wf.dim()}D'
     wf = highpass_biquad(lowpass_biquad(wf, sr, 3000), sr, 200).abs()
+    if wf.dim() < 3:
+        unsqueezes = 3-wf.dim()
+        for _ in range(unsqueezes):
+            wf.unsqueeze_(0)
+    else:
+        unsqueezes = 0
     if output_size is not None:
-        wf = interpolate(wf[None, None],
+        wf = interpolate(wf,
                          size=output_size,
                          mode='linear',
-                         align_corners=False)[0]
+                         align_corners=False)
     p = kernel_size // 2
     if kernel_size is None or kernel_size == 1 or p >= wf.shape[-1]:
-        return wf.mul(255).round()[0]
-    assert kernel_size % 2, f'kernel_size must be odd but got {kernel_size}'
-    return avg_pool1d(pad(wf.mul(255).round(), (p, p), 'reflect'), kernel_size=kernel_size, stride=1)[0]
+        mask = wf.mul(255).round()
+    else:
+        assert kernel_size % 2, f'kernel_size must be odd but got {kernel_size}'
+        mask = avg_pool1d(pad(wf.mul(255).round(), (p, p), 'reflect'), kernel_size=kernel_size, stride=1)
+    if unsqueezes:
+        for _ in range(unsqueezes):
+            mask.squeeze_(0)
+    return mask
 
 
 def remove_lower_quantile(prepped_mask: torch.Tensor,
