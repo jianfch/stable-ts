@@ -843,14 +843,16 @@ def cli():
         args["language"] = "en"
 
     temperature = args.pop("temperature")
-    if (increment := args.pop("temperature_increment_on_fallback")) is not None:
+    increment = args.pop("temperature_increment_on_fallback")
+    if increment is not None:
         temperature = tuple(np.arange(temperature, 1.0 + 1e-6, increment))
     else:
         temperature = [temperature]
 
     args['temperature'] = temperature
 
-    if (threads := args.pop("threads")) > 0:
+    threads = args.pop("threads")
+    if threads > 0:
         torch.set_num_threads(threads)
 
     if debug:
