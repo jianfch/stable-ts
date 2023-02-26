@@ -33,11 +33,14 @@ def transcribe_word_level(
         suppress_silence: bool = True,
         suppress_middle: bool = True,
         suppress_word_ts: bool = True,
-        remove_background: bool = True,
+        remove_background: bool = None,
         silence_threshold: float = 0.1,
         refine_ts_num: int = None,
         avg_refine: bool = False,
         time_scale: float = None,
+        demucs: bool = None,
+        demucs_output: str = None,
+        only_voice_freq: bool = False,
         prepend_punctuations: Union[List[str], Tuple[str]] = None,
         append_punctuations: Union[List[str], Tuple[str]] = None,
         sync_empty: bool = False,
@@ -107,6 +110,7 @@ def transcribe_word_level(
 
     remove_background: bool
         Whether to zero sections with background noise from waveform, so it will be marked as silent.
+        (Default: True, but False if demucs=True)
         Determined by parameters part of decode_options (i.e. specify like other options here):
             upper_quantile: float
                 The upper quantile of amplitude to determine a max amplitude, mx (Default: 0.85)
@@ -133,17 +137,29 @@ def transcribe_word_level(
         A factor of 1.5 will stretch 10s audio to 15s for inference. This increases the effective resolution
         of the model but can increase word error rate.
 
+    demucs: bool
+        Whether to preprocess the audio track with Demucs to isolate vocals/remove noise.
+        (Default: False, but True if save_demucs_path is provided)
+        Demucs must be installed to use. Official repo: https://github.com/facebookresearch/demucs
+
+    demucs_output: str
+        Path to save the vocals isolated by Demucs as WAV file.
+        Demucs must be installed to use. Official repo: https://github.com/facebookresearch/demucs
+
+    only_voice_freq: bool
+        Whether to only use sound between 250 - 5000 Hz, where majority of human speech are. (Default: False)
+
     prepend_punctuations: Union[List[str], Tuple[str]]
         Punctuations to prepend to next word (Default: “¿([{)
 
     append_punctuations: Union[List[str], Tuple[str]]
         Punctuations to append to previous word (Default: .。,，!！?？:：”)]}、)
 
-    decode_options: dict
-        Keyword arguments to construct `DecodingOptions` instances
-
     sync_empty: bool
         Whether to synchronize CUDA device and empty cache after each prediction.
+
+    decode_options: dict
+        Keyword arguments to construct `DecodingOptions` instances
 
     Returns
     -------
@@ -165,6 +181,8 @@ def transcribe_word_level(
     if 'max_initial_timestamp' not in decode_options:
         decode_options['max_initial_timestamp'] = None
 
+    device = model.device
+
     if time_scale == 1:
         time_scale = None
     if refine_ts_num is None:
@@ -175,15 +193,44 @@ def transcribe_word_level(
 
     decode_ts_num = max(ts_num, refine_ts_num)
 
+    if demucs_output:
+        if demucs is None:
+            demucs = True
+        elif not demucs:
+            demucs_output = None
+
+    if remove_background is None:
+        remove_background = not demucs
+
     curr_sr = SAMPLE_RATE if time_scale is None else SAMPLE_RATE * time_scale
     if isinstance(audio, str):
-        audio = whisper.load_audio(audio, sr=curr_sr)
+        if demucs:
+            from .audio import demucs_audio
+            audio = demucs_audio(audio,
+                                 output_sr=curr_sr,
+                                 device=device,
+                                 verbose=verbose or pbar,
+                                 save_path=demucs_output)
+        else:
+            audio = whisper.load_audio(audio, sr=curr_sr)
     else:
-        from torchaudio.functional import resample
         if isinstance(audio, np.ndarray):
             audio = torch.from_numpy(audio)
-        if time_scale is not None:
-            audio = resample(audio, SAMPLE_RATE, curr_sr, resampling_method="kaiser_window")
+        input_sr = decode_options.pop('input_sr', SAMPLE_RATE)
+        if demucs:
+            from .audio import demucs_audio
+            audio = demucs_audio(audio,
+                                 input_sr=input_sr,
+                                 output_sr=curr_sr,
+                                 device=device,
+                                 verbose=verbose or pbar,
+                                 save_path=demucs_output)
+        elif input_sr != curr_sr:
+            from torchaudio.functional import resample
+            audio = resample(audio, input_sr, curr_sr, resampling_method="kaiser_window")
+    if only_voice_freq:
+        from .audio import voice_freq_filter
+        audio = voice_freq_filter(audio, curr_sr)
     mel = log_mel_spectrogram(audio)
 
     if decode_options.get("language", None) is None:
@@ -365,7 +412,7 @@ def transcribe_word_level(
                           stacklevel=2)
             suppress_silence = False
         else:
-            wf_mask = prep_wf_mask(audio, curr_sr, wfw)
+            wf_mask = prep_wf_mask(audio, wfw)
             if not wf_mask.any():
                 warnings.warn('The audio appears to be entirely silent. [suppress_silence] will be set to False',
                               stacklevel=2)
@@ -597,8 +644,9 @@ def cli():
     str2val = {"true": True, "false": False, "1": True, "0": False}
 
     def str2bool(string: str) -> bool:
+        string = string.lower()
         if string in str2val:
-            return str2val[string.lower()]
+            return str2val[string]
         raise ValueError(f"Expected one of {set(str2val.keys())}, got {string}")
 
     output_formats = ("srt", "ass", "json")
@@ -666,7 +714,7 @@ def cli():
     parser.add_argument('--suppress_word_ts', type=str2bool, default=True,
                         help="whether to suppress timestamp where audio is silent at word-level")
 
-    parser.add_argument('--remove_background', type=str2bool, default=True,
+    parser.add_argument('--remove_background', type=str2bool,
                         help="whether to zero sections with background noise from waveform, "
                              "so it will be marked as silent")
     parser.add_argument('--upper_quantile', type=float,
@@ -691,6 +739,14 @@ def cli():
                              "Greater than 1.0 'slows down' the audio. "
                              "Less than 1.0 'speeds up' the audio. "
                              "1.0 is no scaling.")
+
+    parser.add_argument('--demucs', type=str2bool,
+                        help='whether to reprocess the audio track with Demucs to isolate vocals/remove noise; '
+                             'Demucs official repo: https://github.com/facebookresearch/demucs')
+    parser.add_argument('--demucs_output', nargs="+", type=str,
+                        help='path(s) to save the vocals isolated by Demucs as WAV file(s)')
+    parser.add_argument('--only_voice_freq', '-ovf', action='store_true',
+                        help='whether to only use sound between 250 - 5000 Hz, where majority of human speech are.')
 
     # word/segment-level srt output
     parser.add_argument('--combine_compound', type=str2bool, default=False,
@@ -775,13 +831,27 @@ def cli():
 
     model_name: str = args.pop("model")
     model_dir: str = args.pop("model_dir")
-    inputs: List[str] = args.pop("inputs")
+    inputs: List[Union[str, torch.Tensor]] = args.pop("inputs")
     outputs: List[str] = args.pop("output")
     output_dir: str = args.pop("output_dir")
     output_format: str = args.pop("output_format")
     overwrite: bool = args.pop("overwrite")
+    use_demucs = args.pop('demucs')
+    demucs_outputs: List[Optional[str]] = args.pop("demucs_output")
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
+
+    if demucs_outputs:
+        if use_demucs is None:
+            use_demucs = True
+    else:
+        demucs_outputs = [None]*len(inputs)
+        if use_demucs is None:
+            use_demucs = False
+
+    if use_demucs and len(demucs_outputs) != len(inputs):
+        raise NotImplementedError(f'[demucs_output] and [inputs] do not match in count. '
+                                  f'Got {len(demucs_outputs)} and {len(inputs)}')
 
     combine_compound: bool = args.pop('combine_compound')
     strip: bool = args.pop('strip')
@@ -863,6 +933,7 @@ def cli():
         print(f'Arguments for {args.get("task")}')
         for k, v in args.items():
             print(f'{k}: {v}')
+        print(f'use_demucs: {use_demucs}')
         print(f'\nArguments for Word/Segment-Level SRT/ASS Output',
               f'\ncombine_compound: {combine_compound}\n'
               f'strip: {strip}\n'
@@ -880,22 +951,51 @@ def cli():
               f'font_size: {font_size}\n')
 
         print('Input(s)  ->  Outputs(s)')
-        for input_path, output_path in zip(inputs, outputs):
-            print(f'{input_path}  ->  {output_path}')
+        for input_audio, output_path, demucs_path in zip(inputs, outputs, demucs_outputs):
+            dm_output = f' {demucs_path} ->' if demucs_path else ''
+            print(f'{input_audio}  ->{dm_output}  {output_path}')
         print('\n')
+
+    show_curr_task = args.get('pbar') or args.get('verbose')
+
+    if use_demucs:
+        from .audio import demucs_audio, load_demucs_model
+        demucs_model = load_demucs_model()
+        audio_inputs = []
+        for input_audio, demucs_path in zip(inputs, demucs_outputs):
+            audio_inputs.append(demucs_audio(input_audio,
+                                             model=demucs_model,
+                                             device=device,
+                                             verbose=show_curr_task,
+                                             save_path=demucs_path))
+        args['input_sr'] = demucs_model.samplerate
+        inputs = audio_inputs
+        del demucs_model
+        if device != 'cpu':
+            torch.cuda.empty_cache()
+
+    if show_curr_task:
+        model_from_str = '' if model_dir is None else f' from {model_dir}'
+        model_loading_str = f'Whisper {model_name} model {model_from_str}'
+        print(f'Loading {model_loading_str}\r', end='')
+    else:
+        model_loading_str = ''
 
     model = load_model(model_name, device=device, download_root=model_dir, cpu_preload=cpu_preload)
 
-    for input_path, output_path in zip(inputs, outputs):
-        if is_json(input_path):
-            result = load_results(input_path)
+    if model_loading_str:
+        print(f'Loaded {model_loading_str}  ')
+
+    for input_audio, output_path in zip(inputs, outputs):
+        if isinstance(input_audio, str) and is_json(input_audio):
+            result = load_results(input_audio)
             if args.get('prepend_punctuations') or args.get('append_punctuations'):
                 add_whole_word_ts(get_tokenizer(model.is_multilingual, task=args.get('task')),
                                   result,
                                   prepend_punctuations=args.get('prepend_punctuations'),
                                   append_punctuations=args.get('append_punctuations'))
         else:
-            result = model.transcribe(input_path, **args)
+            result = model.transcribe(input_audio, **args)
 
         if is_json(output_path):
             save_as_json(result, output_path)

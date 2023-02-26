@@ -32,7 +32,7 @@ def to_srt(lines: List[dict], save_path: str = None, strip=False) -> str:
         f'{sub["text"].strip() if strip else sub["text"]}\n'
         for i, sub in enumerate(lines, 1))
 
-    if not save_path.endswith('.srt'):
+    if not save_path.lower().endswith('.srt'):
         save_path += '.srt'
 
     if save_path:
@@ -483,14 +483,14 @@ def results_to_sentence_word_ass(res: (dict, list), ass_path: str,
 
     ass_str += '\n'.join(map(lambda x: dialogue(**x), final_phrase_word_ts))
 
-    if not ass_path.endswith('.ass'):
+    if not ass_path.lower().endswith('.ass'):
         ass_path += '.ass'
 
     _save_as_file(ass_str, ass_path)
 
 
 def save_as_json(results: dict, path: str):
-    if not path.endswith('.json'):
+    if not path.lower().endswith('.json'):
         path += '.json'
     results = json.dumps(results, allow_nan=True)
     _save_as_file(results, path)
