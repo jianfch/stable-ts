@@ -21,7 +21,7 @@ def voice_freq_filter(wf: (torch.Tensor, np.ndarray), sr: int,
 
 def prep_wf_mask(wf: (torch.Tensor, np.ndarray),
                  output_size: int = None,
-                 kernel_size: int = 5) \
+                 kernel_size: int = None) \
         -> torch.Tensor:
     """
     Preprocesses waveform to be processed into timestamp suppression mask.
@@ -42,12 +42,12 @@ def prep_wf_mask(wf: (torch.Tensor, np.ndarray),
                          size=output_size,
                          mode='linear',
                          align_corners=False)
-    p = kernel_size // 2
-    if kernel_size is None or kernel_size == 1 or p >= wf.shape[-1]:
+    p = kernel_size // 2 if kernel_size else 0
+    if not p or p >= wf.shape[-1]:
         mask = wf.mul(255).round()
     else:
         assert kernel_size % 2, f'kernel_size must be odd but got {kernel_size}'
-        mask = avg_pool1d(pad(wf.mul(255).round(), (p, p), 'reflect'), kernel_size=kernel_size, stride=1)
+        mask = avg_pool1d(pad(wf.mul(255).round(), (p, p), 'reflect'), kernel_size=kernel_size, stride=1).round()
     if unsqueezes:
         for _ in range(unsqueezes):
             mask.squeeze_(0)

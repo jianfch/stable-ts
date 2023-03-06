@@ -14,8 +14,11 @@ def _suppress_ts(ts_logits: torch.Tensor, suppress_ts_mask: torch.Tensor = None)
         ts_logits[:, suppress_ts_mask] = -np.inf
 
 
-def _ts_topk(ts_logits: torch.Tensor, k: int, prev_ts: torch.Tensor = None) -> torch.Tensor:
-    temp_ts = torch.stack(torch.topk(ts_logits, k, dim=-1), 0).unsqueeze(-2)
+def _ts_topk(ts_logits: torch.Tensor, k: int, prev_ts: torch.Tensor = None, has_ts_batch=False) -> torch.Tensor:
+    if has_ts_batch:
+        ts_logits = ts_logits.softmax(dim=-1).mean(dim=-2).unsqueeze(-2)
+    temp_ts = torch.stack(torch.topk(ts_logits, k, dim=-1), 0)
+    temp_ts.unsqueeze_(-2)
     return temp_ts if prev_ts is None else torch.cat([prev_ts, temp_ts], dim=-2)
 
 
@@ -180,7 +183,10 @@ class DecodingTaskWordLevel(DecodingTask):
 
     def __init__(self, *args, **kwargs):
         self.ts_num: int = kwargs.pop('ts_num', None) or 10
-        self.alpha: float = kwargs.pop('alpha', None)  # experimental
+        self.ts_batch_size: int = kwargs.pop('ts_batch_size', None)
+        self.ts_batch_noise: float = kwargs.pop('ts_batch_noise')
+        if self.ts_batch_noise is None:
+            self.ts_batch_noise = 0.25
         self.suppress_ts_mask: torch.Tensor = kwargs.pop('suppress_ts_mask', None)
         self.suppress_word_ts: bool = kwargs.pop('suppress_word_ts', True)
         self.sync_empty: bool = kwargs.pop('sync_empty', False)
@@ -207,16 +213,24 @@ class DecodingTaskWordLevel(DecodingTask):
         sum_logprobs: torch.Tensor = torch.zeros(n_batch, device=audio_features.device)
         no_speech_probs = [np.nan] * n_batch
 
+        if self.ts_batch_size:
+            extra_audio_features = audio_features.repeat_interleave(self.ts_batch_size, 0)
+            torch.manual_seed(0)
+            audio_features = torch.cat([audio_features,
+                                        extra_audio_features *
+                                        (1 - (torch.rand_like(extra_audio_features) * self.ts_batch_noise))],
+                                       dim=0)
+
         try:
             for i in range(self.sample_len):
-                if self.alpha:
-                    logits = self.inference.logits(tokens,
-                                                   audio_features * (torch.rand_like(audio_features) * self.alpha + 1))
+                if self.ts_batch_size:
+                    logits = self.inference.logits(tokens.repeat_interleave(audio_features.shape[0], 0),
+                                                   audio_features)
                 else:
                     logits = self.inference.logits(tokens, audio_features)
 
                 if i == 0 and self.tokenizer.no_speech is not None:  # save no_speech_probs
-                    probs_at_sot = logits[:, self.sot_index].float().softmax(dim=-1)
+                    probs_at_sot = logits[:1 if self.ts_batch_size else None, self.sot_index].float().softmax(dim=-1)
                     no_speech_probs = probs_at_sot[:, self.tokenizer.no_speech].tolist()
 
                 # now we need to consider the logits at the last token only
@@ -225,11 +239,14 @@ class DecodingTaskWordLevel(DecodingTask):
                 ts_logits = logits[:, self.tokenizer.timestamp_begin:].clone()
                 if self.suppress_word_ts:
                     _suppress_ts(ts_logits, self.suppress_ts_mask)
-                ts = _ts_topk(ts_logits, k=self.ts_num, prev_ts=self.decoder.ts)
+                ts = _ts_topk(ts_logits, k=self.ts_num, prev_ts=self.decoder.ts, has_ts_batch=bool(self.ts_batch_size))
                 if self.sync_empty:
                     del ts_logits
                     torch.cuda.synchronize(audio_features.device)
                     torch.cuda.empty_cache()
+
+                if self.ts_batch_size:
+                    logits = logits[:1]
 
                 # apply the logit filters, e.g. for suppressing or applying penalty to
                 for logit_filter in self.logit_filters:
@@ -284,7 +301,8 @@ class DecodingTaskWordLevel(DecodingTask):
         tokens: List[List[torch.Tensor]] = [
             [t[self.sample_begin: (t == tokenizer.eot).nonzero()[0, 0]] for t in s] for s in tokens
         ]
-        ts: List[List[torch.Tensor]] = [[t[:, :tokens[i][j].shape[-1]] for j, t in enumerate(s)] for i, s in enumerate(ts)]
+        ts: List[List[torch.Tensor]] = [[t[:, :tokens[i][j].shape[-1]] for j, t in enumerate(s)] for i, s in
+                                        enumerate(ts)]
 
         # select the top-ranked sample in each group
         selected = self.sequence_ranker.rank(tokens, sum_logprobs)
@@ -317,8 +335,8 @@ class DecodingTaskWordLevel(DecodingTask):
 # modified version of whisper.decoding.decode
 @torch.no_grad()
 def decode_word_level(model: "Whisper", mel: torch.Tensor, options: DecodingOptions = DecodingOptions(),
-                      ts_num: int = None, alpha: float = None, suppress_ts_mask: torch.Tensor = None,
-                      suppress_word_ts=False, sync_empty=False) -> \
+                      ts_num: int = None, ts_batch_size: int = None, ts_batch_noise: float = None,
+                      suppress_ts_mask: torch.Tensor = None, suppress_word_ts=False, sync_empty=False) -> \
         Union[DecodingResult, List[DecodingResult], tuple]:
     """
     Performs decoding of 30-second audio segment(s), provided as Mel spectrogram(s).
@@ -337,9 +355,12 @@ def decode_word_level(model: "Whisper", mel: torch.Tensor, options: DecodingOpti
     ts_num: int
         Number of additional top timestamp predictions to save for each word for postprocessing stabilization (default: 10)
 
-    alpha: float
-        Amount of noise to add to audio to produce slightly difference results.
-        audio_features *= torch.rand_like(audio_features) * alpha + 1
+    ts_batch_size: int
+        Number of extra noisy samples to use for word-level timestamps. (Default: None)
+        The logits of these samples are averaged for decoding word-level timestamps.
+
+    ts_batch_noise: float
+        Percentage of noise to add to the samples for [ts_batch_size]. (Default: 0.25)
 
     suppress_ts_mask: (list, torch.Tensor)
         Mask suppress to timestamp token(s) for decoding
@@ -361,7 +382,8 @@ def decode_word_level(model: "Whisper", mel: torch.Tensor, options: DecodingOpti
 
     result, ts = DecodingTaskWordLevel(model, options,
                                        ts_num=ts_num,
-                                       alpha=alpha,
+                                       ts_batch_size=ts_batch_size,
+                                       ts_batch_noise=ts_batch_noise,
                                        suppress_ts_mask=suppress_ts_mask,
                                        suppress_word_ts=suppress_word_ts,
                                        sync_empty=sync_empty).run(mel)
@@ -375,4 +397,3 @@ def decode_word_level(model: "Whisper", mel: torch.Tensor, options: DecodingOpti
         ts_logits = [ts_[0] for ts_ in ts]
 
     return result, ts_tokens, ts_logits
-

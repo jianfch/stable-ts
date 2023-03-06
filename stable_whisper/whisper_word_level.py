@@ -3,7 +3,7 @@ import torch
 import whisper
 import numpy as np
 from typing import List, Optional, Tuple, Union
-from whisper.audio import SAMPLE_RATE, N_FRAMES, HOP_LENGTH, pad_or_trim
+from whisper.audio import SAMPLE_RATE, N_FRAMES, HOP_LENGTH, N_SAMPLES, pad_or_trim
 from whisper.utils import exact_div, format_timestamp
 from whisper.tokenizer import get_tokenizer, LANGUAGES, TO_LANGUAGE_CODE
 from whisper import DecodingOptions, DecodingResult, Whisper, log_mel_spectrogram
@@ -29,7 +29,8 @@ def transcribe_word_level(
         no_speech_threshold: Optional[float] = 0.6,
         condition_on_previous_text: bool = True,
         stab=True, top_focus=False, ts_num: int = 10,
-        alpha: float = None, print_stab=False, pbar=True,
+        ts_batch_size: int = None, ts_batch_noise: float = None,
+        print_stab=False, pbar=True,
         suppress_silence: bool = True,
         suppress_middle: bool = True,
         suppress_word_ts: bool = True,
@@ -88,10 +89,12 @@ def transcribe_word_level(
     ts_num: int
         Number of top timestamp predictions to save for each word for postprocessing stabilization (Default: 10).
 
-    alpha: float
-        This is purely experimental. Will be deprecated.
-        Amount of noise to add to audio to produce slightly difference results. (Default: None)
-        audio_features *= torch.rand_like(audio_features) * alpha + 1
+    ts_batch_size: int
+        Number of extra noisy audio-feature samples to use for word-level timestamps. (Default: None)
+        The logits of these samples are averaged for decoding word-level timestamps.
+
+    ts_batch_noise: float
+        Percentage of noise to add to the samples for [ts_batch_size]. (Default: 0.25)
 
     print_stab: bool
         Whether to display the decoded text (with stabilized word-level timestamps) to the console. (Default: False)
@@ -147,7 +150,7 @@ def transcribe_word_level(
         Demucs must be installed to use. Official repo: https://github.com/facebookresearch/demucs
 
     only_voice_freq: bool
-        Whether to only use sound between 250 - 5000 Hz, where majority of human speech are. (Default: False)
+        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are. (Default: False)
 
     prepend_punctuations: Union[List[str], Tuple[str]]
         Punctuations to prepend to next word (Default: “¿([{)
@@ -166,6 +169,9 @@ def transcribe_word_level(
     A dictionary containing the resulting text ("text") and segment-level details ("segments"), and
     the spoken language ("language"), which is detected when `decode_options["language"]` is None.
     """
+
+    if (decode_options.get('beam_size') or decode_options.get('best_of')) and ts_batch_size:
+        raise NotImplementedError('[ts_batch_size] not supported with [beam_size] or [best_of].')
 
     dtype = torch.float16 if decode_options.get("fp16", True) else torch.float32
     if model.device == torch.device("cpu"):
@@ -231,17 +237,16 @@ def transcribe_word_level(
     if only_voice_freq:
         from .audio import voice_freq_filter
         audio = voice_freq_filter(audio, curr_sr)
-    mel = log_mel_spectrogram(audio)
 
     if decode_options.get("language", None) is None:
         if verbose:
             print("Detecting language using up to the first 30 seconds. Use `--language` to specify the language")
-        segment = pad_or_trim(mel, N_FRAMES).to(model.device).to(dtype)
+        segment = pad_or_trim(log_mel_spectrogram(audio[..., :N_SAMPLES]),
+                              N_FRAMES).to(device=model.device, dtype=dtype)
         _, probs = model.detect_language(segment)
         decode_options["language"] = max(probs, key=probs.get)
         print(f"Detected language: {LANGUAGES[decode_options['language']]}")
 
-    mel = mel.unsqueeze(0)
     language = decode_options["language"]
     task = decode_options.get("task", "transcribe")
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
@@ -257,7 +262,10 @@ def transcribe_word_level(
             best_of = kwargs.get("best_of", None)
 
         options = DecodingOptions(**kwargs, temperature=t)
-        results, ts_tokens, ts_logits_ = model.decode(segment, options, ts_num=decode_ts_num, alpha=alpha,
+        results, ts_tokens, ts_logits_ = model.decode(segment, options,
+                                                      ts_num=decode_ts_num,
+                                                      ts_batch_size=ts_batch_size,
+                                                      ts_batch_noise=ts_batch_noise,
                                                       suppress_ts_mask=suppress_ts_mask,
                                                       suppress_word_ts=suppress_word_ts,
                                                       sync_empty=sync_empty)
@@ -276,7 +284,9 @@ def transcribe_word_level(
             if any(needs_fallback):
                 options = DecodingOptions(**kwargs, temperature=t)
                 retries, r_ts_tokens, r_ts_logits = model.decode(segment[needs_fallback], options,
-                                                                 ts_num=decode_ts_num, alpha=alpha,
+                                                                 ts_num=decode_ts_num,
+                                                                 ts_batch_size=ts_batch_size,
+                                                                 ts_batch_noise=ts_batch_noise,
                                                                  suppress_ts_mask=suppress_ts_mask,
                                                                  suppress_word_ts=suppress_word_ts,
                                                                  sync_empty=sync_empty)
@@ -287,7 +297,7 @@ def transcribe_word_level(
 
         return results, ts_tokens, ts_logits_
 
-    seek = 0
+    seek = 0  # samples
     input_stride = exact_div(
         N_FRAMES, model.dims.n_audio_ctx
     )  # mel frames per output token: 2
@@ -402,64 +412,67 @@ def transcribe_word_level(
         if verbose:
             print(f'[{format_timestamp(start)} --> {format_timestamp(end)}] "{text}"')
 
-    mel_scale = HOP_LENGTH / SAMPLE_RATE
-    if suppress_silence:
-        ts_scale = mel_scale / time_precision
-        wfw = int(mel.shape[-1] * ts_scale)
-        if wfw == 0:
-            warnings.warn(f'[suppress_silence] will be set to False because '
-                          f'audio duration shorter than the model\'s time precision ({time_precision} s).',
-                          stacklevel=2)
-            suppress_silence = False
-        else:
-            wf_mask = prep_wf_mask(audio, wfw)
-            if not wf_mask.any():
-                warnings.warn('The audio appears to be entirely silent. [suppress_silence] will be set to False',
-                              stacklevel=2)
-                suppress_silence = False
-
     upper_quantile = decode_options.pop('upper_quantile', 0.85)
     lower_quantile = decode_options.pop('lower_quantile', 0.15)
     lower_threshold = decode_options.pop('lower_threshold', 0.15)
 
-    num_frames = mel.shape[-1]
+    total_duration = round(audio.shape[-1] / curr_sr, 2)
+    scaled_total_duration = audio.shape[-1] / SAMPLE_RATE
+
+    max_input_duration = N_SAMPLES / SAMPLE_RATE
+
+    sample_per_token = time_precision * SAMPLE_RATE
 
     seek_mask_cache = {}
 
-    with tqdm(total=num_frames, unit='frames', disable=(verbose or not pbar)) as tqdm_pbar:
+    with tqdm(total=total_duration, unit='sec', disable=(verbose or not pbar)) as tqdm_pbar:
 
         def update_pbar():
             if not tqdm_pbar.disable:
-                tqdm_pbar.update(min(num_frames, seek) - tqdm_pbar.n)
+                tqdm_pbar.update(min(total_duration, round(seek / curr_sr, 2)) - tqdm_pbar.n)
 
-        while seek < mel.shape[-1]:
-            timestamp_offset = float(seek * mel_scale)
-            remaining_duration = float((mel.shape[-1] - seek) * mel_scale)
-            segment = pad_or_trim(mel[:, :, seek:], N_FRAMES).to(device=model.device, dtype=dtype)
-            segment_duration = min(float(segment.shape[-1] * mel_scale), remaining_duration)
+        while seek < audio.shape[-1]:
+            audio_segment = torch.from_numpy(audio[seek:seek + N_SAMPLES])
+            timestamp_offset = seek / SAMPLE_RATE
+            remaining_duration = scaled_total_duration - timestamp_offset
+            segment = pad_or_trim(log_mel_spectrogram(audio_segment)[None],
+                                  N_FRAMES).to(device=model.device, dtype=dtype)
+            segment_duration = min(max_input_duration, remaining_duration)
+            segment_samples = round(segment_duration * SAMPLE_RATE)
             segment_max_ts = segment_duration / time_precision
 
             if suppress_silence:
-                wf_seek = int(seek * ts_scale)
-                suppress_ts_mask = wf_mask[..., wf_seek:wf_seek + 1501]
-                if remove_background and \
-                        (1 - suppress_ts_mask.clamp(max=1).mean()) < silence_threshold:
-                    suppress_ts_mask = remove_lower_quantile(suppress_ts_mask,
-                                                             upper_quantile=upper_quantile,
-                                                             lower_quantile=lower_quantile,
-                                                             lower_threshold=lower_threshold)
+                wfw = round(segment_max_ts)
+                if wfw == 0:
+                    warnings.warn(f'[suppress_silence] will be set to False because '
+                                  f'audio duration shorter than the model\'s time precision ({time_precision} s).',
+                                  stacklevel=2)
+                    suppress_silence = False
+                    suppress_ts_mask = None
+                else:
+                    suppress_ts_mask = prep_wf_mask(audio_segment, wfw)
+                    if not suppress_ts_mask.any():
+                        warnings.warn(
+                            'The audio appears to be entirely silent. [suppress_silence] will be set to False',
+                            stacklevel=2)
+                        suppress_silence = False
+                if suppress_ts_mask is not None:
+                    if remove_background and \
+                            (1 - suppress_ts_mask.clamp(max=1).mean()) < silence_threshold:
+                        suppress_ts_mask = remove_lower_quantile(suppress_ts_mask,
+                                                                 upper_quantile=upper_quantile,
+                                                                 lower_quantile=lower_quantile,
+                                                                 lower_threshold=lower_threshold)
 
-                suppress_ts_mask = pad_or_trim(suppress_ts_mask, 1501)
-                suppress_ts_mask = finalize_mask(suppress_ts_mask,
-                                                 suppress_middle=suppress_middle,
-                                                 max_index=int(segment_max_ts))
+                    suppress_ts_mask = pad_or_trim(suppress_ts_mask, 1501)
+                    suppress_ts_mask = finalize_mask(suppress_ts_mask,
+                                                     suppress_middle=suppress_middle,
+                                                     max_index=int(segment_max_ts))
 
-                if suppress_ts_mask.all():  # segment is silent
-                    seek += segment.shape[-1]  # fast-forward to the next segment boundary
-                    update_pbar()
-                    continue
-            else:
-                suppress_ts_mask = None
+                    if suppress_ts_mask.all():  # segment is silent
+                        seek += segment_samples  # fast-forward to the next segment boundary
+                        update_pbar()
+                        continue
 
             decode_options["prompt"] = all_tokens[prompt_reset_since:]
             result, finalized_ts_tokens, ts_logits = decode_with_fallback(segment,
@@ -478,7 +491,7 @@ def transcribe_word_level(
                     should_skip = False
 
                 if should_skip:
-                    seek += segment.shape[-1]  # fast-forward to the next segment boundary
+                    seek += segment_samples  # fast-forward to the next segment boundary
                     continue
 
             if refine_ts_num:
@@ -519,7 +532,7 @@ def transcribe_word_level(
                 last_timestamp_position = (
                     min(tokens[last_slice - 1].item() - tokenizer.timestamp_begin, segment_max_ts)
                 )
-                seek += last_timestamp_position * input_stride
+                seek += int(last_timestamp_position * sample_per_token)
                 all_tokens.extend(tokens[: last_slice + 1].tolist())
             else:
                 duration = segment_duration
@@ -542,12 +555,12 @@ def transcribe_word_level(
                     word_ts_logits=ts_logits
                 )
 
-                seek += segment.shape[-1]
+                seek += segment_samples
                 all_tokens.extend(tokens.tolist())
 
             if all_segments:
                 all_segments[-1]['anchor_point'] = True
-                all_segments[-1]['next_offset'] = float(seek * HOP_LENGTH / SAMPLE_RATE)
+                all_segments[-1]['next_offset'] = seek / SAMPLE_RATE
             if not condition_on_previous_text or result.temperature > 0.5:
                 # do not feed the prompt tokens if a high temperature was used
                 prompt_reset_since = len(all_tokens)
@@ -624,7 +637,8 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     if cpu_preload:
-        model = whisper.load_model(name, device='cpu', download_root=download_root, in_memory=in_memory).to(device=device)
+        model = whisper.load_model(name, device='cpu', download_root=download_root, in_memory=in_memory).to(
+            device=device)
     else:
         model = whisper.load_model(name, device=device, download_root=download_root, in_memory=in_memory)
     modify_model(model)
@@ -707,6 +721,13 @@ def cli():
                         help="whether to adhere closely to the top predictions while stabilizing timestamps")
     parser.add_argument('--ts_num', type=int, default=10,
                         help="number of top word-level timestamp predictions to use for stabilization")
+
+    parser.add_argument('--ts_batch_size', type=int,
+                        help="number of extra noisy samples to use for word-level timestamps; "
+                             "the logits of these samples are averaged only for decoding word-level timestamps")
+    parser.add_argument('--ts_batch_noise', type=float, default=0.25,
+                        help="percentage of noise to add to the samples for [ts_batch_size]")
+
     parser.add_argument('--suppress_silence', type=str2bool, default=True,
                         help="whether to suppress timestamp where audio is silent at segment-level")
     parser.add_argument('--suppress_middle', type=str2bool, default=True,
@@ -746,7 +767,7 @@ def cli():
     parser.add_argument('--demucs_output', nargs="+", type=str,
                         help='path(s) to save the vocals isolated by Demucs as WAV file(s)')
     parser.add_argument('--only_voice_freq', '-ovf', action='store_true',
-                        help='whether to only use sound between 250 - 5000 Hz, where majority of human speech are.')
+                        help='whether to only use sound between 200 - 5000 Hz, where majority of human speech are.')
 
     # word/segment-level srt output
     parser.add_argument('--combine_compound', type=str2bool, default=False,
@@ -845,7 +866,7 @@ def cli():
         if use_demucs is None:
             use_demucs = True
     else:
-        demucs_outputs = [None]*len(inputs)
+        demucs_outputs = [None] * len(inputs)
         if use_demucs is None:
             use_demucs = False
 

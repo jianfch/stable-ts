@@ -6,18 +6,14 @@ This script modifies and adds more robust decoding logic on top of OpenAI's Whis
 ![image](https://user-images.githubusercontent.com/28970749/218944014-b915af81-1cf5-4522-a823-e0f476fcc550.png)
 
 
-## TODO
-- [ ] Add function to stabilize with multiple inferences
-- [x] Add word timestamping (previously only token based)
-
 ## Setup
 ```
-pip install stable-ts
+pip install -U stable-ts
 ```
 
-To install the lastest version:
-```commandline
-pip install git+https://github.com/jianfch/stable-ts.git
+To install the lastest commit:
+```
+pip install -U git+https://github.com/jianfch/stable-ts.git
 ```
 
 ### Command-line usage
