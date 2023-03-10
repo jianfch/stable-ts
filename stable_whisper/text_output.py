@@ -1,5 +1,6 @@
 import json
 import os
+import copy
 from typing import List
 from itertools import groupby, chain
 from stable_whisper.stabilization import group_word_timestamps, tighten_timestamps, MIN_DUR
@@ -490,9 +491,25 @@ def results_to_sentence_word_ass(res: (dict, list), ass_path: str,
 
 
 def save_as_json(results: dict, path: str):
+    """
+    Save results as json.
+    """
+    def list_all(x):
+        if isinstance(x, dict):
+            for k in x:
+                x[k] = list_all(x[k])
+        elif isinstance(x, (list, tuple)):
+            if isinstance(x, tuple):
+                x = list(x)
+            for i, j in enumerate(x):
+                x[i] = list_all(j)
+        elif callable(getattr(x, 'tolist', None)):
+            x = x.tolist()
+        return x
+
     if not path.lower().endswith('.json'):
         path += '.json'
-    results = json.dumps(results, allow_nan=True)
+    results = json.dumps(list_all(copy.deepcopy(results)), allow_nan=True)
     _save_as_file(results, path)
 
 

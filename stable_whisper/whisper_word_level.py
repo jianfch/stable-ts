@@ -173,7 +173,7 @@ def transcribe_word_level(
     if (decode_options.get('beam_size') or decode_options.get('best_of')) and ts_batch_size:
         raise NotImplementedError('[ts_batch_size] not supported with [beam_size] or [best_of].')
 
-    dtype = torch.float16 if decode_options.get("fp16", True) else torch.float32
+    dtype = torch.float16 if decode_options.get("fp16", True) and not getattr(model, 'dq', False) else torch.float32
     if model.device == torch.device("cpu"):
         if torch.cuda.is_available():
             warnings.warn("Performing inference on CPU when CUDA is available")
@@ -611,7 +611,8 @@ def modify_model(model: Whisper):
 
 # modified version of whisper.load_model
 def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
-               download_root: str = None, in_memory: bool = False, cpu_preload: bool = True) -> Whisper:
+               download_root: str = None, in_memory: bool = False,
+               cpu_preload: bool = True, dq: bool = False) -> Whisper:
     """
      Load a modified Whisper ASR model
 
@@ -629,19 +630,26 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     cpu_preload: bool
         load model into CPU memory first then move model to specified device;
         this reduces GPU memory usage when loading model
+    dq: bool
+        whether to apply Dynamic Quantization to model to reduced memory usage and increase inference speed
+        but at the cost of a slight decrease in accuracy. Only for CPU.
+        Note: The overhead might make inference slower for models smaller than 'large'
     Returns
     -------
     model : Whisper
         The Whisper ASR model instance
     """
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device is None or dq:
+        device = "cuda" if torch.cuda.is_available() and not dq else "cpu"
     if cpu_preload:
         model = whisper.load_model(name, device='cpu', download_root=download_root, in_memory=in_memory).to(
             device=device)
     else:
         model = whisper.load_model(name, device=device, download_root=download_root, in_memory=in_memory)
     modify_model(model)
+    if dq:
+        from .quantization import ptdq_linear
+        ptdq_linear(model)
     return model
 
 
@@ -701,6 +709,11 @@ def cli():
                              "(with stabilized word-level timestamps) to the console.")
     parser.add_argument("--sync_empty", action='store_true',
                         help="whether to synchronize CUDA device and empty cache after each prediction")
+    parser.add_argument("--dynamic_quantization", "-dq", action='store_true',
+                        help="whether to apply Dynamic Quantization to model "
+                             "to reduced memory usage and increase inference speed "
+                             "at cost of slight decrease in accuracy; Only for CPU; "
+                             "NOTE: overhead might make inference slower for models smaller than 'large'")
 
     parser.add_argument("--task", type=str, default="transcribe",
                         choices=["transcribe", "translate"],
@@ -1002,7 +1015,11 @@ def cli():
     else:
         model_loading_str = ''
 
-    model = load_model(model_name, device=device, download_root=model_dir, cpu_preload=cpu_preload)
+    model = load_model(model_name,
+                       device=device,
+                       download_root=model_dir,
+                       cpu_preload=cpu_preload,
+                       dq=args.pop('dynamic_quantization', False))
 
     if model_loading_str:
         print(f'Loaded {model_loading_str}  ')
