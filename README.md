@@ -6,6 +6,10 @@ This script modifies and adds more robust decoding logic on top of OpenAI's Whis
 ![image](https://user-images.githubusercontent.com/28970749/218944014-b915af81-1cf5-4522-a823-e0f476fcc550.png)
 
 
+## Update:
+The official [Whisper]() repo introduced word-level timestamps in a recent [commit](https://github.com/openai/whisper/commit/500d0fe9668fae5fe2af2b6a3c4950f8a29aa145) which produces more reliable timestamps than method used in this script. 
+This script has not been updated to utilize this new version of Whisper yet. It will be updated for next release, version 2.0.0.  
+
 ## Setup
 ```
 pip install -U stable-ts
