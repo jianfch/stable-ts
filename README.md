@@ -2,11 +2,9 @@
 
 This script modifies [OpenAI's Whisper](https://github.com/openai/whisper) to produce more reliable timestamps.
 
-![image](./demo/jfk.PNG)
+![jfk](https://user-images.githubusercontent.com/28970749/225825244-f3df9607-91ab-4011-a333-7e3ae94da08f.PNG)
 
-
-./demo/jfk.mp4
-
+https://user-images.githubusercontent.com/28970749/225825286-cdb14d70-566f-454b-a2b3-b61b4b3e09c9.mp4
 
 ### What's new in 2.0.0 ?
 - updated to use Whisper's more reliable word-level timestamps method. 
@@ -14,9 +12,7 @@ This script modifies [OpenAI's Whisper](https://github.com/openai/whisper) to pr
 - can now suppress silence with [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.2.0+)
 - non-VAD silencing suppress is also more robust 
 
-
-./demo/a.mp4
-
+https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-aedd-069389b8ae43.mp4
 
 ### Features
 - more control over the timestamps than default Whisper
@@ -67,11 +63,11 @@ result.save_as_json('audio.json')
 
 ### Regrouping Words
 Stable-ts has a preset for regrouping word into different segments. This preset is enabled by `regroup=True`.
-But are other built-in regrouping methods that allow you to customize the regrouping logic. 
+But there are other built-in regrouping methods that allow you to customize the regrouping logic. 
 This preset is just a predefined a combination of those methods.
 
 
-./demo/xata.mp4
+https://user-images.githubusercontent.com/28970749/225825357-487da234-d34e-4049-badf-9d643091f574.mp4
 
 
 ```python
@@ -85,7 +81,9 @@ result1.split_by_punctuation(['.', '。', '?', '？'], True).split_by_gap(.5).me
 ### Visualizing Suppression
 - Requirement: [Pillow](https://github.com/python-pillow/Pillow) or [opencv-python](https://github.com/opencv/opencv-python)
 #### Non-VAD Suppression
-![image](./demo/novad.png)
+
+![novad](https://user-images.githubusercontent.com/28970749/225825408-aca63dbf-9571-40be-b399-1259d98f93be.png)
+
 ```python
 import stable_whisper
 # regions on the waveform colored red is where it will be likely be suppressed and marked to as silent
@@ -93,7 +91,9 @@ import stable_whisper
 stable_whisper.visualize_suppression('audio.mp3', 'image.png', q_levels=20, k_size = 5) 
 ```
 #### VAD Suppression
-![image](./demo/vad.png)
+
+![vad](https://user-images.githubusercontent.com/28970749/225825446-980924a5-7485-41e1-b0d9-c9b069d605f2.png)
+
 ```python
 # [vad_threshold=0.35] is defaults for VAD.
 stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_threshold=0.35)
