@@ -1,15 +1,18 @@
 import warnings
-from copy import deepcopy
+from typing import List, Union, Tuple
 from itertools import chain
-from typing import Union, List, Tuple
+
+import torch
+import torch.nn.functional as F
 import numpy as np
-from whisper.tokenizer import Tokenizer
+
+from whisper.audio import TOKENS_PER_SECOND, SAMPLE_RATE, N_SAMPLES_PER_TOKEN
 
 
-MIN_DUR = 0.02
-
-
-def check_ascending_sequence(seq: Union[List[Union[int, float]], np.ndarray], verbose=True) -> bool:
+def is_ascending_sequence(
+        seq: List[Union[int, float]],
+        verbose=True
+) -> bool:
     """
     check if a sequence of numbers are in ascending order
     """
@@ -25,468 +28,335 @@ def check_ascending_sequence(seq: Union[List[Union[int, float]], np.ndarray], ve
     return is_ascending
 
 
-def check_ascending_sentence_ts(res: (dict, list)) -> bool:
-    segs = res['segments'] if isinstance(res, dict) else res
-    return check_ascending_sequence(list(chain.from_iterable((float(i['start']), float(i['end']))
-                                                             for i in segs)))
+def valid_ts(
+        ts: List[dict],
+        warn=True
+) -> bool:
+    valid = is_ascending_sequence(list(chain.from_iterable([s['start'], s['end']] for s in ts)), False)
+    if warn and not valid:
+        warnings.warn(message='Found timestamp(s) jumping backwards in time. '
+                              'Use word_timestamps=True to avoid the issue.')
+    return valid
 
 
-def check_ascending_word_ts(res: (dict, list)) -> bool:
-    cc = group_word_timestamps(res['segments'] if isinstance(res, dict) else res, ts_key='word_timestamps')
-    return check_ascending_sequence((list(chain.from_iterable((float(i['start']), float(i['end']))
-                                                              for i in cc))))
+def mask2timing(
+        silence_mask: (np.ndarray, torch.Tensor)
+) -> (Tuple[np.ndarray, np.ndarray], None):
+    if silence_mask is None or not silence_mask.any():
+        return
+    assert silence_mask.ndim == 1
+    if isinstance(silence_mask, torch.Tensor):
+        silences = silence_mask.cpu().numpy()
+    elif isinstance(silence_mask, np.ndarray):
+        silences = silence_mask.copy()
+    else:
+        raise NotImplementedError(f'Expected torch.Tensor or numpy.ndarray, but got {type(silence_mask)}')
+    silences[0] = False
+    silences[-1] = False
+    silent_starts = np.logical_and(~silences[:-1], silences[1:]).nonzero()[0] / TOKENS_PER_SECOND
+    silent_ends = np.logical_and(silences[:-1], ~silences[1:]).nonzero()[0] / TOKENS_PER_SECOND
+    return silent_starts, silent_ends
 
 
-def is_equal_ts(a: (float, int, np.ndarray), b: (float, int, np.ndarray), rtol=1e-03):
-    """
-    check if timestamp a and timestamp b are equal within the relative tolerance (rtol)
-    """
-    return np.isclose(a, b, rtol=rtol)
+def timing2mask(
+        silent_starts: np.ndarray,
+        silent_ends: np.ndarray,
+        size: int,
+        time_offset: float = None
+) -> torch.Tensor:
+    assert len(silent_starts) == len(silent_ends)
+    ts_token_mask = torch.zeros(size, dtype=torch.bool)
+    if time_offset:
+        silent_starts = (silent_starts - time_offset).clip(min=0)
+        silent_ends = (silent_ends - time_offset).clip(min=0)
+    mask_i = (silent_starts * TOKENS_PER_SECOND).round().astype(np.int16)
+    mask_e = (silent_ends * TOKENS_PER_SECOND).round().astype(np.int16)
+    for mi, me in zip(mask_i, mask_e):
+        ts_token_mask[mi:me] = True
+
+    return ts_token_mask
 
 
-def check_is_same_results(res0: (dict, list), res1: (dict, list), check_unstable=False) -> bool:
-    """
-    check if res0 and res1 have same timestamps
-    """
-    if isinstance(res0, dict):
-        res0 = res0['segments']
-    if isinstance(res1, dict):
-        res1 = res1['segments']
-    ts_key = 'unstable_word_timestamps' if check_unstable else 'word_timestamps'
-    inner_ts_key = 'timestamps' if check_unstable else 'timestamp'
+def suppress_silence(
+        result_obj,
+        silent_starts: np.ndarray,
+        silent_ends: np.ndarray,
+        min_word_dur: float
+):
+    assert len(silent_starts) == len(silent_ends)
+    if len(silent_starts) == 0:
+        return
+    if result_obj.end - result_obj.start > min_word_dur:
 
-    def _reduce(x):
-        if isinstance(x, np.ndarray):
-            return set(tuple(x)) == {True}
-        return x
+        start_match = np.logical_and(
+            silent_starts <= result_obj.start,
+            result_obj.start < silent_ends
+        ).nonzero()[0].tolist()
 
-    t = set(set(_reduce(is_equal_ts(a[inner_ts_key], b[inner_ts_key])) for a, b in zip(i[ts_key], j[ts_key])) == {True}
-            for i, j in zip(res0['segments'], res1['segments']))
-    return t == {True}
+        end_match = np.logical_and(
+            silent_starts < result_obj.end,
+            result_obj.end <= silent_ends
+        ).nonzero()[0].tolist()
+
+        if len(start_match) != 0:
+            if len(end_match) == 0:
+                new_start = silent_ends[start_match[0]]
+                if result_obj.end - new_start > min_word_dur:
+                    result_obj.start = new_start
+        elif len(end_match) != 0:
+            new_end = silent_starts[end_match[0]]
+            if new_end - result_obj.start > min_word_dur:
+                result_obj.end = new_end
 
 
-def group_word_timestamps(res: (dict, List[dict]), one_group=True, combine_compound=False,
-                          ts_key: str = None, min_dur: float = None):
-    if ts_key is None:
-        ts_key = 'whole_word_timestamps'
+def standardize_audio(
+        audio: Union[torch.Tensor, np.ndarray, str]
+) -> torch.Tensor:
+    if isinstance(audio, str):
+        from whisper.audio import load_audio
+        audio = load_audio(audio)
+    if isinstance(audio, np.ndarray):
+        audio = torch.from_numpy(audio)
 
-    if min_dur is None:
-        min_dur = MIN_DUR
+    return audio.float()
 
-    assert min_dur > 0, 'min_dur must be greater than 0'
 
-    def group_ts(ts_: List[dict], start) -> List[dict]:
-        group0: List[dict] = []
-        for w_ts_i, w_ts in enumerate(ts_):
-            curr_end = w_ts['timestamp']
-            if group0:
-                curr_start = group0[-1]['end']
-                if not combine_compound or w_ts['word'].startswith(' '):
-                    if group0[-1]['end'] - group0[-1]['start'] >= min_dur:
-                        curr_dur = curr_end - curr_start
-                        prev_word_len = len(group0[-1]['text'])
-                        is_last = w_ts == ts_[-1]
-                        next_dur = max(min_dur, curr_dur) if is_last else (ts_[w_ts_i + 1]['timestamp'] - curr_end)
-                        next_word_len = prev_word_len if is_last else len(ts_[w_ts_i + 1]['word'])
-                        if curr_dur >= min_dur or \
-                                not is_last or \
-                                (next_dur < min_dur) or \
-                                next_dur < curr_dur or \
-                                next_word_len < prev_word_len:
-                            group0.append(dict(start=curr_start,
-                                               end=curr_end,
-                                               text=w_ts['word']))
-                            continue
+def audio2loudness(
+        audio_tensor: torch.Tensor
+) -> (torch.Tensor, None):
+    assert audio_tensor.dim() == 1, f'waveform must be 1D, but got {audio_tensor.dim()}D'
+    audio_tensor = audio_tensor.abs()
+    audio_tensor = audio_tensor / min(1., (audio_tensor.quantile(0.999, dim=-1) * 1.75))
+    token_count = round(audio_tensor.shape[-1] / N_SAMPLES_PER_TOKEN)
+    if token_count > 1:
+        audio_tensor = F.interpolate(
+            audio_tensor[None, None],
+            size=token_count,
+            mode='linear',
+            align_corners=False
+        )[0, 0]
+        return audio_tensor
 
-                group0[-1]['end'] = max(curr_start, curr_end)
-                group0[-1]['text'] += w_ts['word']
+
+def visualize_mask(
+        loudness_tensor: torch.Tensor,
+        silence_mask: torch.Tensor = None,
+        width: int = 1500,
+        height: int = 200,
+        output: str = None,
+):
+    no_silence = silence_mask is None or not silence_mask.any()
+    assert no_silence or silence_mask.shape[0] == loudness_tensor.shape[0]
+    if loudness_tensor.shape[0] < 2:
+        raise NotImplementedError(f'audio size, {loudness_tensor.shape[0]}, is too short to visualize')
+    else:
+        width = loudness_tensor.shape[0] if width == -1 else width
+        im = torch.zeros((height, width, 3), dtype=torch.uint8)
+        mid = round(height / 2)
+        for i, j in enumerate(loudness_tensor.tolist()):
+            j = round(abs(j) * mid)
+            if j == 0 or width < i:
+                continue
+            im[mid - j:mid + 1, i] = 255
+            im[mid + 1:mid + j + 1, i] = 255
+        if not no_silence:
+            im[:, silence_mask, 1:] = 0
+        im = im.cpu().numpy()
+        if output and not output.endswith('.png'):
+            output += '.png'
+        try:
+            from PIL import Image
+        except ModuleNotFoundError:
+            try:
+                import cv2
+            except ModuleNotFoundError:
+                raise ModuleNotFoundError('Failed to import "PIL" or "cv2" to visualize suppression mask. '
+                                          'Try "pip install Pillow" or "pip install opencv-python"')
             else:
-                group0.append(dict(start=start,
-                                   end=curr_end,
-                                   text=w_ts['word']))
-
-        return group0
-
-    def group_ts_final(first_group: List[dict]) -> List[dict]:
-
-        group1: List[dict] = []
-        prev_ts_dict_dur = 0
-        for i, ts_dict in enumerate(first_group):
-            ni = i + 1
-            curr_ts_dict_dur = ts_dict['end'] - ts_dict['start']
-            next_ts_dict_dur = first_group[ni]['end'] - first_group[ni]['start'] if ni < len(first_group) else 0
-            merge_with_prev = curr_ts_dict_dur < min_dur and (
-                    prev_ts_dict_dur < next_ts_dict_dur or ni == len(first_group))
-
-            if merge_with_prev and group1:
-                group1[-1]['end'] = ts_dict['end']
-                group1[-1]['text'] += ts_dict['text']
+                im = im[..., [2, 1, 0]]
+                if isinstance(output, str):
+                    cv2.imwrite(output, im)
+                else:
+                    cv2.imshow('image', im)
+                    cv2.waitKey(0)
+        else:
+            im = Image.fromarray(im)
+            if isinstance(output, str):
+                im.save(output)
             else:
-                group1.append(ts_dict)
-
-        return group1
-
-    segs: List[dict] = res['segments'] if isinstance(res, dict) else res
-    assert set(ts_key in seg for seg in segs) == {True}, f'input contains missing {ts_key}'
-
-    grouped = (group_ts(seg[ts_key], seg['start']) for seg in segs)
-    return group_ts_final(list(chain.from_iterable(grouped))) if one_group else list(grouped)
+                im.show(im)
+        if output:
+            print(f'Save: {output}')
 
 
-def tighten_timestamps(res: dict, end_at_last_word=True, end_before_period=False, start_at_first_word=False) -> dict:
-    res = deepcopy(res)
-    if not any((end_at_last_word, end_before_period, start_at_first_word)):
-        return res
-    for i in range(len(res['segments'])):
-        if start_at_first_word:
-            res['segments'][i]['start'] = res['segments'][i]['word_timestamps'][0]['timestamp']
-        if end_before_period and \
-                res['segments'][i]['word_timestamps'][-1] == '.' and \
-                len(res['segments'][i]['word_timestamps']) > 1:
-            res['segments'][i]['end'] = res['segments'][i]['word_timestamps'][-2]['timestamp']
-        elif end_at_last_word:
-            res['segments'][i]['end'] = res['segments'][i]['word_timestamps'][-1]['timestamp']
-
-    return res
-
-
-def _get_min_estimation(estimations: List[Union[list, np.ndarray]],
-                        min_: (int, float) = None,
-                        max_: (int, float) = None) -> np.ndarray:
-    estimations = deepcopy(estimations)
-    estimations = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, estimations))
-    prev_min = min_ or 0
-    curr_max = max_ or np.max(estimations[-1])
-
-    min_est = []
-    for curr_est in estimations:
-        curr_min = curr_est[np.logical_and(curr_max > curr_est, curr_est > prev_min)]
-        curr_min = np.min(curr_min) if curr_min.shape[0] else prev_min
-        min_est.append(curr_min)
-        prev_min = curr_min
-
-    return np.array(min_est)
-
-
-def _get_max_estimation(estimations: List[Union[list, np.ndarray]],
-                        max_: (int, float) = None,
-                        min_: (int, float) = None) -> np.ndarray:
-    estimations = deepcopy(estimations)
-    estimations = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, estimations))
-    prev_max = max_ or np.max(estimations[-1])
-    curr_min = np.min(estimations[0]) if min_ is None else min_
-
-    max_est = []
-    for curr_est in reversed(estimations):
-        curr_max = curr_est[np.logical_and(prev_max > curr_est, curr_est > curr_min)]
-        curr_max = np.max(curr_max) if curr_max.shape[0] else prev_max
-        max_est.append(curr_max)
-        prev_max = curr_max
-
-    max_est.reverse()
-    return np.array(max_est)
-
-
-def _remove_overestimation(x: Union[np.ndarray, List[Union[int, float]]], alt_est: List[Union[list, np.ndarray]] = None,
-                           max_: (int, float) = None, min_: (int, float) = None,
-                           aggressive=False) -> np.ndarray:
-    x = np.array(x) if isinstance(x, list) else deepcopy(x)
-    if alt_est is not None:
-        alt_est = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, alt_est))
-    assert x.ndim == 1
-    assert alt_est is None or len(alt_est) == x.shape[0]
-    max_val = x[-1] if max_ is None else max_
-    min_val = x[0] if min_ is None else min_
-
-    def curr_max_min(val):
-        if min_ is None:
-            return val
-        return max(min_, val)
-
-    if min_ is not None:
-        x[x < min_] = min_
-    reduce_ = np.min if aggressive else np.mean
-    for i in range(x.shape[-1] - 1, -1, -1):
-        if x[i] > max_val or (i > 1 and x[i] < reduce_(x[:i])):  # spikes or dips
-            if alt_est is None or alt_est[i] is None:
-                x[i] = max_val
-            else:
-                tmp_min = min_val if i < 2 else curr_max_min(np.mean(x[:i]))
-                alt_ = alt_est[i][np.logical_and(alt_est[i] < max_val, alt_est[i] > tmp_min)]
-                x[i] = max_val if alt_.shape[0] == 0 else alt_[0]
-        max_val = x[i]
-    return x
-
-
-def _remove_underestimation(x: Union[np.ndarray, List[Union[int, float]]],
-                            alt_est: List[Union[list, np.ndarray]] = None,
-                            min_: (int, float) = None, max_: (int, float) = None,
-                            aggressive=False) -> np.ndarray:
-    x = np.array(x) if isinstance(x, list) else deepcopy(x)
-    if alt_est is not None:
-        alt_est = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, alt_est))
-    assert x.ndim == 1
-    assert alt_est is None or len(alt_est) == x.shape[0]
-    min_val = x[0] if min_ is None else min_
-    max_val = x[-1] if max_ is None else max_
-
-    def curr_min_max(val):
-        if max_ is None:
-            return val
-        return min(max_, val)
-
-    if max_ is not None:
-        x[x > max_] = max_
-    reduce_ = np.max if aggressive else np.mean
-    max_i_reduce = x.shape[-1] - 2
-    for i in range(0, x.shape[-1]):
-        if x[i] < min_val or (i < max_i_reduce and x[i] > reduce_(x[i + 1:])):  # dips or spikes
-            if alt_est is None or alt_est[i] is None:
-                x[i] = min_val
-            else:
-                tmp_max = max_val if i >= max_i_reduce else curr_min_max(np.mean(x[i + 1:]))
-                alt_ = alt_est[i][np.logical_and(alt_est[i] > min_val, alt_est[i] < tmp_max)]
-                x[i] = min_val if alt_.shape[0] == 0 else alt_[0]
-        min_val = x[i]
-    return x
-
-
-def _merge_max_min_estimation(mx: Union[np.ndarray, List[Union[int, float]]],
-                              mn: Union[np.ndarray, List[Union[int, float]]],
-                              alt_est: List[Union[list, np.ndarray]] = None) -> np.ndarray:
-    mx = np.array(mx) if isinstance(mx, list) else deepcopy(mx)
-    mn = np.array(mn) if isinstance(mn, list) else deepcopy(mn)
-    if alt_est is not None:
-        alt_est = list(map(lambda est_: np.array(est_) if isinstance(est_, list) else est_, alt_est))
-    assert mx.ndim == 1 and mn.ndim == 1
-    assert mx.shape[0] == mn.shape[0]
-    assert alt_est is None or len(alt_est) == mx.shape[0]
-
-    pref_mx = np.var(mx) > np.var(mn)
-    if pref_mx:
-        mn[0] = mx[0]
-    prev_min = mn[0]
-    for i in range(1, mn.shape[0]):
-        if prev_min > mn[i]:
-            if mn[i] > mx[i]:  # prev_min > mn[i] > mx[i]
-                mn[i] = prev_min
-            elif mx[i] > mn[i]:
-                if prev_min > mx[i]:  # prev_min > mx[i] > mn[i]
-                    mn[i] = prev_min
-                else:  # mx[i] > prev_min > mn[i]
-                    alt_ = alt_est[i][np.logical_and(alt_est[i] > prev_min, alt_est[i] < mx[i])]
-                    mn[i] = (mx[i] if pref_mx else prev_min) if alt_.shape[0] == 0 else alt_[0]
-            else:  # prev_min > mn[i] == mx[i]
-                mn[i] = prev_min
-        elif mn[i] > prev_min:
-            # if prev_min > mx[i]:  # mn[i] > prev_min > mx[i]
-            #     pass
-            if mx[i] > prev_min:
-                if mn[i] > mx[i]:  # mn[i] > mx[i] > prev_min
-                    pass
-                elif mx[i] > mn[i]:  # mx[i] > mn[i] > prev_min
-                    alt_ = alt_est[i][np.logical_and(alt_est[i] > mn[i], alt_est[i] < mx[i])]
-                    if alt_.shape[0]:
-                        mn[i] = alt_[0]
-                    elif pref_mx:
-                        mn[i] = mx[i]
-            #     else:  # mx[i] == mn[i] > prev_min
-            #         pass
-            # else:  # mn[i] > mx[i] == prev_min
-            #     pass
-        else:  # mn[i] == prev_min
-            if mx[i] > mn[i]:  # mx[i] > mn[i] == prev_min
-                alt_ = alt_est[i][np.logical_and(alt_est[i] > mn[i], alt_est[i] < mx[i])]
-                if alt_.shape[0]:
-                    mn[i] = alt_[0]
-                elif pref_mx:
-                    mn[i] = mx[i]
-            # elif mn[i] > mx[i]:  # mn[i] == prev_min > mx[i]
-            #     pass
-            # else:  # mn[i] == prev_min == mx[i]
-            #     pass
-
-        prev_min = mn[i]
-
-    return mn
-
-
-def _avg_merge_min_max(mx: Union[np.ndarray, List[Union[int, float]]],
-                       mn: Union[np.ndarray, List[Union[int, float]]],
-                       alt_timestamps: List[Union[List[Union[int, float]], np.ndarray]] = None,
-                       max_: (int, float) = None, min_: (int, float) = None):
-    mx = np.array(mx) if isinstance(mx, list) else deepcopy(mx)
-    mn = np.array(mn) if isinstance(mn, list) else deepcopy(mn)
-    assert mx.ndim == mn.ndim == 1
-    assert mx.shape[0] == mn.shape[0]
-
-    avg_ = (mx + mn) / 2
-
-    if check_ascending_sequence(avg_, verbose=False):
-        return avg_
-
-    if not max_:
-        max_ = max(mx[-1], mn[-1])
-    if min_ is None:
-        min_ = min(mn[0], mx[0])
-
-    return _stabilize_timestamps(avg_, alt_timestamps, max_=max_, min_=min_)
-
-
-def _stabilize_timestamps(timestamps: Union[np.ndarray, List[Union[int, float]]],
-                          alt_timestamps: List[Union[List[Union[int, float]], np.ndarray]] = None,
-                          max_: (int, float) = None, min_: (int, float) = None, aggressive=False) -> np.ndarray:
-    mx = _remove_overestimation(timestamps, alt_est=alt_timestamps, max_=max_, min_=min_, aggressive=aggressive)
-    mn = _remove_underestimation(timestamps, alt_est=alt_timestamps, max_=max_, min_=min_, aggressive=aggressive)
-    return _merge_max_min_estimation(mx, mn, alt_timestamps)
-
-
-def _stabilize_more_timestamps(timestamps: List[Union[list, np.ndarray]],
-                               max_: (int, float) = None, min_: (int, float) = None, average=True) -> np.ndarray:
-    mx = _get_max_estimation(timestamps, max_=max_, min_=min_)
-    mn = _get_min_estimation(timestamps, max_=max_, min_=min_)
-    if average:
-        return _avg_merge_min_max(mx, mn, timestamps, max_=max_, min_=min_)
-    return _merge_max_min_estimation(mx, mn, timestamps)
-
-
-def stabilize_timestamps(segments: Union[List[dict], dict],
-                         top_focus=False, aggressive=False, average=True) -> List[dict]:
+def wav2mask(
+        audio: (torch.Tensor, np.ndarray, str),
+        q_levels: int = 20,
+        k_size: int = 5
+) -> (Tuple[torch.Tensor, Tuple[np.ndarray, np.ndarray]], None):
     """
+    Generate 1D mask from waveform for suppressing timestamp tokens.
+    """
+    loudness_tensor = audio2loudness(standardize_audio(audio))
+    if loudness_tensor is None:
+        return
+    p = k_size // 2 if k_size else 0
+    if p and p < loudness_tensor.shape[-1]:
+        assert k_size % 2, f'kernel_size must be odd but got {k_size}'
+        mask = torch.avg_pool1d(
+            F.pad(
+                loudness_tensor[None],
+                (p, p),
+                'reflect'
+            ),
+            kernel_size=k_size,
+            stride=1
+        )[0]
+    else:
+        mask = loudness_tensor.clone()
+
+    if q_levels:
+        mask = mask.mul(q_levels).round()
+
+    mask = mask.bool()
+
+    temp_timings = mask2timing(mask)
+    s, e = temp_timings
+    se_mask = (e - s) > 0.1
+    s = s[se_mask]
+    e = e[se_mask]
+    mask = ~timing2mask(s, e, loudness_tensor.shape[-1])
+
+    if not mask.any():
+        return
+
+    return mask
+
+
+_model_cache = {}
+
+
+def get_vad_silence_func(
+        onnx=False,
+        verbose: bool = False
+):
+    assert SAMPLE_RATE in (16000, 8000), f'silero-vad does not support samplerate: {SAMPLE_RATE}'
+    if onnx in _model_cache:
+        model, get_ts = _model_cache[onnx]
+    else:
+        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
+                                      model='silero_vad',
+                                      verbose=verbose,
+                                      onnx=onnx)
+        get_ts = utils[0]
+        _model_cache[onnx] = (model, get_ts)
+
+    warnings.filterwarnings('ignore', message=r'operator \(\) profile_node.*', category=UserWarning)
+
+    def get_speech_timestamps(wav: torch.Tensor, threshold: float = .35):
+        return get_ts(wav, model, threshold, min_speech_duration_ms=100, min_silence_duration_ms=20)
+
+    def vad_silence_timing(
+            audio: (torch.Tensor, np.ndarray, str),
+            speech_threshold: float = .35
+    ) -> (Tuple[np.ndarray, np.ndarray], None):
+
+        audio = standardize_audio(audio)
+
+        total_duration = round(audio.shape[-1] / SAMPLE_RATE, 3)
+        if not total_duration:
+            return
+        ori_t = torch.get_num_threads()
+        if verbose is not None:
+            print(f'Predicting silences(s) with VAD...\r', end='')
+        torch.set_num_threads(1)  # vad was optimized for single performance
+        speech_ts = get_speech_timestamps(audio, speech_threshold)
+        if verbose is not None:
+            print(f'Predicted silence(s) with VAD       ')
+        torch.set_num_threads(ori_t)
+        if len(speech_ts) == 0:  # all silent
+            return np.array([0.0]), np.array([total_duration])
+        silent_starts = []
+        silent_ends = []
+        for ts in speech_ts:
+            start = round(ts['start'] / SAMPLE_RATE, 3)
+            end = round(ts['end'] / SAMPLE_RATE, 3)
+            if start != 0:
+                silent_ends.append(start)
+            if end != total_duration:
+                silent_starts.append(end)
+
+        if len(silent_starts) == 0 and len(silent_ends) == 0:
+            return
+
+        if len(silent_starts) != 0 and silent_ends[-1] < silent_starts[-1]:
+            silent_ends.append(total_duration)
+
+        if len(silent_ends) != 0 and silent_starts[0] > silent_ends[0]:
+            silent_starts.insert(0, 0.0)
+
+        silent_starts = np.array(silent_starts)
+        silent_ends = np.array(silent_ends)
+
+        return silent_starts, silent_ends
+
+    return vad_silence_timing
+
+
+def visualize_suppression(
+        audio: Union[torch.Tensor, np.ndarray, str],
+        output: str = None,
+        q_levels: int = 20,
+        k_size: int = 5,
+        vad_threshold: float = 0.35,
+        vad: bool = False,
+        max_width: int = 1500,
+        height: int = 200
+):
+    """
+
+    Regions on the waveform colored red is where it will be likely be suppressed and marked to as silent.
 
     Parameters
     ----------
-    segments: Union[List[dict], dict]
-        result['segments'] or result
-    top_focus: bool
-        adhere closely to the top predictions for word timestamps
-    aggressive: bool
-        only if top_focus=True,
-        allow greater variation in word_timestamps/whole_word_timestamps
-    average: bool
-        only if top_focus=False,
-        average min and max of unstable_word_timestamps to get word_timestamps/whole_word_timestamps
+    audio: Union[torch.Tensor, np.ndarray, str]
+        Audio to visualize.
+    output: str
+        Path to save visualization. If none is provided, image will be shown directly via Pillow or opencv-python.
+    q_levels: int
+        Quantization levels for generating timestamp suppression mask; ignored if [vad]=true. (Default: 20)
+        Acts as a threshold to marking sound as silent.
+        Fewer levels will increase the threshold of volume at which to mark a sound as silent.
+    k_size: int
+        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if [vad]=true. (Default: 5)
+        Recommend 5 or 3; higher sizes will reduce detection of silence.
+    vad_threshold: float
+        Threshold for detecting speech with Silero VAD. (Default: 0.35)
+        Low threshold reduces false positives for silence detection.
+    vad: bool
+        Whether to use Silero VAD to generate timestamp suppression mask. (Default: False)
+        Silero VAD requires PyTorch 1.12.0+. Official repo: https://github.com/snakers4/silero-vad
+    max_width: int
+        Maximum width of visualization to avoid overly large image from long audio. (Default: 1500)
+        Each unit of pixel is equivalent  to 1 token.  Use -1 to visualize the entire audio track.
+    height: int
+        Height of visualization.
 
     """
-    if isinstance(segments, dict):
-        segments = segments['segments']
-    if not segments:
-        warnings.warn('No Segments Found')
-        return []
-    missing_ts_idx = set(map(lambda x: None if x[1].get('unstable_word_timestamps') else x[0], enumerate(segments))) - {
-        None}
-    no_word_timestamps = len(missing_ts_idx) == len(segments)
-    if not no_word_timestamps and missing_ts_idx:
-        warnings.warn(f'Segments {list(missing_ts_idx)} are missing unstable_word_timestamps. '
-                      f'Word-level timestamp stabilization will skipped')
+    max_n_samples = None if max_width == -1 else round(max_width * N_SAMPLES_PER_TOKEN)
 
-    segments = deepcopy(segments)
-    sectioned_segments: List[List] = [[]]
-    for i, seg in enumerate(segments, 1):
-        sectioned_segments[-1].append(seg)
-        if seg['anchor_point']:
-            if i < len(segments):
-                sectioned_segments.append([])
+    audio = standardize_audio(audio)
+    if max_n_samples is not None:
+        audio = audio[:max_n_samples]
+    loudness_tensor = audio2loudness(audio)
+    width = min(max_width, loudness_tensor.shape[-1])
+    if loudness_tensor is None:
+        raise NotImplementedError(f'Audio is too short and cannot visualized.')
 
-    assert all(set(len(set(s['offset'] for s in segs)) == 1 for segs in sectioned_segments))
+    if vad:
+        silence_timings = get_vad_silence_func()(audio, vad_threshold)
+        silence_mask = None if silence_timings is None else timing2mask(*silence_timings, size=width)
+    else:
+        silence_mask = wav2mask(audio, q_levels=q_levels, k_size=k_size)
 
-    sectioned_segments_timestamps = [dict(min_=segs[-1]['offset'],
-                                          max_=segs[-1]['next_offset'],
-                                          timestamps=list(chain.from_iterable((s['start'], s['end']) for s in segs)),
-                                          alt_timestamps=list(chain.from_iterable((s['alt_start_timestamps'],
-                                                                                   s['alt_end_timestamps'])
-                                                                                  for s in segs)))
-                                     for segs in sectioned_segments]
-
-    sectioned_stab_timestamps = [_stabilize_timestamps(**kwargs).reshape(-1, 2) for kwargs in
-                                 sectioned_segments_timestamps]
-
-    for i in range(len(sectioned_segments)):
-        for j in range(len(sectioned_segments[i])):
-            sectioned_segments[i][j]['start'], sectioned_segments[i][j]['end'] = sectioned_stab_timestamps[i][j]
-
-            if not missing_ts_idx:
-                if top_focus:
-                    top_word_ts = [ts_['timestamps'][0] for ts_ in
-                                   sectioned_segments[i][j]['unstable_word_timestamps']]
-                    alt_word_ts = [ts_['timestamps'][1:] for ts_ in
-                                   sectioned_segments[i][j]['unstable_word_timestamps']]
-                    temp_stab_word_ts = _stabilize_timestamps(top_word_ts, alt_word_ts,
-                                                              max_=sectioned_segments[i][j]['end'],
-                                                              min_=sectioned_segments[i][j]['start'],
-                                                              aggressive=aggressive)
-                else:
-                    word_ts = [ts_['timestamps'] for ts_ in sectioned_segments[i][j]['unstable_word_timestamps']]
-                    temp_stab_word_ts = _stabilize_more_timestamps(word_ts,
-                                                                   max_=sectioned_segments[i][j]['end'],
-                                                                   min_=sectioned_segments[i][j]['start'],
-                                                                   average=average)
-
-                temp_stab_word_ts = [{'word': sectioned_segments[i][j]['unstable_word_timestamps'][k]['word'],
-                                      'token': sectioned_segments[i][j]['unstable_word_timestamps'][k]['token'],
-                                      'timestamp': temp_stab_word_ts[k]}
-                                     for k in range(temp_stab_word_ts.shape[0])]
-
-                sectioned_segments[i][j]['word_timestamps'] = temp_stab_word_ts
-
-    return list(chain.from_iterable(sectioned_segments))
-
-
-def add_whole_word_ts(tokenizer: Tokenizer, segments: Union[List[dict], dict], merge_non_space: bool = None,
-                      prepend_punctuations: Union[List[str], Tuple[str]] = None,
-                      append_punctuations: Union[List[str], Tuple[str]] = None):
-    merge_non_space = (tokenizer.language in ['en'] or tokenizer.language is None) \
-        if merge_non_space is None else merge_non_space
-    if prepend_punctuations is None:
-        prepend_punctuations = r'“¿([{'
-    if append_punctuations is None:
-        append_punctuations = r'.。,，!！?？:：”)]}、'
-    if isinstance(segments, dict):
-        segments = segments['segments']
-    if not segments:
-        warnings.warn('No segments found, whole-word timestamps cannot be added.', stacklevel=2)
-        return
-
-    missing_idx = set(-1 if seg.get('word_timestamps') else i for i, seg in enumerate(segments)) - {-1}
-
-    if missing_idx:
-        if len(missing_idx) == len(segments):
-            print('No word_timestamps found, whole-word timestamps cannot be added.')
-            return
-        print(f'Some word_timestamps not found, '
-              f'whole-word timestamps cannot be added to the following segments: {tuple(missing_idx)}')
-
-    failed_idx = []
-
-    for seg_idx, seg in enumerate(segments):
-        if seg.get('word_timestamps'):
-            prev_idx = 0
-            remaining_text = seg['text']
-            has_prepend = False
-            whole_word_timestamps: List[dict] = []
-            for wts_idx in range(1, len(seg['word_timestamps']) + 1):
-                max_ts = seg['word_timestamps'][wts_idx - 1]['timestamp']
-                tokens = [wts['token'] for wts in seg['word_timestamps'][prev_idx: wts_idx]]
-                temp_whole_word = tokenizer.decode(tokens)
-                if temp_whole_word == remaining_text[:len(temp_whole_word)]:
-                    prev_idx = wts_idx
-                    remaining_text = remaining_text[len(temp_whole_word):]
-                    if ((not merge_non_space or temp_whole_word.startswith(' ') or not whole_word_timestamps) and
-                            temp_whole_word not in append_punctuations and
-                            not has_prepend) or not len(whole_word_timestamps):
-                        has_prepend = temp_whole_word.strip() in prepend_punctuations
-                        whole_word_timestamps.append(dict(word=temp_whole_word, timestamp=max_ts))
-                    else:
-                        has_prepend = False
-                        whole_word_timestamps[-1]['word'] += temp_whole_word
-                        whole_word_timestamps[-1]['timestamp'] = max_ts
-            if remaining_text:
-                failed_idx.append(seg_idx)
-                whole_word_timestamps = []
-            seg['whole_word_timestamps'] = whole_word_timestamps or None
-        else:
-            seg['whole_word_timestamps'] = None
-
-    if failed_idx:
-        warnings.warn(f'Failed to add whole-word timestamps to the following segments: {tuple(failed_idx)}',
-                      stacklevel=2)
+    visualize_mask(loudness_tensor, silence_mask, width=width, height=height, output=output)

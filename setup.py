@@ -15,10 +15,10 @@ def read_me() -> str:
 setup(
     name="stable-ts",
     version=version(),
-    description="Stabilizing timestamps of OpenAI's Whisper outputs down to word-level.",
+    description="Modifies OpenAI's Whisper to produce more reliable timestamps.",
     long_description=read_me(),
     long_description_content_type='text/markdown',
-    python_requires=">=3.7",
+    python_requires=">=3.8",
     author="Jian",
     url="https://github.com/jianfch/stable-ts",
     license="MIT",
@@ -31,7 +31,7 @@ setup(
         "more-itertools",
         "transformers>=4.19.0",
         "ffmpeg-python==0.2.0",
-        "openai-whisper==20230124"
+        "openai-whisper==20230308"
     ],
     entry_points={
         "console_scripts": ["stable-ts=stable_whisper.whisper_word_level:cli"],

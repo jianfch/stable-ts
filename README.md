@@ -1,14 +1,28 @@
 # Stabilizing Timestamps for Whisper
 
-## Description
-This script modifies and adds more robust decoding logic on top of OpenAI's Whisper to produce more accurate segment-level timestamps and obtain to word-level timestamps without extra inference.
+This script modifies [OpenAI's Whisper](https://github.com/openai/whisper) to produce more reliable timestamps.
 
-![image](https://user-images.githubusercontent.com/28970749/218944014-b915af81-1cf5-4522-a823-e0f476fcc550.png)
+![image](./demo/jfk.PNG)
 
 
-## Update:
-The official [Whisper]() repo introduced word-level timestamps in a recent [commit](https://github.com/openai/whisper/commit/500d0fe9668fae5fe2af2b6a3c4950f8a29aa145) which produces more reliable timestamps than method used in this script. 
-This script has not been updated to utilize this new version of Whisper yet. It will be updated for next release, version 2.0.0.  
+./demo/jfk.mp4
+
+
+### What's new in 2.0.0 ?
+- updated to use Whisper's more reliable word-level timestamps method. 
+- the more reliable word timestamps allows regrouping segments word by word.
+- can now suppress silence with [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.2.0+)
+- non-VAD silencing suppress is also more robust 
+
+
+./demo/a.mp4
+
+
+### Features
+- more control over the timestamps than default Whisper
+- supports direct preprocessing with [Demucs](https://github.com/facebookresearch/demucs) to isolate voice
+- support dynamic quantization to decrease memory usage for inference on CPU
+- lower memory usage than default Whisper when transcribing very long input audio tracks
 
 ## Setup
 ```
@@ -21,21 +35,19 @@ pip install -U git+https://github.com/jianfch/stable-ts.git
 ```
 
 ### Command-line usage
-Transcribe audio then save result as JSON file.
+Transcribe audio then save result as JSON file which contains the original inference results. 
+This allows results to be reprocessed different without having to redo inference.
+Change `audio.json` to `audio.srt` to process it directly into SRT.
 ```commandline
 stable-ts audio.mp3 -o audio.json
 ```
-Processing JSON file of the results into ASS.
+Processing JSON file of the results into SRT.
 ```commandline
-stable-ts audio.json -o audio.ass
+stable-ts audio.json -o audio.srt
 ```
 Transcribe multiple audio files then process the results directly into SRT files.
 ```commandline
 stable-ts audio1.mp3 audio2.mp3 audio3.mp3 -o audio1.srt audio2.srt audio3.srt
-```
-Show all available arguments and help.
-```commandline
-stable-ts -h
 ```
 
 ### Python usage
@@ -44,29 +56,62 @@ import stable_whisper
 
 model = stable_whisper.load_model('base')
 # modified model should run just like the regular model but accepts additional parameters
-results = model.transcribe('audio.mp3')
+result = model.transcribe('audio.mp3')
+# srt/vtt
+result.to_srt_vtt('audio.srt')
+# ass
+result.to_ass('audio.ass')
+# json
+result.save_as_json('audio.json')
 ```
 
-https://user-images.githubusercontent.com/28970749/218942894-cb0b91df-1c14-4d2f-9793-d1c8ef20e711.mp4
+### Regrouping Words
+Stable-ts has a preset for regrouping word into different segments. This preset is enabled by `regroup=True`.
+But are other built-in regrouping methods that allow you to customize the regrouping logic. 
+This preset is just a predefined a combination of those methods.
+
+
+./demo/xata.mp4
 
 
 ```python
-# the above uses default settings on version 1.1 with large model
-# sentence/phrase-level
-stable_whisper.results_to_sentence_srt(results, 'audio.srt')
+result0 = model.transcribe('audio.mp3', regroup=True) # regroup is True by default
+# regroup=True is same as below
+result1 = model.transcribe('audio.mp3', regroup=False)
+result1.split_by_punctuation(['.', '。', '?', '？'], True).split_by_gap(.5).merge_by_gap(.15).unlock_all_segments()
+# result0 == result1
 ```
 
-https://user-images.githubusercontent.com/28970749/218942942-060610e4-4c96-454d-b00a-8c9a41f4e7de.mp4
-
-
+### Visualizing Suppression
+- Requirement: [Pillow](https://github.com/python-pillow/Pillow) or [opencv-python](https://github.com/opencv/opencv-python)
+#### Non-VAD Suppression
+![image](./demo/novad.png)
 ```python
-# the above uses default settings on version 1.1 with large model
-# sentence/phrase-level & word-level
-stable_whisper.results_to_sentence_word_ass(results, 'audio.ass')
+import stable_whisper
+# regions on the waveform colored red is where it will be likely be suppressed and marked to as silent
+# [q_levels=20] and [k_size=5] are defaults for non-VAD.
+stable_whisper.visualize_suppression('audio.mp3', 'image.png', q_levels=20, k_size = 5) 
 ```
-#### Additional Info
-* Although timestamps are chronological, they can still very inaccurate depending on the model, audio, and parameters.
-* To produce production ready word-level results, the model needs to be fine-tuned with high quality dataset of audio with word-level timestamp.
+#### VAD Suppression
+![image](./demo/vad.png)
+```python
+# [vad_threshold=0.35] is defaults for VAD.
+stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_threshold=0.35)
+```
+
+### Encode Comparison 
+```python
+import stable_whisper
+
+stable_whisper.encode_video_comparison(
+    'audio.mp3', 
+    ['audio_sub1.srt', 'audio_sub2.srt'], 
+    output_videopath='audio.mp4', 
+    labels=['Example 1', 'Example 2']
+)
+```
+
+
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details
