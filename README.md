@@ -4,9 +4,7 @@ This script modifies [OpenAI's Whisper](https://github.com/openai/whisper) to pr
 
 ![jfk](https://user-images.githubusercontent.com/28970749/225825244-f3df9607-91ab-4011-a333-7e3ae94da08f.PNG)
 
-
 https://user-images.githubusercontent.com/28970749/225825286-cdb14d70-566f-454b-a2b3-b61b4b3e09c9.mp4
-
 
 ### What's new in 2.0.0 ?
 - updated to use Whisper's more reliable word-level timestamps method. 
@@ -14,9 +12,7 @@ https://user-images.githubusercontent.com/28970749/225825286-cdb14d70-566f-454b-
 - can now suppress silence with [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.2.0+)
 - non-VAD silencing suppress is also more robust 
 
-
-https://user-images.githubusercontent.com/28970749/225825316-41060f7f-0676-4d7c-972a-cd318b8a79c2.mp4
-
+https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-aedd-069389b8ae43.mp4
 
 ### Features
 - more control over the timestamps than default Whisper
@@ -67,7 +63,7 @@ result.save_as_json('audio.json')
 
 ### Regrouping Words
 Stable-ts has a preset for regrouping word into different segments. This preset is enabled by `regroup=True`.
-But are other built-in regrouping methods that allow you to customize the regrouping logic. 
+But there are other built-in regrouping methods that allow you to customize the regrouping logic. 
 This preset is just a predefined a combination of those methods.
 
 
