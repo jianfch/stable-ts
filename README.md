@@ -66,9 +66,7 @@ Stable-ts has a preset for regrouping word into different segments. This preset 
 But there are other built-in regrouping methods that allow you to customize the regrouping logic. 
 This preset is just a predefined a combination of those methods.
 
-
-https://user-images.githubusercontent.com/28970749/225825357-487da234-d34e-4049-badf-9d643091f574.mp4
-
+https://user-images.githubusercontent.com/28970749/226140262-da2d2bfa-4a8c-4f72-909a-0e1c1ad8ddaa.mp4
 
 ```python
 result0 = model.transcribe('audio.mp3', regroup=True) # regroup is True by default
