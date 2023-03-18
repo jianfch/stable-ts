@@ -126,10 +126,12 @@ def audio2loudness(
 ) -> (torch.Tensor, None):
     assert audio_tensor.dim() == 1, f'waveform must be 1D, but got {audio_tensor.dim()}D'
     audio_tensor = audio_tensor.abs()
-    # Calculate 99.9th percentile using topk
     k = int(audio_tensor.numel() * 0.001)
-    top_values, _ = torch.topk(audio_tensor, k)
-    threshold = top_values[-1]
+    if k:
+        top_values, _ = torch.topk(audio_tensor, k)
+        threshold = top_values[-1]
+    else:
+        threshold = audio_tensor.quantile(0.999, dim=-1)
     audio_tensor = audio_tensor / min(1., (threshold * 1.75))
     token_count = round(audio_tensor.shape[-1] / N_SAMPLES_PER_TOKEN)
     if token_count > 1:
