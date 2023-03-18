@@ -356,7 +356,7 @@ def transcribe_stable(
             ts_token_mask = None
             if suppress_silence:
                 if silence_timing is None:
-                    ts_token_mask = wav2mask(audio, q_levels=q_levels, k_size=k_size)
+                    ts_token_mask = wav2mask(audio_segment, q_levels=q_levels, k_size=k_size)
                     segment_silence_timing = mask2timing(ts_token_mask)
                 else:
                     timing_indices = np.logical_and(
