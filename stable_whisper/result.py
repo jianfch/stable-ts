@@ -308,7 +308,7 @@ class WhisperResult:
 
     def remove_no_word_segments(self, ignore_ori=False):
         for i in reversed(range(len(self.segments))):
-            if (ignore_ori or not self.segments[i].ori_has_words) and not self.segments[i].has_words:
+            if (ignore_ori or self.segments[i].ori_has_words) and not self.segments[i].has_words:
                 del self.segments[i]
         self.reassign_ids()
 

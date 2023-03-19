@@ -107,6 +107,7 @@ def transcribe_stable(
         Split segments at periods or question marks,
         then split segments if the gap between two segments more than 0.5 seconds,
         then merge segments if the gap between two segments more than 0.15 seconds. (Default: True)
+        Ignored if [word_timestamps]=False.
 
     ts_num: int
         Number of extra timestamp inferences to perform then use average of these extra timestamps. (Default: 0).
@@ -531,7 +532,7 @@ def transcribe_stable(
                                       segments=all_segments,
                                       language=language,
                                       time_scale=time_scale))
-    if regroup:
+    if word_timestamps and regroup:
         final_result.regroup()
 
     if time_scale is not None:
@@ -666,7 +667,8 @@ def cli():
     parser.add_argument("--regroup", type=str2bool, default=True,
                         help="split segments at periods or question marks;"
                              "then split segments if the gap between two segments more than 0.5 seconds;"
-                             "then merge segments if the gap between two segments more than 0.15 seconds")
+                             "then merge segments if the gap between two segments more than 0.15 seconds;"
+                             "ignored if [word_timestamps]=False.")
 
     parser.add_argument('--ts_num', type=int, default=0,
                         help="number of extra inferences to perform to find the mean timestamps")
