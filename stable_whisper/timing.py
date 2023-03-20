@@ -196,8 +196,8 @@ def add_word_timestamps_stable(
             segments[i]['words'].append(
                 dict(
                     word=timing.word,
-                    start=round(time_offset + start, 2),
-                    end=round(time_offset + end, 2),
+                    start=round(time_offset + start, 3),
+                    end=round(time_offset + end, 3),
                     probability=timing.probability,
                     tokens=timing.tokens
                 )

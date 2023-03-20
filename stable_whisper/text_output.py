@@ -91,8 +91,7 @@ def to_word_level(segments: List[dict]) -> List[dict]:
 def _confirm_word_level(segments: List[dict]) -> bool:
     is_missing_words = len(set(bool(s.get('words')) for s in segments) - {True}) == 1
     if is_missing_words:
-        warnings.warn('Result is missing word timestamps. Word-level timing cannot be exported. '
-                      'Use `word_level=False` to avoid this warning and not export word-level timing.')
+        warnings.warn('Result is missing word timestamps. Word-level timing cannot be exported.')
         return False
     return True
 

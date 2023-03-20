@@ -309,7 +309,7 @@ def transcribe_stable(
         tokens = tokens.tolist()
         text_tokens = [token for token in tokens if token < tokenizer.eot]
         return {
-            "seek": round(seek_sample / SAMPLE_RATE, 4),  # units in seconds
+            "seek": round(seek_sample / SAMPLE_RATE, 3),  # units in seconds
             "start": start,
             "end": end,
             "text": tokenizer.decode(text_tokens),
@@ -417,8 +417,8 @@ def transcribe_stable(
                     )
                     current_segments.append(
                         new_segment(
-                            start=round(time_offset + start_timestamp_pos * time_precision, 2),
-                            end=round(time_offset + end_timestamp_pos * time_precision, 2),
+                            start=round(time_offset + start_timestamp_pos * time_precision, 3),
+                            end=round(time_offset + end_timestamp_pos * time_precision, 3),
                             tokens=sliced_tokens,
                             result=result,
                         )
@@ -446,8 +446,8 @@ def transcribe_stable(
 
                 current_segments.append(
                     new_segment(
-                        start=round(time_offset, 2),
-                        end=round(time_offset + duration, 2),
+                        start=round(time_offset, 3),
+                        end=round(time_offset + duration, 3),
                         tokens=tokens,
                         result=result,
                     )

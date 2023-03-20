@@ -53,8 +53,8 @@ class WordTiming:
         return self
 
     def rescale_time(self, scale_factor: float):
-        self.start = round(self.start * scale_factor, 4)
-        self.end = round(self.end * scale_factor, 4)
+        self.start = round(self.start * scale_factor, 3)
+        self.end = round(self.end * scale_factor, 3)
 
 
 @dataclass
@@ -112,9 +112,9 @@ class Segment:
         return self_copy
 
     def rescale_time(self, scale_factor: float):
-        self.seek = round(self.seek * scale_factor, 4)
-        self.start = round(self.start * scale_factor, 4)
-        self.end = round(self.end * scale_factor, 4)
+        self.seek = round(self.seek * scale_factor, 3)
+        self.start = round(self.start * scale_factor, 3)
+        self.end = round(self.end * scale_factor, 3)
         if self.has_words:
             for w in self.words:
                 w.rescale_time(scale_factor)
