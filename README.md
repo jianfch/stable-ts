@@ -11,6 +11,7 @@ https://user-images.githubusercontent.com/28970749/225825286-cdb14d70-566f-454b-
 - the more reliable word timestamps allows regrouping segments word by word.
 - can now suppress silence with [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.2.0+)
 - non-VAD silence suppression is also more robust 
+- see [Quick 1.X → 2.X Guide](#quick-1x--2x-guide)
 
 https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-aedd-069389b8ae43.mp4
 
@@ -60,6 +61,13 @@ result.to_ass('audio.ass')
 # json
 result.save_as_json('audio.json')
 ```
+
+### Quick 1.X → 2.X Guide
+- `results_to_sentence_srt(result, 'audio.srt')` → `result.to_srt_vtt('audio.srt', word_level=False)` 
+- `results_to_word_srt(result, 'audio.srt')` → `result.to_srt_vtt('output.srt', segment_level=False)`
+- `results_to_sentence_word_ass(result, 'audio.srt')` → `result.to_ass('output.ass')`
+- there's no need to stabilize segment after inference because they're already stabilized during inference
+- `transcribe()` returns a `WhisperResult` object which can be converted to `dict` with `.to_dict()`. e.g `result.to_dict()`
 
 ### Regrouping Words
 Stable-ts has a preset for regrouping word into different segments. This preset is enabled by `regroup=True`.
