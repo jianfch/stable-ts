@@ -8,7 +8,7 @@ https://user-images.githubusercontent.com/28970749/225825286-cdb14d70-566f-454b-
 
 ### What's new in 2.0.0 ?
 - updated to use Whisper's more reliable word-level timestamps method. 
-- the more reliable word timestamps allows regrouping segments word by word.
+- the more reliable word timestamps allows regrouping all words into segments with more natural boundaries.
 - can now suppress silence with [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.2.0+)
 - non-VAD silence suppression is also more robust 
 - see [Quick 1.X → 2.X Guide](#quick-1x--2x-guide)
@@ -70,8 +70,8 @@ result.save_as_json('audio.json')
 - `transcribe()` returns a `WhisperResult` object which can be converted to `dict` with `.to_dict()`. e.g `result.to_dict()`
 
 ### Regrouping Words
-Stable-ts has a preset for regrouping word into different segments. This preset is enabled by `regroup=True`.
-But there are other built-in regrouping methods that allow you to customize the regrouping logic. 
+Stable-ts has a preset for regrouping words into different into segments with more natural boundaries. 
+This preset is enabled by `regroup=True`. But there are other built-in regrouping methods that allow you to customize the regrouping logic. 
 This preset is just a predefined a combination of those methods.
 
 https://user-images.githubusercontent.com/28970749/226140262-da2d2bfa-4a8c-4f72-909a-0e1c1ad8ddaa.mp4
@@ -80,7 +80,13 @@ https://user-images.githubusercontent.com/28970749/226140262-da2d2bfa-4a8c-4f72-
 result0 = model.transcribe('audio.mp3', regroup=True) # regroup is True by default
 # regroup=True is same as below
 result1 = model.transcribe('audio.mp3', regroup=False)
-result1.split_by_punctuation(['.', '。', '?', '？'], True).split_by_gap(.5).merge_by_gap(.15).unlock_all_segments()
+(
+    result1
+    .split_by_punctuation([('.', ' '), '。', '?', '？', ',', '，'])
+    .split_by_gap(.5)
+    .merge_by_gap(.15, max_words=3)
+    .split_by_punctuation([('.', ' '), '。', '?', '？'])
+)
 # result0 == result1
 ```
 

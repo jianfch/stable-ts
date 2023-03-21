@@ -1,6 +1,6 @@
 import warnings
 import numpy as np
-from typing import Union, List
+from typing import Union, List, Tuple
 from dataclasses import dataclass
 from copy import deepcopy
 from itertools import chain
@@ -24,6 +24,25 @@ class WordTiming:
 
     def __len__(self):
         return len(self.word)
+
+    def __add__(self, other: 'WordTiming'):
+        assert self.start <= other.start or self.end <= other.end
+
+        self_copy = deepcopy(self)
+
+        self_copy.start = min(self_copy.start, other.start)
+        self_copy.end = max(other.end, self_copy.end)
+        self_copy.word += other.word
+        self_copy.probability = (other.probability + self_copy.probability) / 2
+        self_copy.tokens.extend(other.tokens)
+        self_copy.left_locked = self_copy.left_locked or other.left_locked
+        self_copy.right_locked = self_copy.right_locked or other.right_locked
+
+        return self_copy
+
+    @property
+    def duration(self):
+        return self.end - self.start
 
     def to_dict(self):
         dict_ = deepcopy(self.__dict__)
@@ -76,6 +95,10 @@ class Segment:
     def has_words(self):
         return bool(self.words)
 
+    @property
+    def duration(self):
+        return self.end - self.start
+
     def word_count(self):
         if self.has_words:
             return len(self.words)
@@ -111,6 +134,14 @@ class Segment:
 
         return self_copy
 
+    def add_words(self, index0: int, index1: int, inplace: bool = False):
+        new_word = self.words[index0] + self.words[index1]
+        if inplace:
+            i0, i1 = sorted([index0, index1])
+            self.words[i0] = new_word
+            del self.words[i1]
+        return new_word
+
     def rescale_time(self, scale_factor: float):
         self.seek = round(self.seek * scale_factor, 3)
         self.start = round(self.start * scale_factor, 3)
@@ -119,6 +150,30 @@ class Segment:
             for w in self.words:
                 w.rescale_time(scale_factor)
         self.update_seg_with_words()
+
+    def apply_min_dur(self, min_dur: float, inplace: bool = False):
+        """
+        Any duration is less than [min_dur] will be merged with adjacent word.
+        """
+        segment = self if inplace else deepcopy(self)
+        max_i = len(segment.words) - 1
+        if max_i == 0:
+            return segment
+        for i in reversed(range(len(segment.words))):
+            if max_i == 0:
+                break
+            if segment.words[i].duration < min_dur:
+                if i == max_i:
+                    segment.add_words(i-1, i, inplace=True)
+                elif i == 0:
+                    segment.add_words(i, i+1, inplace=True)
+                else:
+                    if segment.words[i-1].duration < segment.words[i-1].duration:
+                        segment.add_words(i-1, i, inplace=True)
+                    else:
+                        segment.add_words(i, i+1, inplace=True)
+                max_i -= 1
+        return segment
 
     def to_dict(self):
         seg_dict = deepcopy(self.__dict__)
@@ -203,24 +258,27 @@ class Segment:
         return []
 
     def get_gap_indices(self, max_gap: float = 0.1):  # for splitting
-        if not self.words:
+        if not self.has_words or len(self.words) < 2:
             return []
         if max_gap is None:
             max_gap = 0
         indices = (self.get_gaps(True) > max_gap).nonzero()[0].tolist()
         return sorted(set(indices) - set(self.get_locked_indices()))
 
-    def get_punctuation_indices(self, punctuation: Union[List[str], str]):  # for splitting
-        if not self.words:
+    def get_punctuation_indices(self, punctuation: Union[List[str], List[Tuple[str, str]], str]):  # for splitting
+        if not self.has_words or len(self.words) < 2:
             return []
         if isinstance(punctuation, str):
             punctuation = [punctuation]
         indices = []
         for p in punctuation:
-            indices.extend([i for i, w in enumerate(self.words[1:])
-                            if w.word.startswith(p)])
-            indices.extend([i for i, w in enumerate(self.words[:-1])
-                            if w.word.endswith(p)])
+            if isinstance(p, str):
+                indices.extend([i for i, w in enumerate(self.words[:-1])
+                                if w.word.endswith(p)])
+            else:
+                ending, beginning = p
+                indices.extend([i for i, (w0, w1) in enumerate(zip(self.words[:-1], self.words[1:]))
+                                if w0.word.endswith(ending) and w1.word.startswith(beginning)])
 
         return sorted(set(indices) - set(self.get_locked_indices()))
 
@@ -270,6 +328,33 @@ class WhisperResult:
     def rescale_time(self, scale_factor: float):
         for s in self.segments:
             s.rescale_time(scale_factor)
+
+    def apply_min_dur(self, min_dur: float, inplace: bool = False):
+        """
+        Any duration is less than [min_dur] will be merged with adjacent word/segments.
+        """
+        result = self if inplace else deepcopy(self)
+        max_i = len(result.segments) - 1
+        if max_i == 0:
+            return result
+        for i in reversed(range(len(result.segments))):
+            if max_i == 0:
+                break
+            if result.segments[i].duration < min_dur:
+                if i == max_i:
+                    result.add_segments(i-1, i, inplace=True)
+                elif i == 0:
+                    result.add_segments(i, i+1, inplace=True)
+                else:
+                    if result.segments[i-1].duration < result.segments[i-1].duration:
+                        result.add_segments(i-1, i, inplace=True)
+                    else:
+                        result.add_segments(i, i+1, inplace=True)
+                max_i -= 1
+        result.reassign_ids()
+        for s in result.segments:
+            s.apply_min_dur(min_dur, inplace=True)
+        return result
 
     def suppress_silence(
             self,
@@ -325,20 +410,27 @@ class WhisperResult:
         return gap if as_ndarray else gap.tolist()
 
     def get_gap_indices(self, min_gap: float = 0.1):  # for merging
+        if len(self.segments) < 2:
+            return []
         if min_gap is None:
             min_gap = 0
         indices = (self.get_gaps(True) <= min_gap).nonzero()[0].tolist()
         return sorted(set(indices) - set(self.get_locked_indices()))
 
-    def get_punctuation_indices(self, punctuation: Union[List[str], str]):  # for merging
+    def get_punctuation_indices(self, punctuation: Union[List[str], List[Tuple[str, str]], str]):  # for merging
+        if len(self.segments) < 2:
+            return []
         if isinstance(punctuation, str):
             punctuation = [punctuation]
         indices = []
         for p in punctuation:
-            indices.extend([i for i, s in enumerate(self.segments[1:])
-                            if s.text.startswith(p)])
-            indices.extend([i for i, s in enumerate(self.segments[:-1])
-                            if s.text.endswith(p)])
+            if isinstance(p, str):
+                indices.extend([i for i, s in enumerate(self.segments[:-1])
+                                if s.text.endswith(p)])
+            else:
+                ending, beginning = p
+                indices.extend([i for i, (s0, s1) in enumerate(zip(self.segments[:-1], self.segments[1:]))
+                                if s0.text.endswith(ending) and s1.text.startswith(beginning)])
 
         return sorted(set(indices) - set(self.get_locked_indices()))
 
@@ -379,7 +471,7 @@ class WhisperResult:
         self.remove_no_word_segments()
 
     def _merge_segments(self, get_indices, args: list = None,
-                        *, max_words: int = None, max_chars: int = None, lock: bool = False):
+                        *, max_words: int = None, max_chars: int = None, is_sum_max: bool = False, lock: bool = False):
         if args is None:
             args = []
         indices = get_indices(*args)
@@ -389,11 +481,19 @@ class WhisperResult:
                     (
                             max_words and
                             seg.has_words and
-                            (seg.word_count() + self.segments[i + 1].word_count() > max_words)
+                            (
+                                    (seg.word_count() + self.segments[i + 1].word_count() > max_words)
+                                    if is_sum_max else
+                                    (seg.word_count() > max_words and self.segments[i + 1].word_count() > max_words)
+                            )
                     ) or
                     (
                             max_chars and
-                            (seg.char_count() + self.segments[i + 1].char_count() > max_chars)
+                            (
+                                    (seg.char_count() + self.segments[i + 1].char_count() > max_chars)
+                                    if is_sum_max else
+                                    (seg.char_count() > max_chars and self.segments[i + 1].char_count() > max_chars)
+                            )
                     )
             ):
                 continue
@@ -426,6 +526,7 @@ class WhisperResult:
             min_gap: float = 0.1,
             max_words: int = None,
             max_chars: int = None,
+            is_sum_max: bool = False,
             lock: bool = False
     ):
         """
@@ -437,20 +538,23 @@ class WhisperResult:
         min_gap: float
             Any gaps below or equal to this value (seconds) will be merged. (Default: 0.1)
         max_words: int
-            Maximum number of words the merged segment is allowed to have. (Default: None)
+            Maximum number of words allowed. (Default: None)
         max_chars: int
-            Maximum number of characters the merged segment is allowed to have. (Default: None)
+            Maximum number of characters allowed. (Default: None)
+        is_sum_max: bool
+            Whether [max_words] and [max_chars] is applied to the merged segment
+            instead of the individual segments to be merged. (Default: False)
         lock: bool
             Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
 
         """
         self._merge_segments(self.get_gap_indices, [min_gap],
-                             max_words=max_words, max_chars=max_chars, lock=lock)
+                             max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
         return self
 
     def split_by_punctuation(
             self,
-            punctuation: Union[List[str], str],
+            punctuation: Union[List[str], List[Tuple[str, str]], str],
             lock: bool = False
     ):
         """
@@ -459,7 +563,7 @@ class WhisperResult:
 
         Parameters
         ----------
-        punctuation: Union[List[str], str]
+        punctuation: Union[List[str], List[Tuple[str, str]], str]
             Punctuation(s) to split segments by.
         lock: bool
             Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
@@ -469,9 +573,10 @@ class WhisperResult:
         return self
 
     def merge_by_punctuation(
-            self, punctuation: Union[List[str], str],
+            self, punctuation: Union[List[str], List[Tuple[str, str]], str],
             max_words: int = None,
             max_chars: int = None,
+            is_sum_max: bool = False,
             lock: bool = False
     ):
         """
@@ -483,29 +588,30 @@ class WhisperResult:
         punctuation: Union[List[str], str]
             Punctuation(s) to merge segments by.
         max_words: int
-            Maximum number of words the merged segment is allowed to have. (Default: None)
+            Maximum number of words allowed. (Default: None)
         max_chars: int
-            Maximum number of characters the merged segment is allowed to have. (Default: None)
+            Maximum number of characters allowed. (Default: None)
+        is_sum_max: bool
+            Whether [max_words] and [max_chars] is applied to the merged segment
+            instead of all the individual segments to be merged. (Default: False)
         lock: bool
             Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
 
         """
         self._merge_segments(self.get_punctuation_indices, [punctuation],
-                             max_words=max_words, max_chars=max_chars, lock=lock)
+                             max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
         return self
 
     def regroup(self):
         """
-        Split segments at periods or question marks,
-        then split segments if the gap between two segments more than 0.5 seconds,
-        then merge segments if the gap between two segments more than 0.15 seconds. (in-place)
-
+        Regroup all words into segments with more natural boundaries. (in-place)
         """
         return (
-            self.split_by_punctuation(['.', '。', '?', '？'], True)
+            self
+            .split_by_punctuation([('.', ' '), '。', '?', '？', ',', '，'])
             .split_by_gap(.5)
-            .merge_by_gap(.15)
-            .unlock_all_segments()
+            .merge_by_gap(.3, max_words=3)
+            .split_by_punctuation([('.', ' '), '。', '?', '？'])
         )
 
     @property

@@ -14,11 +14,11 @@ def _save_as_file(content: str, path: str):
     print(f'Saved: {os.path.abspath(path)}')
 
 
-def _get_segments(result: (dict, list)):
+def _get_segments(result: (dict, list), min_dur: float):
     if isinstance(result, dict):
         return result.get('segments')
     elif not isinstance(result, list) and callable(getattr(result, 'segments_to_dicts', None)):
-        return result.segments_to_dicts()
+        return result.apply_min_dur(min_dur, inplace=False).segments_to_dicts()
     return result
 
 
@@ -89,8 +89,7 @@ def to_word_level(segments: List[dict]) -> List[dict]:
 
 
 def _confirm_word_level(segments: List[dict]) -> bool:
-    is_missing_words = len(set(bool(s.get('words')) for s in segments) - {True}) == 1
-    if is_missing_words:
+    if not all(bool(s.get('words')) for s in segments):
         warnings.warn('Result is missing word timestamps. Word-level timing cannot be exported.')
         return False
     return True
@@ -98,9 +97,10 @@ def _confirm_word_level(segments: List[dict]) -> bool:
 
 def _preprocess_args(result: (dict, list),
                      segment_level: bool,
-                     word_level: bool):
+                     word_level: bool,
+                     min_dur: float):
     assert segment_level or word_level, '`segment_level` or `word_level` must be True'
-    segments = _get_segments(result)
+    segments = _get_segments(result, min_dur)
     if word_level:
         word_level = _confirm_word_level(segments)
     return segments, segment_level, word_level
@@ -110,6 +110,7 @@ def result_to_srt_vtt(result: (dict, list),
                       filepath: str = None,
                       segment_level=True,
                       word_level=True,
+                      min_dur: float = 0.02,
                       tag: Tuple[str, str] = None,
                       vtt: bool = None,
                       strip=True):
@@ -127,6 +128,9 @@ def result_to_srt_vtt(result: (dict, list),
         whether to use segment-level timestamps in output (default: True)
     word_level: bool
         whether to use word-level timestamps in output (default: True)
+    min_dur: float
+        minimum duration any word/segment is allowed to have. (default: 0.02)
+        if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
     tag: Tuple[str, str]
         tag used to change the properties a word at its timestamp
         SRT Default: '<font color="#00ff00">', '</font>'
@@ -141,7 +145,7 @@ def result_to_srt_vtt(result: (dict, list),
     string of content if no [filepath] is provided, else None
 
     """
-    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level)
+    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur)
 
     is_srt = (filepath is None or not filepath.endswith('.vtt')) if vtt is None else vtt
     if filepath:
@@ -177,6 +181,7 @@ def result_to_ass(result: (dict, list),
                   filepath: str = None,
                   segment_level=True,
                   word_level=True,
+                  min_dur: float = 0.02,
                   tag: Tuple[str, str] = None,
                   font: str = None,
                   font_size: int = 24,
@@ -198,6 +203,9 @@ def result_to_ass(result: (dict, list),
         whether to use segment-level timestamps in output (default: True)
     word_level: bool
         whether to use word-level timestamps in output (default: True)
+    min_dur: float
+        minimum duration any word/segment is allowed to have. (default: 0.02)
+        if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
     tag: Tuple[str, str]
         tag used to change the properties a word at its timestamp (default: '{\\1c&HFF00&}', '{\\r}')
     font: str
@@ -217,7 +225,7 @@ def result_to_ass(result: (dict, list),
     string of content if no [filepath] is provided, else None
 
     """
-    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level)
+    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur)
 
     fmt_style_dict = {'Name': 'Default', 'Fontname': 'Arial', 'Fontsize': '48', 'PrimaryColour': '&Hffffff',
                       'SecondaryColour': '&Hffffff', 'OutlineColour': '&H0', 'BackColour': '&H0', 'Bold': '0',

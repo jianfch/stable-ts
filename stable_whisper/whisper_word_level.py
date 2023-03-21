@@ -104,9 +104,7 @@ def transcribe_stable(
         Disabling this will prevent segments from splitting/merging properly.
 
     regroup: bool
-        Split segments at periods or question marks,
-        then split segments if the gap between two segments more than 0.5 seconds,
-        then merge segments if the gap between two segments more than 0.15 seconds. (Default: True)
+        Regroup all words into segments with more natural boundaries.(Default: True)
         Ignored if [word_timestamps]=False.
 
     ts_num: int
@@ -665,9 +663,7 @@ def cli():
                              "disabling this will prevent segments from splitting/merging properly.")
 
     parser.add_argument("--regroup", type=str2bool, default=True,
-                        help="split segments at periods or question marks;"
-                             "then split segments if the gap between two segments more than 0.5 seconds;"
-                             "then merge segments if the gap between two segments more than 0.15 seconds;"
+                        help="regroup all words into segments with more natural boundaries;"
                              "ignored if [word_timestamps]=False.")
 
     parser.add_argument('--ts_num', type=int, default=0,
