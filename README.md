@@ -62,6 +62,11 @@ result.to_ass('audio.ass')
 result.save_as_json('audio.json')
 ```
 
+### Tips
+- for reliable segment timestamps, do not disable word timestamps with `word_timestamps=False` because word timestamps is also used to correct segment timestamps
+- use `demucs=True` and `vad=True` for music
+- if audio is not transcribing properly compared to whisper, try `mel_first=True` at cost of more memory usuage for long audio tracks
+
 ### Quick 1.X → 2.X Guide
 - `results_to_sentence_srt(result, 'audio.srt')` → `result.to_srt_vtt('audio.srt', word_level=False)` 
 - `results_to_word_srt(result, 'audio.srt')` → `result.to_srt_vtt('output.srt', segment_level=False)`
