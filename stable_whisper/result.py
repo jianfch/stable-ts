@@ -156,6 +156,8 @@ class Segment:
         Any duration is less than [min_dur] will be merged with adjacent word.
         """
         segment = self if inplace else deepcopy(self)
+        if not self.has_words:
+            return segment
         max_i = len(segment.words) - 1
         if max_i == 0:
             return segment

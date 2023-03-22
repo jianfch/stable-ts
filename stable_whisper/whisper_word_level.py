@@ -6,8 +6,10 @@ from types import MethodType
 from tqdm import tqdm
 
 import whisper
-from whisper.audio import SAMPLE_RATE, N_FRAMES, HOP_LENGTH, N_SAMPLES, N_SAMPLES_PER_TOKEN, \
+from whisper.audio import (
+    SAMPLE_RATE, N_FRAMES, HOP_LENGTH, N_SAMPLES, N_SAMPLES_PER_TOKEN, TOKENS_PER_SECOND, FRAMES_PER_SECOND,
     pad_or_trim, log_mel_spectrogram
+)
 from whisper.utils import exact_div, format_timestamp, make_safe
 from whisper.tokenizer import get_tokenizer, LANGUAGES, TO_LANGUAGE_CODE
 from whisper.decoding import DecodingOptions, DecodingResult
@@ -57,6 +59,7 @@ def transcribe_stable(
         only_voice_freq: bool = False,
         prepend_punctuations: str = "\"'“¿([{-",
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
+        mel_first: bool = False,
         **decode_options) \
         -> WhisperResult:
     """
@@ -166,6 +169,10 @@ def transcribe_stable(
     append_punctuations: str
         Punctuations to append to previous word (Default: .。,，!！?？:：”)]}、)
 
+    mel_first: bool
+        Process entire audio track into log-Mel spectrogram first instead in chunks. (Default: False)
+        Used if odd behavior seen in stable-ts but not in whisper, but use significantly more memory for long audio.
+
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
 
@@ -226,12 +233,14 @@ def transcribe_stable(
         from .audio import voice_freq_filter
         audio = voice_freq_filter(audio, curr_sr)
 
+    whole_mel = log_mel_spectrogram(audio) if mel_first else None
+
     if decode_options.get("language", None) is None:
         if verbose:
             print("Detecting language using up to the first 30 seconds. Use `--language` to specify the language")
-        segment = pad_or_trim(log_mel_spectrogram(audio[..., :N_SAMPLES]),
-                              N_FRAMES).to(device=model.device, dtype=dtype)
-        _, probs = model.detect_language(segment)
+        mel_segment = log_mel_spectrogram(audio[..., :N_SAMPLES]) if whole_mel is None else whole_mel[..., :N_FRAMES]
+        mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
+        _, probs = model.detect_language(mel_segment)
         decode_options["language"] = max(probs, key=probs.get)
         print(f"Detected language: {LANGUAGES[decode_options['language']]}")
 
@@ -320,6 +329,7 @@ def transcribe_stable(
 
     total_samples = audio.shape[-1]
     total_duration = round(total_samples / curr_sr, 2)
+    n_samples_per_frame = exact_div(N_SAMPLES_PER_TOKEN * TOKENS_PER_SECOND,  FRAMES_PER_SECOND)
 
     silence_timing = None
     if suppress_silence and vad:
@@ -343,12 +353,18 @@ def transcribe_stable(
             update_pbar()
 
         while seek_sample < audio.shape[-1]:
-            audio_segment = audio[seek_sample:seek_sample + N_SAMPLES]
+            seek_sample_end = seek_sample + N_SAMPLES
+            audio_segment = audio[seek_sample:seek_sample_end]
             time_offset = seek_sample / SAMPLE_RATE
             segment_samples = min(N_SAMPLES, total_samples - seek_sample)
             segment_duration = segment_samples / SAMPLE_RATE
 
-            mel_segment = log_mel_spectrogram(audio_segment)
+            mel_segment = (
+                log_mel_spectrogram(audio_segment)
+                if whole_mel is None else
+                whole_mel[..., round(seek_sample/n_samples_per_frame): round(seek_sample_end/n_samples_per_frame)]
+            )
+
             mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
 
             segment_silence_timing = None
@@ -485,7 +501,7 @@ def transcribe_stable(
                         Segment(**segment)
                         .suppress_silence(
                             *segment_silence_timing,
-                            min_word_dur,
+                            min_word_dur=min_word_dur,
                             word_level=suppress_word_ts
                         )
                         .to_dict()

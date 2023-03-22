@@ -90,7 +90,8 @@ def to_word_level(segments: List[dict]) -> List[dict]:
 
 def _confirm_word_level(segments: List[dict]) -> bool:
     if not all(bool(s.get('words')) for s in segments):
-        warnings.warn('Result is missing word timestamps. Word-level timing cannot be exported.')
+        warnings.warn('Result is missing word timestamps. Word-level timing cannot be exported. '
+                      'Use "word_level=False" to avoid this warning')
         return False
     return True
 
