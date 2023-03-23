@@ -52,14 +52,16 @@ stable-ts audio1.mp3 audio2.mp3 audio3.mp3 -o audio1.srt audio2.srt audio3.srt
 import stable_whisper
 
 model = stable_whisper.load_model('base')
-# modified model should run just like the regular model but accepts additional parameters
+# this modified model run just like the original model but accepts additional arguments
 result = model.transcribe('audio.mp3')
-# srt/vtt
+
 result.to_srt_vtt('audio.srt')
-# ass
 result.to_ass('audio.ass')
-# json
+# word_level=False : use only segment timestamps (i.e without the green highlight)
+# segment_level=False : use only word timestamps
+
 result.save_as_json('audio.json')
+# save inference result for later processing
 ```
 
 ### Tips
