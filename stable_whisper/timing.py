@@ -1,3 +1,4 @@
+import string
 import torch
 import numpy as np
 from typing import TYPE_CHECKING, List
@@ -106,6 +107,37 @@ def find_alignment_stable(
     ]
 
 
+def _split_tokens(tokens: List[int], tokenizer: "Tokenizer"):
+    split_by_space = tokenizer.language not in {"zh", "ja", "th", "lo", "my"}
+    text = tokenizer.decode_with_timestamps(tokens)
+    words = []
+    word_tokens = []
+    curr_tokens = []
+    is_append = False
+    for token in tokens:
+        curr_tokens.append(token)
+        curr_text = tokenizer.decode(curr_tokens)
+        is_whole = token >= tokenizer.eot
+        if not is_whole:
+            is_whole = text.startswith(curr_text)
+            if is_whole and split_by_space:
+                is_append = not (curr_text.startswith(" ") or curr_text.strip() in string.punctuation)
+
+        if is_whole:
+            if is_append and len(words) != 0:
+                words[-1] += curr_text
+                word_tokens[-1].extend(curr_tokens)
+            else:
+                words.append(curr_text)
+                word_tokens.append(curr_tokens)
+            text = text[len(curr_text):]
+            curr_tokens = []
+
+    assert len(text) == 0
+
+    return words, word_tokens
+
+
 def split_word_tokens(segments: List[dict],
                       tokenizer: "Tokenizer",
                       *,
@@ -120,7 +152,7 @@ def split_word_tokens(segments: List[dict],
     words = []
     word_tokens = []
     for i, s in enumerate(segments):
-        curr_words, curr_word_tokens = tokenizer.split_to_word_tokens([t for t in s['tokens'] if t < tokenizer.eot])
+        curr_words, curr_word_tokens = _split_tokens([t for t in s['tokens'] if t < tokenizer.eot], tokenizer)
         if (
                 padding is not None and
                 curr_word_tokens[0][0] != padding and
