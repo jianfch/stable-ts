@@ -18,7 +18,17 @@ def voice_freq_filter(wf: (torch.Tensor, np.ndarray), sr: int,
                                                  lower_freq)
 
 
+def is_demucs_available():
+    from importlib.util import find_spec
+    if find_spec('demucs') is None:
+        raise ModuleNotFoundError("Please install Demucs; "
+                                  "'pip install -U demucs' or "
+                                  "'pip install -U git+https://github.com/facebookresearch/demucs#egg=demucs'; "
+                                  "Official Demucs repo: https://github.com/facebookresearch/demucs")
+
+
 def load_demucs_model():
+    is_demucs_available()
     from demucs.pretrained import get_model_from_args
     return get_model_from_args(type('args', (object,), dict(name='htdemucs', repo=None))).cpu().eval()
 
@@ -34,16 +44,11 @@ def demucs_audio(audio: (torch.Tensor, str),
     """
     Load audio waveform and process to isolate vocals with Demucs
     """
-    from importlib.util import find_spec
-    if find_spec('demucs') is None:
-        raise ModuleNotFoundError("Please install Demucs; "
-                                  "'pip install -U demucs' or "
-                                  "'pip install -U git+https://github.com/facebookresearch/demucs#egg=demucs'; "
-                                  "Official Demucs repo: https://github.com/facebookresearch/demucs")
-
-    from demucs.apply import apply_model
     if model is None:
         model = load_demucs_model()
+    else:
+        is_demucs_available()
+    from demucs.apply import apply_model
 
     if track_name:
         track_name = f'"{track_name}"'
