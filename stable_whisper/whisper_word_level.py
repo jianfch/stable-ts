@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 import whisper
 from whisper.audio import (
-    SAMPLE_RATE, N_FRAMES, HOP_LENGTH, N_SAMPLES, N_SAMPLES_PER_TOKEN, TOKENS_PER_SECOND, FRAMES_PER_SECOND,
+    SAMPLE_RATE, N_FRAMES, HOP_LENGTH, N_SAMPLES, N_SAMPLES_PER_TOKEN, TOKENS_PER_SECOND, FRAMES_PER_SECOND, N_FFT,
     pad_or_trim, log_mel_spectrogram
 )
 from whisper.utils import exact_div, format_timestamp, make_safe
@@ -232,13 +232,14 @@ def transcribe_stable(
     if only_voice_freq:
         from .audio import voice_freq_filter
         audio = voice_freq_filter(audio, curr_sr)
-
-    whole_mel = log_mel_spectrogram(audio) if mel_first else None
+    sample_padding = int(N_FFT//2)+1
+    whole_mel = log_mel_spectrogram(audio, padding=sample_padding) if mel_first else None
 
     if decode_options.get("language", None) is None:
         if verbose:
             print("Detecting language using up to the first 30 seconds. Use `--language` to specify the language")
-        mel_segment = log_mel_spectrogram(audio[..., :N_SAMPLES]) if whole_mel is None else whole_mel[..., :N_FRAMES]
+        mel_segment = log_mel_spectrogram(audio[..., :N_SAMPLES], padding=sample_padding) \
+            if whole_mel is None else whole_mel[..., :N_FRAMES]
         mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
         _, probs = model.detect_language(mel_segment)
         decode_options["language"] = max(probs, key=probs.get)
@@ -360,7 +361,7 @@ def transcribe_stable(
             segment_duration = segment_samples / SAMPLE_RATE
 
             mel_segment = (
-                log_mel_spectrogram(audio_segment)
+                log_mel_spectrogram(audio_segment, padding=sample_padding)
                 if whole_mel is None else
                 whole_mel[..., round(seek_sample/n_samples_per_frame): round(seek_sample_end/n_samples_per_frame)]
             )

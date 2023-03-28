@@ -119,7 +119,7 @@ def _split_tokens(tokens: List[int], tokenizer: "Tokenizer"):
         curr_text = tokenizer.decode(curr_tokens)
         is_whole = token >= tokenizer.eot
         if not is_whole:
-            is_whole = text.startswith(curr_text)
+            is_whole = text[:len(curr_text)] == curr_text
             if is_whole and split_by_space:
                 is_append = not (curr_text.startswith(" ") or curr_text.strip() in string.punctuation)
 
@@ -133,7 +133,11 @@ def _split_tokens(tokens: List[int], tokenizer: "Tokenizer"):
             text = text[len(curr_text):]
             curr_tokens = []
 
-    assert len(text) == 0
+    if len(curr_tokens) != 0:
+        words.append(curr_text if len(text) == 0 else text)
+        word_tokens.append(curr_tokens)
+    elif len(text) != 0:
+        words[-1] += text
 
     return words, word_tokens
 
