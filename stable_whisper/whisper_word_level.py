@@ -387,11 +387,10 @@ def transcribe_stable(
                         silence_timing = (silence_timing[0][mn:], silence_timing[1][mn:])
 
                 if ts_token_mask is not None:
+                    if ts_token_mask.all():  # segment is silent
+                        fast_forward()
+                        continue
                     ts_token_mask = pad_or_trim(ts_token_mask, 1501)
-
-                if segment_silence_timing is None:
-                    fast_forward()
-                    continue
 
             decode_options["prompt"] = all_tokens[prompt_reset_since:]
             result: DecodingResult = decode_with_fallback(mel_segment, ts_token_mask=ts_token_mask)
