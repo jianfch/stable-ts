@@ -78,7 +78,7 @@ result.save_as_json('audio.json')
 
 ### Regrouping Words
 Stable-ts has a preset for regrouping words into different into segments with more natural boundaries. 
-This preset is enabled by `regroup=True`. But there are other built-in regrouping methods that allow you to customize the regrouping logic. 
+This preset is enabled by `regroup=True`. But there are other built-in [regrouping methods](#regrouping-methods) that allow you to customize the regrouping logic. 
 This preset is just a predefined a combination of those methods.
 
 https://user-images.githubusercontent.com/28970749/226504985-3d087539-cfa4-46d1-8eb5-7083f235b429.mp4
@@ -96,6 +96,13 @@ result1 = model.transcribe('audio.mp3', regroup=False)
 )
 # result0 == result1
 ```
+#### Regrouping Methods
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L526-L543)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L579-L595)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L637-L658)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L547-L573)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L599-L624)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L630-L633)
 
 ### Visualizing Suppression
 - Requirement: [Pillow](https://github.com/python-pillow/Pillow) or [opencv-python](https://github.com/opencv/opencv-python)
