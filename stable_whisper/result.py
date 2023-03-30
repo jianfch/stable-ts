@@ -284,6 +284,28 @@ class Segment:
 
         return sorted(set(indices) - set(self.get_locked_indices()))
 
+    def get_length_indices(self, max_chars: int = None, max_words: int = None):  # for splitting
+        if max_chars is None and max_words is None:
+            return []
+        assert max_chars != 0 and max_words != 0, \
+            f'max_chars and max_words must be greater 0, but got {max_chars} and {max_words}'
+        indices = []
+        curr_words = 0
+        curr_chars = 0
+        for i, word in enumerate(self.words):
+            curr_words += 1
+            curr_chars += len(word)
+            if i != 0:
+                if (
+                        max_chars is not None and curr_chars > max_chars
+                        or
+                        max_words is not None and curr_words > max_words
+                ):
+                    indices.append(i-1)
+                    curr_words = 1
+                    curr_chars = len(word)
+        return indices
+
     def split(self, indices: List[int]):
         if len(indices) == 0:
             return []
@@ -472,11 +494,10 @@ class WhisperResult:
             warnings.warn('Found segment(s) without word timings. These segment(s) cannot be split.')
         self.remove_no_word_segments()
 
-    def _merge_segments(self, get_indices, args: list = None,
+    def _merge_segments(self, indices: List[int],
                         *, max_words: int = None, max_chars: int = None, is_sum_max: bool = False, lock: bool = False):
-        if args is None:
-            args = []
-        indices = get_indices(*args)
+        if len(indices) == 0:
+            return
         for i in reversed(indices):
             seg = self.segments[i]
             if (
@@ -550,7 +571,8 @@ class WhisperResult:
             Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
 
         """
-        self._merge_segments(self.get_gap_indices, [min_gap],
+        indices = self.get_gap_indices(min_gap)
+        self._merge_segments(indices,
                              max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
         return self
 
@@ -600,13 +622,48 @@ class WhisperResult:
             Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
 
         """
-        self._merge_segments(self.get_punctuation_indices, [punctuation],
+        indices = self.get_punctuation_indices(punctuation)
+        self._merge_segments(indices,
                              max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
+        return self
+
+    def merge_all_segments(self):
+        """
+        Merge all segments into one segment.
+        """
+        self._merge_segments(list(range(len(self.segments) - 1)))
+        return self
+
+    def split_by_length(
+            self,
+            max_chars: int = None,
+            max_words: int = None,
+            force_len: bool = False,
+            lock: bool = False
+    ):
+        """
+
+        Parameters
+        ----------
+        max_chars: int
+            Maximum number of character allowed in segment.
+        max_words: int
+            Maximum number of words allowed in segment.
+        force_len: bool
+            Maintain a relatively constant length for each segment. (Default: False)
+            This will ignore all previous non-locked segment boundaries (e.g. boundaries set by `regroup()`).
+        lock: bool
+            Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
+
+        """
+        if force_len:
+            self.merge_all_segments()
+        self._split_segments(lambda x: x.get_length_indices(max_chars=max_chars, max_words=max_words), lock=lock)
         return self
 
     def regroup(self):
         """
-        Regroup all words into segments with more natural boundaries. (in-place)
+        Regroup (in-place) all words into segments with more natural boundaries without locking.
         """
         return (
             self
