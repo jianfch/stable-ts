@@ -289,17 +289,16 @@ def get_vad_silence_func(
             end = round(ts['end'] / SAMPLE_RATE, 3)
             if start != 0:
                 silent_ends.append(start)
-            if end != total_duration:
+                if len(silent_starts) == 0:
+                    silent_starts.append(0.0)
+            if end < total_duration:
                 silent_starts.append(end)
 
         if len(silent_starts) == 0 and len(silent_ends) == 0:
             return
 
-        if len(silent_starts) != 0 and silent_ends[-1] < silent_starts[-1]:
+        if len(silent_starts) != 0 and (len(silent_ends) == 0 or silent_ends[-1] < silent_starts[-1]):
             silent_ends.append(total_duration)
-
-        if len(silent_ends) != 0 and silent_starts[0] > silent_ends[0]:
-            silent_starts.insert(0, 0.0)
 
         silent_starts = np.array(silent_starts)
         silent_ends = np.array(silent_ends)
@@ -352,7 +351,9 @@ def visualize_suppression(
     max_n_samples = None if max_width == -1 else round(max_width * N_SAMPLES_PER_TOKEN)
 
     audio = standardize_audio(audio)
-    if max_n_samples is not None:
+    if max_n_samples is None:
+        max_width = audio.shape[-1]
+    else:
         audio = audio[:max_n_samples]
     loudness_tensor = audio2loudness(audio)
     width = min(max_width, loudness_tensor.shape[-1])
