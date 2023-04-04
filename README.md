@@ -9,7 +9,7 @@ https://user-images.githubusercontent.com/28970749/225825286-cdb14d70-566f-454b-
 ### What's new in 2.0.0 ?
 - updated to use Whisper's more reliable word-level timestamps method. 
 - the more reliable word timestamps allows regrouping all words into segments with more natural boundaries.
-- can now suppress silence with [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.2.0+)
+- can now suppress silence with [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.12.0+)
 - non-VAD silence suppression is also more robust 
 - see [Quick 1.X → 2.X Guide](#quick-1x--2x-guide)
 
