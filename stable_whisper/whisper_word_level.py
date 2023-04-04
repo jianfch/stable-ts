@@ -722,6 +722,11 @@ def cli():
     parser.add_argument('--min_word_dur', type=float, default=0.1,
                         help="only allow suppressing timestamps that result in word durations greater than this value")
 
+    parser.add_argument('--max_chars', type=int,
+                        help="maximum number of character allowed in each segment")
+    parser.add_argument('--max_words', type=int,
+                        help="maximum number of words allowed in each segment")
+
     parser.add_argument('--demucs', type=str2bool, default=False,
                         help='whether to reprocess the audio track with Demucs to isolate vocals/remove noise; '
                              'Demucs official repo: https://github.com/facebookresearch/demucs')
@@ -743,6 +748,9 @@ def cli():
                         help="whether to use segment-level timestamps in output")
     parser.add_argument('--word_level', type=str2bool, default=True,
                         help="whether to use word-level timestamps in output")
+
+    parser.add_argument('--rtl', type=str2bool, default=False,
+                        help="whether to use Right-To-Left format for text outputs")
 
     # ass output
     parser.add_argument('--font', type=str, default='Arial',
@@ -809,6 +817,10 @@ def cli():
     overwrite: bool = args.pop("overwrite")
     use_demucs = args.pop('demucs')
     demucs_outputs: List[Optional[str]] = args.pop("demucs_output")
+    regroup = args.pop('regroup')
+    max_chars = args.pop('max_chars')
+    max_words = args.pop('max_words')
+    rtl = args.pop('rtl')
 
     if outputs:
         unsupported_formats = set(splitext(o)[-1].lower().strip('.') for o in outputs) - output_formats
@@ -915,6 +927,10 @@ def cli():
               f'word_level: {word_level}\n'
               f'tag: {tag}\n'
               f'strip: {strip}\n'
+              f'regroup: {regroup}\n'
+              f'max_chars: {max_chars}\n'
+              f'max_words: {max_words}\n'
+              f'rtl: {rtl}\n'
               f'\nArguments for ASS Output',
               f'\nfont: {font}\n'
               f'font_size: {font_size}\n')
@@ -961,8 +977,6 @@ def cli():
     for input_audio, output_path in zip(inputs, outputs):
         if isinstance(input_audio, str) and is_json(input_audio):
             result = WhisperResult(input_audio)
-            if args.get('regroup'):
-                result.regroup()
         else:
             if model is None:
                 model = load_model(
@@ -975,8 +989,17 @@ def cli():
 
                 if model_loading_str:
                     print(f'Loaded {model_loading_str}  ')
+            args['regroup'] = False
             result: WhisperResult = model.transcribe(input_audio, **args)
 
+        if args.get('word_timestamps'):
+            if regroup:
+                result.regroup()
+            if max_chars or max_words:
+                result.split_by_length(max_chars=max_chars, max_words=max_words)
+
+        if rtl:
+            rtl = (args.get('prepend_punctuations'), args.get('append_punctuations'))
         make_parent(output_path)
         if is_json(output_path):
             result.save_as_json(output_path)
@@ -986,7 +1009,8 @@ def cli():
                 segment_level=segment_level,
                 word_level=word_level,
                 tag=tag,
-                strip=strip
+                strip=strip,
+                rtl=rtl
             )
         else:
             result.to_ass(
@@ -996,7 +1020,8 @@ def cli():
                 tag=tag,
                 font=font,
                 font_size=font_size,
-                strip=strip
+                strip=strip,
+                rtl=rtl
             )
 
 

@@ -1,7 +1,7 @@
 import json
 import os
 import warnings
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from itertools import chain
 from .stabilization import valid_ts
 
@@ -14,11 +14,13 @@ def _save_as_file(content: str, path: str):
     print(f'Saved: {os.path.abspath(path)}')
 
 
-def _get_segments(result: (dict, list), min_dur: float):
+def _get_segments(result: (dict, list), min_dur: float, rtl: Union[bool, tuple] = False):
     if isinstance(result, dict):
+        if rtl:
+            warnings.warn(f'[rtl]=True only applies to WhisperResult but result is {type(result)}')
         return result.get('segments')
     elif not isinstance(result, list) and callable(getattr(result, 'segments_to_dicts', None)):
-        return result.apply_min_dur(min_dur, inplace=False).segments_to_dicts()
+        return result.apply_min_dur(min_dur, inplace=False).segments_to_dicts(rtl=rtl)
     return result
 
 
@@ -57,14 +59,21 @@ def segment2assblock(segment: dict, idx: int, strip=True) -> str:
            f'{segment["text"].strip() if strip else segment["text"]}'
 
 
-def words2segments(words: List[dict], tag: Tuple[str, str]) -> List[dict]:
+def words2segments(words: List[dict], tag: Tuple[str, str], rtl: bool = False) -> List[dict]:
     def add_tag(idx: int):
-        return ''.join((f" {tag[0]}{w['word'][1:]}{tag[1]}"
-                        if w['word'].startswith(' ') else
-                        f"{tag[0]}{w['word']}{tag[1]}")
-                       if w['word'] not in ('', ' ') and idx_ == idx else
-                       w['word']
-                       for idx_, w in enumerate(filled_words))
+        idx_filled_words = enumerate(filled_words)
+        if rtl:
+            idx_filled_words = reversed(list(idx_filled_words))
+        return ''.join(
+            (
+                f" {tag[0]}{w['word'][1:]}{tag[1]}"
+                if w['word'].startswith(' ') else
+                f"{tag[0]}{w['word']}{tag[1]}"
+            )
+            if w['word'] not in ('', ' ') and idx_ == idx else
+            w['word']
+            for idx_, w in idx_filled_words
+        )
 
     filled_words = []
     for i, word in enumerate(words):
@@ -81,7 +90,7 @@ def words2segments(words: List[dict], tag: Tuple[str, str]) -> List[dict]:
 
 
 def to_word_level_segments(segments: List[dict], tag: Tuple[str, str]) -> List[dict]:
-    return list(chain.from_iterable(words2segments(s['words'], tag) for s in segments))
+    return list(chain.from_iterable(words2segments(s['words'], tag, rtl=s.get('rtl')) for s in segments))
 
 
 def to_word_level(segments: List[dict]) -> List[dict]:
@@ -99,9 +108,10 @@ def _confirm_word_level(segments: List[dict]) -> bool:
 def _preprocess_args(result: (dict, list),
                      segment_level: bool,
                      word_level: bool,
-                     min_dur: float):
+                     min_dur: float,
+                     rtl: Union[bool, tuple] = False):
     assert segment_level or word_level, '`segment_level` or `word_level` must be True'
-    segments = _get_segments(result, min_dur)
+    segments = _get_segments(result, min_dur, rtl=rtl)
     if word_level:
         word_level = _confirm_word_level(segments)
     return segments, segment_level, word_level
@@ -114,7 +124,8 @@ def result_to_srt_vtt(result: (dict, list),
                       min_dur: float = 0.02,
                       tag: Tuple[str, str] = None,
                       vtt: bool = None,
-                      strip=True):
+                      strip=True,
+                      rtl: Union[bool, tuple] = False):
     """
 
     Generate SRT/VTT from result to display segment-level and/or word-level timestamp.
@@ -138,15 +149,19 @@ def result_to_srt_vtt(result: (dict, list),
         VTT Default: '<u>', '</u>'
     vtt: bool
         whether to output VTT (default: False if no [filepath] is specified, else determined by [filepath] extension)
-    strip
+    strip: bool
         whether to remove spaces before and after text on each segment for output (default: True)
+    rtl: Union[bool, tuple]
+        whether to use Right-To-Left format (default: False)
+        or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
+        to match transcription settings (if True, the default punctuations will be used)
 
     Returns
     -------
     string of content if no [filepath] is provided, else None
 
     """
-    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur)
+    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur, rtl=rtl)
 
     is_srt = (filepath is None or not filepath.endswith('.vtt')) if vtt is None else vtt
     if filepath:
@@ -187,6 +202,7 @@ def result_to_ass(result: (dict, list),
                   font: str = None,
                   font_size: int = 24,
                   strip=True,
+                  rtl: Union[bool, tuple] = False,
                   **kwargs):
     """
 
@@ -215,6 +231,10 @@ def result_to_ass(result: (dict, list),
         word font size (default: 48)
     strip: bool
         whether to remove spaces before and after text on each segment for output (default: True)
+    rtl: Union[bool, tuple]
+        whether to use Right-To-Left format (default: False)
+        or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
+        to match transcription settings (if True, the default punctuations will be used)
     kwargs:
         used for format styles:
         'Name', 'Fontname', 'Fontsize', 'PrimaryColour', 'SecondaryColour', 'OutlineColour', 'BackColour', 'Bold',
@@ -226,7 +246,7 @@ def result_to_ass(result: (dict, list),
     string of content if no [filepath] is provided, else None
 
     """
-    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur)
+    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur, rtl=rtl)
 
     fmt_style_dict = {'Name': 'Default', 'Fontname': 'Arial', 'Fontsize': '48', 'PrimaryColour': '&Hffffff',
                       'SecondaryColour': '&Hffffff', 'OutlineColour': '&H0', 'BackColour': '&H0', 'Bold': '0',

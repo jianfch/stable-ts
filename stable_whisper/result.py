@@ -177,17 +177,73 @@ class Segment:
                 max_i -= 1
         return segment
 
-    def to_dict(self):
-        seg_dict = deepcopy(self.__dict__)
+    def _to_rtl(
+            self,
+            prepend_punctuations: str = None,
+            append_punctuations: str = None
+    ):
+        """
+
+        Returns
+        -------
+        A copy in RTL format
+
+        """
+        if prepend_punctuations is None:
+            prepend_punctuations = "\"'“¿([{-"
+        if prepend_punctuations and ' ' not in prepend_punctuations:
+            prepend_punctuations += ' '
+        if append_punctuations is None:
+            append_punctuations = "\"'.。,，!！?？:：”)]}、"
+        self_copy = deepcopy(self)
+        has_prepend = bool(prepend_punctuations)
+        has_append = bool(append_punctuations)
+        if has_prepend or has_append:
+            word_objs = (
+                self_copy.words
+                if self_copy.has_words else
+                [WordTiming(w, 0, 1, 0) for w in self_copy.text.split(' ')]
+            )
+            for word in word_objs:
+                new_append = ''
+                if has_prepend:
+                    for _ in range(len(word)):
+                        char = word.word[0]
+                        if char in prepend_punctuations:
+                            new_append += char
+                            word.word = word.word[1:]
+                        else:
+                            break
+                new_prepend = ''
+                if has_append:
+                    for _ in range(len(word)):
+                        char = word.word[-1]
+                        if char in append_punctuations:
+                            new_prepend += char
+                            word.word = word.word[:-1]
+                        else:
+                            break
+                word.word = f'{new_prepend}{word.word}{new_append[::-1]}'
+            self_copy.text = ''.join(w.word for w in reversed(word_objs))
+
+        return self_copy
+
+    def to_dict(self, rtl: Union[bool, tuple] = False):
+        if rtl:
+            seg_dict = (self._to_rtl(*rtl) if isinstance(rtl, tuple) else self._to_rtl()).__dict__
+        else:
+            seg_dict = deepcopy(self.__dict__)
         seg_dict.pop('ori_has_words')
         if self.has_words:
-            seg_dict['words'] = [w.to_dict() for w in self.words]
+            seg_dict['words'] = [w.to_dict() for w in seg_dict['words']]
         elif self.ori_has_words:
             seg_dict['words'] = []
         else:
             seg_dict.pop('words')
         if self.id is None:
             seg_dict.pop('id')
+        if rtl:
+            seg_dict['rtl'] = True
         return seg_dict
 
     @property
@@ -467,8 +523,8 @@ class WhisperResult:
                     language=self.language,
                     ori_dict=self.ori_dict)
 
-    def segments_to_dicts(self):
-        return [s.to_dict() for s in self.segments]
+    def segments_to_dicts(self, rtl: Union[bool, tuple] = False):
+        return [s.to_dict(rtl=rtl) for s in self.segments]
 
     def _split_segments(self, get_indices, args: list = None, *, lock: bool = False):
         if args is None:
@@ -538,7 +594,7 @@ class WhisperResult:
         max_gap: float
             The point between any two words greater than this value (seconds) will be split. (Default: 0.1)
         lock: bool
-            Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
+            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
 
         """
         self._split_segments(lambda x: x.get_gap_indices(max_gap), lock=lock)
@@ -568,7 +624,7 @@ class WhisperResult:
             Whether [max_words] and [max_chars] is applied to the merged segment
             instead of the individual segments to be merged. (Default: False)
         lock: bool
-            Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
+            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
 
         """
         indices = self.get_gap_indices(min_gap)
@@ -590,7 +646,7 @@ class WhisperResult:
         punctuation: Union[List[str], List[Tuple[str, str]], str]
             Punctuation(s) to split segments by.
         lock: bool
-            Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
+            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
 
         """
         self._split_segments(lambda x: x.get_punctuation_indices(punctuation), lock=lock)
@@ -619,7 +675,7 @@ class WhisperResult:
             Whether [max_words] and [max_chars] is applied to the merged segment
             instead of all the individual segments to be merged. (Default: False)
         lock: bool
-            Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
+            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
 
         """
         indices = self.get_punctuation_indices(punctuation)
@@ -643,17 +699,19 @@ class WhisperResult:
     ):
         """
 
+        Split (in-place) any segment in segments that do not exceed the specified length
+
         Parameters
         ----------
         max_chars: int
-            Maximum number of character allowed in segment.
+            Maximum number of character allowed in each segment.
         max_words: int
-            Maximum number of words allowed in segment.
+            Maximum number of words allowed in each segment.
         force_len: bool
             Maintain a relatively constant length for each segment. (Default: False)
             This will ignore all previous non-locked segment boundaries (e.g. boundaries set by `regroup()`).
         lock: bool
-            Whether to prevent future splits/merges from altering changes made by this function. (Default: False)
+            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
 
         """
         if force_len:
