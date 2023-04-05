@@ -61,9 +61,6 @@ def segment2assblock(segment: dict, idx: int, strip=True) -> str:
 
 def words2segments(words: List[dict], tag: Tuple[str, str], rtl: bool = False) -> List[dict]:
     def add_tag(idx: int):
-        idx_filled_words = enumerate(filled_words)
-        if rtl:
-            idx_filled_words = reversed(list(idx_filled_words))
         return ''.join(
             (
                 f" {tag[0]}{w['word'][1:]}{tag[1]}"
@@ -83,6 +80,9 @@ def words2segments(words: List[dict], tag: Tuple[str, str], rtl: bool = False) -
             next_start = round(words[i + 1]['start'], 3)
             if next_start - curr_end != 0:
                 filled_words.append(dict(word='', start=curr_end, end=next_start))
+    idx_filled_words = list(enumerate(filled_words))
+    if rtl:
+        idx_filled_words = list(reversed(idx_filled_words))
 
     segments = [dict(text=add_tag(i), start=filled_words[i]['start'], end=filled_words[i]['end'])
                 for i in range(len(filled_words))]
@@ -152,9 +152,11 @@ def result_to_srt_vtt(result: (dict, list),
     strip: bool
         whether to remove spaces before and after text on each segment for output (default: True)
     rtl: Union[bool, tuple]
-        whether to use Right-To-Left format (default: False)
+        whether to reverse Left-To-Right text into Right-To-Left format (default: False)
         or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
         to match transcription settings (if True, the default punctuations will be used)
+        Note: This will not fix RTL text not displaying tags properly which is an issue with video player.
+                VLC seems to not suffer from this issue.
 
     Returns
     -------

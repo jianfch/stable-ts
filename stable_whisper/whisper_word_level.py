@@ -750,7 +750,7 @@ def cli():
                         help="whether to use word-level timestamps in output")
 
     parser.add_argument('--rtl', type=str2bool, default=False,
-                        help="whether to use Right-To-Left format for text outputs")
+                        help="whether to reverse Left-To-Right text into Right-To-Left format for text outputs")
 
     # ass output
     parser.add_argument('--font', type=str, default='Arial',
