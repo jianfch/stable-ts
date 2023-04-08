@@ -176,7 +176,7 @@ def transcribe_stable(
 
     split_callback: Callable
         Custom callback for grouping tokens up with their corresponding words.
-        Takes argument: list of tokens
+        Takes argument: list of tokens; default tokenizer
         Returns a tuple pair containing: list of words; list of token groups (i.e. each group is list of token(s))
 
     decode_options: dict

@@ -161,7 +161,7 @@ def split_word_tokens(segments: List[dict],
         curr_words, curr_word_tokens = (
             _split_tokens(temp_word_tokens, tokenizer)
             if split_callback is None else
-            split_callback(temp_word_tokens)
+            split_callback(temp_word_tokens, tokenizer)
         )
         assert len(curr_words) == len(curr_word_tokens), \
             f'word count and token group count do not match, {len(curr_words)} and {len(curr_word_tokens)}'
