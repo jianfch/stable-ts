@@ -331,8 +331,11 @@ class Segment:
         indices = []
         for p in punctuation:
             if isinstance(p, str):
-                indices.extend([i for i, w in enumerate(self.words[:-1])
-                                if w.word.endswith(p)])
+                for i, s in enumerate(self.words[:-1]):
+                    if s.word.endswith(p):
+                        indices.append(i)
+                    elif i != 0 and s.word.startswith(p):
+                        indices.append(i-1)
             else:
                 ending, beginning = p
                 indices.extend([i for i, (w0, w1) in enumerate(zip(self.words[:-1], self.words[1:]))
@@ -505,8 +508,11 @@ class WhisperResult:
         indices = []
         for p in punctuation:
             if isinstance(p, str):
-                indices.extend([i for i, s in enumerate(self.segments[:-1])
-                                if s.text.endswith(p)])
+                for i, s in enumerate(self.segments[:-1]):
+                    if s.text.endswith(p):
+                        indices.append(i)
+                    elif i != 0 and s.text.startswith(p):
+                        indices.append(i-1)
             else:
                 ending, beginning = p
                 indices.extend([i for i, (s0, s1) in enumerate(zip(self.segments[:-1], self.segments[1:]))
