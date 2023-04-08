@@ -1,7 +1,7 @@
 import warnings
 import torch
 import numpy as np
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, List, Optional, Tuple, Union, Callable
 from types import MethodType
 from tqdm import tqdm
 
@@ -60,6 +60,7 @@ def transcribe_stable(
         prepend_punctuations: str = "\"'“¿([{-",
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
         mel_first: bool = False,
+        split_callback: Callable = None,
         **decode_options) \
         -> WhisperResult:
     """
@@ -173,6 +174,11 @@ def transcribe_stable(
         Process entire audio track into log-Mel spectrogram first instead in chunks. (Default: False)
         Used if odd behavior seen in stable-ts but not in whisper, but use significantly more memory for long audio.
 
+    split_callback: Callable
+        Custom callback for grouping tokens up with their corresponding words.
+        Takes argument: list of tokens
+        Returns a tuple pair containing: list of words; list of token groups (i.e. each group is list of token(s))
+
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
 
@@ -232,7 +238,7 @@ def transcribe_stable(
     if only_voice_freq:
         from .audio import voice_freq_filter
         audio = voice_freq_filter(audio, curr_sr)
-    sample_padding = int(N_FFT//2)+1
+    sample_padding = int(N_FFT // 2) + 1
     whole_mel = log_mel_spectrogram(audio, padding=sample_padding) if mel_first else None
 
     if decode_options.get("language", None) is None:
@@ -330,7 +336,7 @@ def transcribe_stable(
 
     total_samples = audio.shape[-1]
     total_duration = round(total_samples / curr_sr, 2)
-    n_samples_per_frame = exact_div(N_SAMPLES_PER_TOKEN * TOKENS_PER_SECOND,  FRAMES_PER_SECOND)
+    n_samples_per_frame = exact_div(N_SAMPLES_PER_TOKEN * TOKENS_PER_SECOND, FRAMES_PER_SECOND)
 
     silence_timing = None
     if suppress_silence and vad:
@@ -363,7 +369,7 @@ def transcribe_stable(
             mel_segment = (
                 log_mel_spectrogram(audio_segment, padding=sample_padding)
                 if whole_mel is None else
-                whole_mel[..., round(seek_sample/n_samples_per_frame): round(seek_sample_end/n_samples_per_frame)]
+                whole_mel[..., round(seek_sample / n_samples_per_frame): round(seek_sample_end / n_samples_per_frame)]
             )
 
             mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
@@ -492,7 +498,8 @@ def transcribe_stable(
                     append_punctuations=append_punctuations,
                     audio_features=audio_features,
                     ts_num=ts_num,
-                    ts_noise=ts_noise
+                    ts_noise=ts_noise,
+                    split_callback=split_callback
                 )
 
             if segment_silence_timing is not None:

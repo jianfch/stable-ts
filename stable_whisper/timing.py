@@ -1,7 +1,7 @@
 import string
 import torch
 import numpy as np
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Callable
 from itertools import chain
 from whisper.audio import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN
 from whisper.timing import WordTiming, median_filter, dtw, merge_punctuations
@@ -145,7 +145,8 @@ def _split_tokens(tokens: List[int], tokenizer: "Tokenizer"):
 def split_word_tokens(segments: List[dict],
                       tokenizer: "Tokenizer",
                       *,
-                      padding: (str, int) = None):
+                      padding: (str, int) = None,
+                      split_callback: Callable = None):
     if padding is not None:
         if isinstance(padding, str):
             padding = tokenizer.encode(padding)
@@ -156,7 +157,14 @@ def split_word_tokens(segments: List[dict],
     words = []
     word_tokens = []
     for i, s in enumerate(segments):
-        curr_words, curr_word_tokens = _split_tokens([t for t in s['tokens'] if t < tokenizer.eot], tokenizer)
+        temp_word_tokens = [t for t in s['tokens'] if t < tokenizer.eot]
+        curr_words, curr_word_tokens = (
+            _split_tokens(temp_word_tokens, tokenizer)
+            if split_callback is None else
+            split_callback(temp_word_tokens)
+        )
+        assert len(curr_words) == len(curr_word_tokens), \
+            f'word count and token group count do not match, {len(curr_words)} and {len(curr_word_tokens)}'
         if (
                 padding is not None and
                 curr_word_tokens[0][0] != padding and
@@ -191,6 +199,7 @@ def add_word_timestamps_stable(
         ts_num: int = 0,
         ts_noise: float = 0.1,
         min_word_dur: float = 0.1,
+        split_callback: Callable = None,
         **kwargs,
 ):
     if len(segments) == 0:
@@ -208,7 +217,8 @@ def add_word_timestamps_stable(
     if append_punctuations is None:
         append_punctuations = "\"'.。,，!！?？:：”)]}、"
 
-    text_tokens, token_split, seg_indices = split_word_tokens(segments, tokenizer, padding=' ...')
+    text_tokens, token_split, seg_indices = split_word_tokens(segments, tokenizer,
+                                                              padding=' ...', split_callback=split_callback)
 
     alignment = find_alignment_stable(model, tokenizer, text_tokens, mel, num_samples,
                                       **kwargs,
