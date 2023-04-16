@@ -44,6 +44,10 @@ class WordTiming:
     def duration(self):
         return self.end - self.start
 
+    def offset_time(self, offset_seconds: float):
+        self.start = self.start + offset_seconds
+        self.end = self.end + offset_seconds
+
     def to_dict(self):
         dict_ = deepcopy(self.__dict__)
         dict_.pop('left_locked')
@@ -133,6 +137,14 @@ class Segment:
         self_copy.no_speech_prob = (other.no_speech_prob + self_copy.no_speech_prob) / 2
 
         return self_copy
+
+    def offset_time(self, offset_seconds: float):
+        self.seek = self.seek + offset_seconds
+        self.start = self.start + offset_seconds
+        self.end = self.end + offset_seconds
+        if self.has_words:
+            for w in self.words:
+                w.offset_time(offset_seconds)
 
     def add_words(self, index0: int, index1: int, inplace: bool = False):
         new_word = self.words[index0] + self.words[index1]
@@ -438,6 +450,10 @@ class WhisperResult:
         for s in result.segments:
             s.apply_min_dur(min_dur, inplace=True)
         return result
+
+    def offset_time(self, offset_seconds: float):
+        for s in self.segments:
+            s.offset_time(offset_seconds)
 
     def suppress_silence(
             self,

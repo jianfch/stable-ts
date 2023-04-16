@@ -14,6 +14,7 @@ from whisper.utils import exact_div, format_timestamp, make_safe
 from whisper.tokenizer import get_tokenizer, LANGUAGES, TO_LANGUAGE_CODE
 from whisper.decoding import DecodingOptions, DecodingResult
 
+from .audio import load_audio
 from .decode import decode_stable
 from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable
@@ -32,7 +33,7 @@ warnings.filterwarnings('ignore', module='whisper', message='.*Triton.*', catego
 # modified version of whisper.transcribe.transcribe
 def transcribe_stable(
         model: "Whisper",
-        audio: Union[str, np.ndarray, torch.Tensor],
+        audio: Union[str, np.ndarray, torch.Tensor, bytes],
         *,
         verbose: Optional[bool] = False,
         temperature: Union[float, Tuple[float, ...]] = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
@@ -71,8 +72,8 @@ def transcribe_stable(
     model: Whisper
         The Whisper model modified instance
 
-    audio: Union[str, np.ndarray, torch.Tensor]
-        The path to the audio file to open, or the audio waveform
+    audio: Union[str, np.ndarray, torch.Tensor, bytes]
+        The path/URL to the audio file, the audio waveform, or bytes of audio file.
 
     verbose: bool
         Whether to display the text being decoded to the console. If True, displays all the details,
@@ -208,16 +209,16 @@ def transcribe_stable(
         time_scale = None
 
     curr_sr = SAMPLE_RATE if time_scale is None else SAMPLE_RATE * time_scale
-    if isinstance(audio, str):
+    if isinstance(audio, (str, bytes)):
         if demucs:
             from .audio import demucs_audio
             audio = demucs_audio(audio,
                                  output_sr=curr_sr,
                                  device=device,
-                                 verbose=verbose is not None,
+                                 verbose=verbose,
                                  save_path=demucs_output)
         else:
-            audio = torch.from_numpy(whisper.load_audio(audio, sr=curr_sr))
+            audio = torch.from_numpy(load_audio(audio, sr=curr_sr, verbose=verbose))
     else:
         if isinstance(audio, np.ndarray):
             audio = torch.from_numpy(audio)
@@ -228,7 +229,7 @@ def transcribe_stable(
                                  input_sr=input_sr,
                                  output_sr=curr_sr,
                                  device=device,
-                                 verbose=verbose is not None,
+                                 verbose=verbose,
                                  save_path=demucs_output)
         elif input_sr != curr_sr:
             from torchaudio.functional import resample
@@ -241,15 +242,19 @@ def transcribe_stable(
     sample_padding = int(N_FFT // 2) + 1
     whole_mel = log_mel_spectrogram(audio, padding=sample_padding) if mel_first else None
 
-    if decode_options.get("language", None) is None:
-        if verbose:
-            print("Detecting language using up to the first 30 seconds. Use `--language` to specify the language")
-        mel_segment = log_mel_spectrogram(audio[..., :N_SAMPLES], padding=sample_padding) \
-            if whole_mel is None else whole_mel[..., :N_FRAMES]
-        mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
-        _, probs = model.detect_language(mel_segment)
-        decode_options["language"] = max(probs, key=probs.get)
-        print(f"Detected language: {LANGUAGES[decode_options['language']]}")
+    if decode_options.get("language", None) is None and model:
+        if not model.is_multilingual:
+            decode_options["language"] = "en"
+        else:
+            if verbose:
+                print("Detecting language using up to the first 30 seconds. Use `--language` to specify the language")
+            mel_segment = log_mel_spectrogram(audio[..., :N_SAMPLES], padding=sample_padding) \
+                if whole_mel is None else whole_mel[..., :N_FRAMES]
+            mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
+            _, probs = model.detect_language(mel_segment)
+            decode_options["language"] = max(probs, key=probs.get)
+            if verbose is not None:
+                print(f"Detected language: {LANGUAGES[decode_options['language']]}")
 
     language = decode_options["language"]
     task = decode_options.get("task", "transcribe")
@@ -636,7 +641,8 @@ def cli():
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("inputs", nargs="+", type=str,
-                        help="audio/video file(s) to transcribe or json file(s) to process into [output_format]")
+                        help="audio/video filepath/URL(s) to transcribe "
+                             "or json file(s) to process into [output_format]")
     parser.add_argument("--output", "-o", nargs="+", type=str,
                         help="output filepaths(s);"
                              "if not specified, auto-named output file(s) will be saved to "

@@ -1,6 +1,73 @@
+import subprocess
+import warnings
+import ffmpeg
 import torch
 import torchaudio
 import numpy as np
+from typing import Union
+
+from whisper.audio import SAMPLE_RATE
+
+
+def is_ytdlp_available():
+    return subprocess.run('yt-dlp -h', capture_output=True).returncode == 0
+
+
+def _load_file(file: Union[str, bytes], verbose: bool = False):
+    if isinstance(file, str) and '://' in file:
+        if is_ytdlp_available():
+            verbosity = ' -q' if verbose is None else (' --progress' if verbose else ' --progress -q')
+            p = subprocess.run(
+                f'yt-dlp "{file}" -f ba/w -I 1{verbosity} -o -',
+                stdout=subprocess.PIPE
+            )
+            if len(p.stdout) == 0:
+                raise RuntimeError(f'Failed to download media from "{file}" with yt-dlp')
+            return p.stdout
+        else:
+            warnings.warn('URL detected but yt-dlp not available. '
+                          'To handle a greater variety of URLs (i.e. non-direct links), '
+                          'install yt-dlp, \'pip install yt-dlp\' (repo: https://github.com/yt-dlp/yt-dlp).')
+    return file
+
+
+# modified version of whisper.audio.load_audio
+def load_audio(file: Union[str, bytes], sr: int = SAMPLE_RATE, verbose: bool = True):
+    """
+    Open an audio file and read as mono waveform, resampling as necessary
+
+    Parameters
+    ----------
+    file: str
+        The audio file to open, bytes of file, or URL to audio/video
+
+    sr: int
+        The sample rate to resample the audio if necessary
+
+    verbose: bool
+        whether to print yt-dlp log
+
+    Returns
+    -------
+    A NumPy array containing the audio waveform, in float32 dtype.
+    """
+    file = _load_file(file, verbose=verbose)
+    if isinstance(file, bytes):
+        inp, file = file, 'pipe:'
+    else:
+        inp = None
+    try:
+        # This launches a subprocess to decode audio while down-mixing and resampling as necessary.
+        # Requires the ffmpeg CLI and `ffmpeg-python` package to be installed.
+        out, _ = (
+            ffmpeg.input(file, threads=0)
+            .output("-", format="s16le", acodec="pcm_s16le", ac=1, ar=sr)
+            .run(cmd=["ffmpeg", "-nostdin"], capture_stdout=True, capture_stderr=True, input=inp)
+        )
+    except ffmpeg.Error as e:
+        raise RuntimeError(f"Failed to load audio: {e.stderr.decode()}") from e
+
+    return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 
 
 def voice_freq_filter(wf: (torch.Tensor, np.ndarray), sr: int,
@@ -53,9 +120,8 @@ def demucs_audio(audio: (torch.Tensor, str),
     if track_name:
         track_name = f'"{track_name}"'
 
-    if isinstance(audio, str):
-        from whisper.audio import load_audio
-        if not track_name:
+    if isinstance(audio, (str, bytes)):
+        if isinstance(audio, str) and not track_name:
             track_name = f'"{audio}"'
         audio = torch.from_numpy(load_audio(audio, model.samplerate))
     elif input_sr != model.samplerate:
@@ -82,7 +148,14 @@ def demucs_audio(audio: (torch.Tensor, str),
     vocals_idx = model.sources.index('vocals')
     if verbose:
         print(f'Isolating vocals from {track_name}')
-    vocals = apply_model(model, audio, device=device, split=True, overlap=.25, progress=verbose)[0, vocals_idx].mean(0)
+    vocals = apply_model(
+        model,
+        audio,
+        device=device,
+        split=True,
+        overlap=.25,
+        progress=verbose is not None
+    )[0, vocals_idx].mean(0)
 
     if device != 'cpu':
         torch.cuda.empty_cache()
