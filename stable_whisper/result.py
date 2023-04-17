@@ -770,6 +770,6 @@ class WhisperResult:
         segments = self.ori_dict.get('segments')
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
 
-    to_srt_vtt = result_to_srt_vtt
+    to_srt_vtt_tsv = result_to_srt_vtt_tsv
     to_ass = result_to_ass
     save_as_json = save_as_json

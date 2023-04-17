@@ -5,7 +5,7 @@ from typing import List, Tuple, Union
 from itertools import chain
 from .stabilization import valid_ts
 
-__all__ = ['result_to_srt_vtt', 'result_to_ass', 'save_as_json', 'load_result']
+__all__ = ['result_to_srt_vtt_tsv', 'result_to_ass', 'save_as_json', 'load_result']
 
 
 def _save_as_file(content: str, path: str):
@@ -53,10 +53,17 @@ def segment2srtblock(segment: dict, idx: int, strip=True) -> str:
     return f'{idx}\n{sec2srt(segment["start"])} --> {sec2srt(segment["end"])}\n' \
            f'{segment["text"].strip() if strip else segment["text"]}'
 
+def segment2tsvblock(segment: dict, strip=True) -> str:
+    return f'{timestamp2milliseconds(sec2srt(segment["start"]))}\t{timestamp2milliseconds(sec2srt(segment["end"]))}\t{segment["text"].strip() if strip else segment["text"]}'
 
 def segment2assblock(segment: dict, idx: int, strip=True) -> str:
     return f'Dialogue: {idx},{sec2ass(segment["start"])},{sec2ass(segment["end"])},Default,,0,0,0,,' \
            f'{segment["text"].strip() if strip else segment["text"]}'
+
+def timestamp2milliseconds(timestamp: str) -> int:
+    hh, mm, ss = timestamp.split(':')
+    ss, ms = ss.split(',')
+    return int(hh) * 3600000 + int(mm) * 60000 + int(ss) * 1000 + int(ms)
 
 
 def words2segments(words: List[dict], tag: Tuple[str, str], rtl: bool = False) -> List[dict]:
@@ -117,7 +124,7 @@ def _preprocess_args(result: (dict, list),
     return segments, segment_level, word_level
 
 
-def result_to_srt_vtt(result: (dict, list),
+def result_to_srt_vtt_tsv(result: (dict, list),
                       filepath: str = None,
                       segment_level=True,
                       word_level=True,
@@ -164,16 +171,17 @@ def result_to_srt_vtt(result: (dict, list),
 
     """
     segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur, rtl=rtl)
-
-    is_srt = (filepath is None or not filepath.endswith('.vtt')) if vtt is None else vtt
+    type = 'vtt'
+    if (filepath.endswith('.srt') or filepath is None):
+        type = 'srt'
+    elif (filepath.endswith('.tsv') or 'tsv' in filepath):
+        type = 'tsv'
+    is_srt = type == 'srt'
     if filepath:
-        if is_srt:
-            if not filepath.endswith('.srt'):
-                filepath += '.srt'
-        elif not filepath.endswith('.vtt'):
-            filepath += '.vtt'
+        if not filepath.endswith(f'.{type}'):
+            filepath += f'.{type}'
 
-    sub_str = '' if is_srt else 'WEBVTT\n\n'
+    sub_str = 'WEBVTT\n\n' if type == 'vtt' else ''
 
     if word_level and segment_level:
         if tag is None:
@@ -186,8 +194,10 @@ def result_to_srt_vtt(result: (dict, list),
 
     if is_srt:
         sub_str += '\n\n'.join(segment2srtblock(s, i, strip=strip) for i, s in enumerate(segments))
-    else:
+    elif type == 'vtt':
         sub_str += '\n\n'.join(segment2vttblock(s, strip=strip) for i, s in enumerate(segments))
+    elif type == 'tsv':
+        sub_str += '\n'.join(segment2tsvblock(s, strip=strip) for i, s in enumerate(segments))
 
     if filepath:
         _save_as_file(sub_str, filepath)

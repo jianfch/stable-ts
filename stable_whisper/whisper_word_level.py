@@ -637,7 +637,7 @@ def cli():
             return str2val[string]
         raise ValueError(f"Expected one of {set(str2val.keys())}, got {string}")
 
-    output_formats = {"srt", "ass", "json", "vtt"}
+    output_formats = {"srt", "ass", "json", "vtt", "tsv"}
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("inputs", nargs="+", type=str,
@@ -1016,8 +1016,8 @@ def cli():
         make_parent(output_path)
         if is_json(output_path):
             result.save_as_json(output_path)
-        elif output_path.endswith('.srt') or output_path.endswith('.vtt'):
-            result.to_srt_vtt(
+        elif output_path.endswith('.srt') or output_path.endswith('.vtt') or output_path.endswith('.tsv'):
+            result.to_srt_vtt_tsv(
                 filepath=output_path,
                 segment_level=segment_level,
                 word_level=word_level,
