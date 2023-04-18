@@ -1,7 +1,7 @@
 import json
 import os
 import warnings
-from typing import List, Tuple, Union
+from typing import List, Tuple, Union, Callable
 from itertools import chain
 from .stabilization import valid_ts
 
@@ -14,13 +14,13 @@ def _save_as_file(content: str, path: str):
     print(f'Saved: {os.path.abspath(path)}')
 
 
-def _get_segments(result: (dict, list), min_dur: float, rtl: Union[bool, tuple] = False):
+def _get_segments(result: (dict, list), min_dur: float, reverse_text: Union[bool, tuple] = False):
     if isinstance(result, dict):
-        if rtl:
-            warnings.warn(f'[rtl]=True only applies to WhisperResult but result is {type(result)}')
+        if reverse_text:
+            warnings.warn(f'[reverse_text]=True only applies to WhisperResult but result is {type(result)}')
         return result.get('segments')
     elif not isinstance(result, list) and callable(getattr(result, 'segments_to_dicts', None)):
-        return result.apply_min_dur(min_dur, inplace=False).segments_to_dicts(rtl=rtl)
+        return result.apply_min_dur(min_dur, inplace=False).segments_to_dicts(reverse_text=reverse_text)
     return result
 
 
@@ -59,7 +59,7 @@ def segment2assblock(segment: dict, idx: int, strip=True) -> str:
            f'{segment["text"].strip() if strip else segment["text"]}'
 
 
-def words2segments(words: List[dict], tag: Tuple[str, str], rtl: bool = False) -> List[dict]:
+def words2segments(words: List[dict], tag: Tuple[str, str], reverse_text: bool = False) -> List[dict]:
     def add_tag(idx: int):
         return ''.join(
             (
@@ -81,7 +81,7 @@ def words2segments(words: List[dict], tag: Tuple[str, str], rtl: bool = False) -
             if next_start - curr_end != 0:
                 filled_words.append(dict(word='', start=curr_end, end=next_start))
     idx_filled_words = list(enumerate(filled_words))
-    if rtl:
+    if reverse_text:
         idx_filled_words = list(reversed(idx_filled_words))
 
     segments = [dict(text=add_tag(i), start=filled_words[i]['start'], end=filled_words[i]['end'])
@@ -90,7 +90,12 @@ def words2segments(words: List[dict], tag: Tuple[str, str], rtl: bool = False) -
 
 
 def to_word_level_segments(segments: List[dict], tag: Tuple[str, str]) -> List[dict]:
-    return list(chain.from_iterable(words2segments(s['words'], tag, rtl=s.get('rtl')) for s in segments))
+    return list(
+        chain.from_iterable(
+            words2segments(s['words'], tag, reverse_text=s.get('reversed_text'))
+            for s in segments
+        )
+    )
 
 
 def to_word_level(segments: List[dict]) -> List[dict]:
@@ -109,12 +114,67 @@ def _preprocess_args(result: (dict, list),
                      segment_level: bool,
                      word_level: bool,
                      min_dur: float,
-                     rtl: Union[bool, tuple] = False):
+                     reverse_text: Union[bool, tuple] = False):
     assert segment_level or word_level, '`segment_level` or `word_level` must be True'
-    segments = _get_segments(result, min_dur, rtl=rtl)
+    segments = _get_segments(result, min_dur, reverse_text=reverse_text)
     if word_level:
         word_level = _confirm_word_level(segments)
     return segments, segment_level, word_level
+
+
+def result_to_any(result: (dict, list),
+                  filepath: str = None,
+                  filetype: str = None,
+                  segments2blocks: Callable = None,
+                  segment_level=True,
+                  word_level=True,
+                  min_dur: float = 0.02,
+                  tag: Tuple[str, str] = None,
+                  default_tag: Tuple[str, str] = None,
+                  strip=True,
+                  reverse_text: Union[bool, tuple] = False):
+    """
+
+    Generate file from result to display segment-level and/or word-level timestamp.
+
+    Returns
+    -------
+    string of content if no [filepath] is provided, else None
+
+    """
+    segments, segment_level, word_level = _preprocess_args(
+        result, segment_level, word_level, min_dur, reverse_text=reverse_text
+    )
+
+    if filetype is None:
+        filetype = os.path.splitext(filepath)[-1][1:] or 'srt'
+    if filetype.lower() not in ('srt', 'vtt', 'ass', 'tsv'):
+        raise NotImplementedError(f'{filetype} not supported')
+
+    if filepath and not filepath.lower().endswith(f'.{filetype}'):
+        filepath += f'.{filetype}'
+
+    if word_level and segment_level:
+        if tag is None:
+            if default_tag is None:
+                tag = ('<font color="#00ff00">', '</font>') if filetype == 'srt' else ('<u>', '</u>')
+            else:
+                tag = default_tag
+        segments = to_word_level_segments(segments, tag)
+    elif word_level:
+        segments = to_word_level(segments)
+
+    valid_ts(segments)
+
+    if segments2blocks is None:
+        sub_str = '\n\n'.join(segment2srtblock(s, i, strip=strip) for i, s in enumerate(segments))
+    else:
+        sub_str = segments2blocks(segments)
+
+    if filepath:
+        _save_as_file(sub_str, filepath)
+    else:
+        return sub_str
 
 
 def result_to_srt_vtt(result: (dict, list),
@@ -125,7 +185,7 @@ def result_to_srt_vtt(result: (dict, list),
                       tag: Tuple[str, str] = None,
                       vtt: bool = None,
                       strip=True,
-                      rtl: Union[bool, tuple] = False):
+                      reverse_text: Union[bool, tuple] = False):
     """
 
     Generate SRT/VTT from result to display segment-level and/or word-level timestamp.
@@ -151,8 +211,8 @@ def result_to_srt_vtt(result: (dict, list),
         whether to output VTT (default: False if no [filepath] is specified, else determined by [filepath] extension)
     strip: bool
         whether to remove spaces before and after text on each segment for output (default: True)
-    rtl: Union[bool, tuple]
-        whether to reverse Left-To-Right text into Right-To-Left format (default: False)
+    reverse_text: Union[bool, tuple]
+        whether to reverse the order of words for each segment (default: False)
         or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
         to match transcription settings (if True, the default punctuations will be used)
         Note: This will not fix RTL text not displaying tags properly which is an issue with video player.
@@ -163,36 +223,24 @@ def result_to_srt_vtt(result: (dict, list),
     string of content if no [filepath] is provided, else None
 
     """
-    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur, rtl=rtl)
-
-    is_srt = (filepath is None or not filepath.endswith('.vtt')) if vtt is None else vtt
-    if filepath:
-        if is_srt:
-            if not filepath.endswith('.srt'):
-                filepath += '.srt'
-        elif not filepath.endswith('.vtt'):
-            filepath += '.vtt'
-
-    sub_str = '' if is_srt else 'WEBVTT\n\n'
-
-    if word_level and segment_level:
-        if tag is None:
-            tag = ('<font color="#00ff00">', '</font>') if is_srt else ('<u>', '</u>')
-        segments = to_word_level_segments(segments, tag)
-    elif word_level:
-        segments = to_word_level(segments)
-
-    valid_ts(segments)
-
+    is_srt = (filepath is None or not filepath.lower().endswith('.vtt')) if vtt is None else not vtt
     if is_srt:
-        sub_str += '\n\n'.join(segment2srtblock(s, i, strip=strip) for i, s in enumerate(segments))
+        segments2blocks = None
     else:
-        sub_str += '\n\n'.join(segment2vttblock(s, strip=strip) for i, s in enumerate(segments))
-
-    if filepath:
-        _save_as_file(sub_str, filepath)
-    else:
-        return sub_str
+        def segments2blocks(segments):
+            return 'WEBVTT\n\n' + '\n\n'.join(segment2vttblock(s, strip=strip) for i, s in enumerate(segments))
+    return result_to_any(
+        result=result,
+        filepath=filepath,
+        filetype=('vtt', 'srt')[is_srt],
+        segments2blocks=segments2blocks,
+        segment_level=segment_level,
+        word_level=word_level,
+        min_dur=min_dur,
+        tag=tag,
+        strip=strip,
+        reverse_text=reverse_text
+    )
 
 
 def result_to_ass(result: (dict, list),
@@ -204,7 +252,7 @@ def result_to_ass(result: (dict, list),
                   font: str = None,
                   font_size: int = 24,
                   strip=True,
-                  rtl: Union[bool, tuple] = False,
+                  reverse_text: Union[bool, tuple] = False,
                   **kwargs):
     """
 
@@ -233,10 +281,12 @@ def result_to_ass(result: (dict, list),
         word font size (default: 48)
     strip: bool
         whether to remove spaces before and after text on each segment for output (default: True)
-    rtl: Union[bool, tuple]
-        whether to use Right-To-Left format (default: False)
+    reverse_text: Union[bool, tuple]
+        whether to reverse the order of words for each segment (default: False)
         or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
         to match transcription settings (if True, the default punctuations will be used)
+        Note: This will not fix RTL text not displaying tags properly which is an issue with video player.
+                VLC seems to not suffer from this issue.
     kwargs:
         used for format styles:
         'Name', 'Fontname', 'Fontsize', 'PrimaryColour', 'SecondaryColour', 'OutlineColour', 'BackColour', 'Bold',
@@ -248,51 +298,49 @@ def result_to_ass(result: (dict, list),
     string of content if no [filepath] is provided, else None
 
     """
-    segments, segment_level, word_level = _preprocess_args(result, segment_level, word_level, min_dur, rtl=rtl)
 
-    fmt_style_dict = {'Name': 'Default', 'Fontname': 'Arial', 'Fontsize': '48', 'PrimaryColour': '&Hffffff',
-                      'SecondaryColour': '&Hffffff', 'OutlineColour': '&H0', 'BackColour': '&H0', 'Bold': '0',
-                      'Italic': '0', 'Underline': '0', 'StrikeOut': '0', 'ScaleX': '100', 'ScaleY': '100',
-                      'Spacing': '0', 'Angle': '0', 'BorderStyle': '1', 'Outline': '1', 'Shadow': '0',
-                      'Alignment': '2', 'MarginL': '10', 'MarginR': '10', 'MarginV': '10', 'Encoding': '0'}
+    def segments2blocks(segments):
+        fmt_style_dict = {'Name': 'Default', 'Fontname': 'Arial', 'Fontsize': '48', 'PrimaryColour': '&Hffffff',
+                          'SecondaryColour': '&Hffffff', 'OutlineColour': '&H0', 'BackColour': '&H0', 'Bold': '0',
+                          'Italic': '0', 'Underline': '0', 'StrikeOut': '0', 'ScaleX': '100', 'ScaleY': '100',
+                          'Spacing': '0', 'Angle': '0', 'BorderStyle': '1', 'Outline': '1', 'Shadow': '0',
+                          'Alignment': '2', 'MarginL': '10', 'MarginR': '10', 'MarginV': '10', 'Encoding': '0'}
 
-    for k, v in filter(lambda x: 'colour' in x[0].lower() and not str(x[1]).startswith('&H'), kwargs.items()):
-        kwargs[k] = f'&H{kwargs[k]}'
+        for k, v in filter(lambda x: 'colour' in x[0].lower() and not str(x[1]).startswith('&H'), kwargs.items()):
+            kwargs[k] = f'&H{kwargs[k]}'
 
-    fmt_style_dict.update((k, v) for k, v in kwargs.items() if k in fmt_style_dict)
+        fmt_style_dict.update((k, v) for k, v in kwargs.items() if k in fmt_style_dict)
 
-    if font:
-        fmt_style_dict.update(Fontname=font)
-    if font_size:
-        fmt_style_dict.update(Fontsize=font_size)
+        if font:
+            fmt_style_dict.update(Fontname=font)
+        if font_size:
+            fmt_style_dict.update(Fontsize=font_size)
 
-    fmts = f'Format: {", ".join(map(str, fmt_style_dict.keys()))}'
+        fmts = f'Format: {", ".join(map(str, fmt_style_dict.keys()))}'
 
-    styles = f'Style: {",".join(map(str, fmt_style_dict.values()))}'
+        styles = f'Style: {",".join(map(str, fmt_style_dict.values()))}'
 
-    sub_str = f'[Script Info]\nScriptType: v4.00+\nPlayResX: 384\nPlayResY: 288\nScaledBorderAndShadow: yes\n\n' \
-              f'[V4+ Styles]\n{fmts}\n{styles}\n\n' \
-              f'[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\n'
+        sub_str = f'[Script Info]\nScriptType: v4.00+\nPlayResX: 384\nPlayResY: 288\nScaledBorderAndShadow: yes\n\n' \
+                  f'[V4+ Styles]\n{fmts}\n{styles}\n\n' \
+                  f'[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\n'
 
-    if word_level and segment_level:
-        if tag is None:
-            color = 'HFF00'
-            tag = (r'{\1c&' + f'{color.upper()}&' + '}', r'{\r}')
-        segments = to_word_level_segments(segments, tag)
-    elif word_level:
-        segments = to_word_level(segments)
+        sub_str += '\n'.join(segment2assblock(s, i, strip=strip) for i, s in enumerate(segments))
 
-    valid_ts(segments)
-
-    sub_str += '\n'.join(segment2assblock(s, i, strip=strip) for i, s in enumerate(segments))
-
-    if filepath:
-        if not filepath.lower().endswith('.ass'):
-            filepath += '.ass'
-
-        _save_as_file(sub_str, filepath)
-    else:
         return sub_str
+
+    return result_to_any(
+        result=result,
+        filepath=filepath,
+        filetype='ass',
+        segments2blocks=segments2blocks,
+        segment_level=segment_level,
+        word_level=word_level,
+        min_dur=min_dur,
+        tag=tag,
+        default_tag=(r'{\1c&' + 'HFF00&' + '}', r'{\r}'),
+        strip=strip,
+        reverse_text=reverse_text
+    )
 
 
 def save_as_json(result: dict, path: str):

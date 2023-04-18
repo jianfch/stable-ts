@@ -762,8 +762,8 @@ def cli():
     parser.add_argument('--word_level', type=str2bool, default=True,
                         help="whether to use word-level timestamps in output")
 
-    parser.add_argument('--rtl', type=str2bool, default=False,
-                        help="whether to reverse Left-To-Right text into Right-To-Left format for text outputs")
+    parser.add_argument('--reverse_text', type=str2bool, default=False,
+                        help="whether to reverse the order of words for each segment of text output")
 
     # ass output
     parser.add_argument('--font', type=str, default='Arial',
@@ -833,7 +833,7 @@ def cli():
     regroup = args.pop('regroup')
     max_chars = args.pop('max_chars')
     max_words = args.pop('max_words')
-    rtl = args.pop('rtl')
+    reverse_text = args.pop('reverse_text')
 
     if outputs:
         unsupported_formats = set(splitext(o)[-1].lower().strip('.') for o in outputs) - output_formats
@@ -943,7 +943,7 @@ def cli():
               f'regroup: {regroup}\n'
               f'max_chars: {max_chars}\n'
               f'max_words: {max_words}\n'
-              f'rtl: {rtl}\n'
+              f'reverse_text: {reverse_text}\n'
               f'\nArguments for ASS Output',
               f'\nfont: {font}\n'
               f'font_size: {font_size}\n')
@@ -1011,8 +1011,8 @@ def cli():
             if max_chars or max_words:
                 result.split_by_length(max_chars=max_chars, max_words=max_words)
 
-        if rtl:
-            rtl = (args.get('prepend_punctuations'), args.get('append_punctuations'))
+        if reverse_text:
+            reverse_text = (args.get('prepend_punctuations'), args.get('append_punctuations'))
         make_parent(output_path)
         if is_json(output_path):
             result.save_as_json(output_path)
@@ -1023,7 +1023,7 @@ def cli():
                 word_level=word_level,
                 tag=tag,
                 strip=strip,
-                rtl=rtl
+                reverse_text=reverse_text
             )
         else:
             result.to_ass(
@@ -1034,7 +1034,7 @@ def cli():
                 font=font,
                 font_size=font_size,
                 strip=strip,
-                rtl=rtl
+                reverse_text=reverse_text
             )
 
 

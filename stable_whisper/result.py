@@ -189,7 +189,7 @@ class Segment:
                 max_i -= 1
         return segment
 
-    def _to_rtl(
+    def _to_reverse_text(
             self,
             prepend_punctuations: str = None,
             append_punctuations: str = None
@@ -198,7 +198,7 @@ class Segment:
 
         Returns
         -------
-        A copy in RTL format
+        A copy with words reversed order per segment
 
         """
         if prepend_punctuations is None:
@@ -240,9 +240,13 @@ class Segment:
 
         return self_copy
 
-    def to_dict(self, rtl: Union[bool, tuple] = False):
-        if rtl:
-            seg_dict = (self._to_rtl(*rtl) if isinstance(rtl, tuple) else self._to_rtl()).__dict__
+    def to_dict(self, reverse_text: Union[bool, tuple] = False):
+        if reverse_text:
+            seg_dict = (
+                (self._to_reverse_text(*reverse_text)
+                 if isinstance(reverse_text, tuple) else
+                 self._to_reverse_text()).__dict__
+            )
         else:
             seg_dict = deepcopy(self.__dict__)
         seg_dict.pop('ori_has_words')
@@ -254,8 +258,8 @@ class Segment:
             seg_dict.pop('words')
         if self.id is None:
             seg_dict.pop('id')
-        if rtl:
-            seg_dict['rtl'] = True
+        if reverse_text:
+            seg_dict['reversed_text'] = True
         return seg_dict
 
     @property
@@ -545,8 +549,8 @@ class WhisperResult:
                     language=self.language,
                     ori_dict=self.ori_dict)
 
-    def segments_to_dicts(self, rtl: Union[bool, tuple] = False):
-        return [s.to_dict(rtl=rtl) for s in self.segments]
+    def segments_to_dicts(self, reverse_text: Union[bool, tuple] = False):
+        return [s.to_dict(reverse_text=reverse_text) for s in self.segments]
 
     def _split_segments(self, get_indices, args: list = None, *, lock: bool = False):
         if args is None:
