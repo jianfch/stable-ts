@@ -10,7 +10,7 @@ from whisper.audio import SAMPLE_RATE
 
 
 def is_ytdlp_available():
-    return subprocess.run('yt-dlp -h', capture_output=True).returncode == 0
+    return subprocess.run('yt-dlp -h', shell=True, capture_output=True).returncode == 0
 
 
 def _load_file(file: Union[str, bytes], verbose: bool = False):
