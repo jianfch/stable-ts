@@ -200,6 +200,7 @@ def add_word_timestamps_stable(
         ts_noise: float = 0.1,
         min_word_dur: float = 0.1,
         split_callback: Callable = None,
+        gap_padding: str = ' ...',
         **kwargs,
 ):
     if len(segments) == 0:
@@ -208,46 +209,64 @@ def add_word_timestamps_stable(
     if min_word_dur is None:
         min_word_dur = 0
 
-    for segment in segments:
-        segment['words'] = []
-
     if prepend_punctuations is None:
         prepend_punctuations = "\"'“¿([{-"
 
     if append_punctuations is None:
         append_punctuations = "\"'.。,，!！?？:：”)]}、"
 
-    text_tokens, token_split, seg_indices = split_word_tokens(segments, tokenizer,
-                                                              padding=' ...', split_callback=split_callback)
+    def align():
+        for seg in segments:
+            seg['words'] = []
 
-    alignment = find_alignment_stable(model, tokenizer, text_tokens, mel, num_samples,
-                                      **kwargs,
-                                      token_split=token_split,
-                                      audio_features=audio_features,
-                                      ts_num=ts_num,
-                                      ts_noise=ts_noise)
-    alt_beginning_alignment = pop_empty_alignment(alignment)
+        text_tokens, token_split, seg_indices = split_word_tokens(segments, tokenizer,
+                                                                  padding=gap_padding, split_callback=split_callback)
 
-    merge_punctuations(alignment, prepend_punctuations, append_punctuations)
+        alignment = find_alignment_stable(model, tokenizer, text_tokens, mel, num_samples,
+                                          **kwargs,
+                                          token_split=token_split,
+                                          audio_features=audio_features,
+                                          ts_num=ts_num,
+                                          ts_noise=ts_noise)
+        alt_beginning_alignment = pop_empty_alignment(alignment)
 
-    time_offset = segments[0]["seek"]
+        merge_punctuations(alignment, prepend_punctuations, append_punctuations)
 
-    assert len(alignment) == len(seg_indices) and len(segments) == len(alt_beginning_alignment)
-    for i, timing in zip(seg_indices, alignment):
-        if len(timing.tokens) != 0:
-            start = timing.start
-            end = timing.end
-            if len(segments[i]['words']) == 0 and ((end - start) < min_word_dur):
-                start = alt_beginning_alignment[i].start
-            segments[i]['words'].append(
-                dict(
-                    word=timing.word,
-                    start=round(time_offset + start, 3),
-                    end=round(time_offset + end, 3),
-                    probability=timing.probability,
-                    tokens=timing.tokens
+        time_offset = segments[0]["seek"]
+
+        assert len(alignment) == len(seg_indices)
+        assert (gap_padding is None or len(segments) == len(alt_beginning_alignment))
+        for i, timing in zip(seg_indices, alignment):
+            if len(timing.tokens) != 0:
+                start = timing.start
+                end = timing.end
+                if (
+                        len(segments[i]['words']) == 0 and
+                        ((end - start) < min_word_dur) and
+                        len(alt_beginning_alignment)
+                ):
+                    start = alt_beginning_alignment[i].start
+                segments[i]['words'].append(
+                    dict(
+                        word=timing.word,
+                        start=round(time_offset + start, 3),
+                        end=round(time_offset + end, 3),
+                        probability=timing.probability,
+                        tokens=timing.tokens
+                    )
                 )
+
+    align()
+    if (
+            gap_padding is not None and
+            any(
+                (word['end'] - word['start']) < min_word_dur
+                for seg in segments
+                for word in seg['words']
             )
+    ):
+        gap_padding = None
+        align()
 
     for segment in segments:
         if len(words := segment["words"]) > 0:

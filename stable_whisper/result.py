@@ -1,4 +1,5 @@
 import warnings
+import re
 import numpy as np
 from typing import Union, List, Tuple
 from dataclasses import dataclass
@@ -757,6 +758,26 @@ class WhisperResult:
             .split_by_punctuation([('.', ' '), '。', '?', '？'])
         )
 
+    def find(self, pattern: str, word_level=True, flags=None) -> "WhisperResultMatches":
+        """
+
+        Find segments/words and timestamps with regular expression.
+
+        Parameters
+        ----------
+        pattern: str
+            RegEx pattern to search for.
+        word_level: bool
+            Whether to search at word-level
+        flags:
+            RegEx flags.
+
+        Returns
+        -------
+        An instance of WhisperResultMatches class to allow for continuous chaining of this method.
+        """
+        return WhisperResultMatches(self).find(pattern, word_level=word_level, flags=flags)
+
     @property
     def text(self):
         return ''.join(s.text for s in self.segments)
@@ -777,3 +798,156 @@ class WhisperResult:
     to_srt_vtt = result_to_srt_vtt
     to_ass = result_to_ass
     save_as_json = save_as_json
+
+
+class SegmentMatch:
+
+    def __init__(
+            self,
+            segments: Union[List[Segment], Segment],
+            _word_indices: List[List[int]] = None,
+            _text_match: str = None
+    ):
+        self.segments = [segments] if isinstance(segments, Segment) else segments
+        self.word_indices = [] if _word_indices is None else _word_indices
+        self.words = [self.segments[i].words[j] for i, indices in enumerate(self.word_indices) for j in indices]
+        if len(self.words) != 0:
+            self.text = ''.join(
+                self.segments[i].words[j].word
+                for i, indices in enumerate(self.word_indices)
+                for j in indices
+            )
+        else:
+            self.text = ''.join(seg.text for seg in self.segments)
+        self.text_match = _text_match
+
+    @property
+    def start(self):
+        return (
+            self.words[0].start
+            if len(self.words) != 0 else
+            (self.segments[0].start if len(self.segments) != 0 else None)
+        )
+
+    @property
+    def end(self):
+        return (
+            self.words[-1].end
+            if len(self.words) != 0 else
+            (self.segments[-1].end if len(self.segments) != 0 else None)
+        )
+
+    def __len__(self):
+        return len(self.segments)
+
+    def __repr__(self):
+        return self.__dict__.__repr__()
+
+    def __str__(self):
+        return self.__dict__.__str__()
+
+
+class WhisperResultMatches:
+    """
+    RegEx matches for WhisperResults
+    """
+    # Use WhisperResult.find() instead of instantiating this class directly.
+    def __init__(
+            self,
+            matches: Union[List[SegmentMatch], WhisperResult],
+            _segment_indices: List[List[int]] = None
+    ):
+        if isinstance(matches, WhisperResult):
+            self.matches = list(map(SegmentMatch, matches.segments))
+            self._segment_indices = [[i] for i in range(len(matches.segments))]
+        else:
+            self.matches = matches
+            assert _segment_indices is not None
+            assert len(self.matches) == len(_segment_indices)
+            assert all(len(match.segments) == len(_segment_indices[i]) for i, match in enumerate(self.matches))
+            self._segment_indices = _segment_indices
+
+    @property
+    def segment_indices(self):
+        return self._segment_indices
+
+    def _curr_seg_groups(self) -> List[List[Tuple[int, Segment]]]:
+        seg_groups, curr_segs = [], []
+        curr_max = -1
+        for seg_indices, match in zip(self._segment_indices, self.matches):
+            for i, seg in zip(sorted(seg_indices), match.segments):
+                if i > curr_max:
+                    curr_segs.append((i, seg))
+                    if i - 1 != curr_max:
+                        seg_groups.append(curr_segs)
+                        curr_segs = []
+                    curr_max = i
+
+        if curr_segs:
+            seg_groups.append(curr_segs)
+        return seg_groups
+
+    def find(self, pattern: str, word_level=True, flags=None) -> "WhisperResultMatches":
+        """
+
+        Find segments/words and timestamps with regular expression.
+
+        Parameters
+        ----------
+        pattern: str
+            RegEx pattern to search for.
+        word_level: bool
+            Whether to search at word-level
+        flags:
+            RegEx flags.
+
+        Returns
+        -------
+        An instance of WhisperResultMatches class to allow for continuous chaining of this method.
+        """
+
+        seg_groups = self._curr_seg_groups()
+        matches: List[SegmentMatch] = []
+        match_seg_indices: List[List[int]] = []
+        if word_level:
+            if not all(all(seg.has_words for seg in match.segments) for match in self.matches):
+                warnings.warn('Cannot perform word-level search with segment(s) missing word timestamps.')
+                word_level = False
+
+        for segs in seg_groups:
+            if word_level:
+                idxs = list(chain.from_iterable(
+                    [(i, j)]*len(word.word) for (i, seg) in segs for j, word in enumerate(seg.words)
+                ))
+                text = ''.join(word.word for (_, seg) in segs for word in seg.words)
+            else:
+                idxs = list(chain.from_iterable([(i, None)]*len(seg.text) for (i, seg) in segs))
+                text = ''.join(seg.text for (_, seg) in segs)
+            assert len(idxs) == len(text)
+            for curr_match in re.finditer(pattern, text, flags=flags or 0):
+                start, end = curr_match.span()
+                curr_idxs = idxs[start: end]
+                curr_seg_idxs = sorted(set(i[0] for i in curr_idxs))
+                if word_level:
+                    curr_word_idxs = [
+                        sorted(set(j for i, j in curr_idxs if i == seg_idx))
+                        for seg_idx in curr_seg_idxs
+                    ]
+                else:
+                    curr_word_idxs = None
+                matches.append(SegmentMatch(
+                    segments=[s for i, s in segs if i in curr_seg_idxs],
+                    _word_indices=curr_word_idxs,
+                    _text_match=curr_match.group()
+                ))
+                match_seg_indices.append(curr_seg_idxs)
+        return WhisperResultMatches(matches, match_seg_indices)
+
+    def __len__(self):
+        return len(self.matches)
+
+    def __bool__(self):
+        return self.__len__() != 0
+
+    def __getitem__(self, idx):
+        return self.matches[idx]

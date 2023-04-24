@@ -56,6 +56,7 @@ class DecodingTaskStable(DecodingTask):
                 # suppress timestamp tokens where the audio is silent so that decoder ignores those timestamps
                 _suppress_ts(logits[:, self.tokenizer.timestamp_begin:], self.ts_token_mask)
 
+                logits.nan_to_num_(-np.inf)
                 # expand the tokens tensor with the selected next tokens
                 tokens, completed = self.decoder.update(tokens, logits, sum_logprobs)
 

@@ -62,6 +62,8 @@ def transcribe_stable(
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
         mel_first: bool = False,
         split_callback: Callable = None,
+        suppress_ts_tokens: bool = True,
+        gap_padding: str = ' ...',
         **decode_options) \
         -> WhisperResult:
     """
@@ -180,6 +182,15 @@ def transcribe_stable(
         Takes argument: list of tokens; default tokenizer
         Returns a tuple pair containing: list of words; list of token groups (i.e. each group is list of token(s))
 
+    suppress_ts_tokens: bool
+        Whether to use silence mask to suppress silent timestamp tokens during inference. (Default: True)
+        Reduces hallucinations in some cases,
+            but also can reduce 'verbatimness' (i.e. ignores disfluencies and repetitions).
+
+    gap_padding: str
+        Padding prepend to each segments for word timing alignment. (Default: ' ...')
+        Used to reduce the probability of model predicting timestamps earlier than the first utterance.
+
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
 
@@ -285,7 +296,7 @@ def transcribe_stable(
             options = DecodingOptions(**kwargs, temperature=t)
             decode_result, audio_features = model.decode(seg,
                                                          options,
-                                                         ts_token_mask=ts_token_mask,
+                                                         ts_token_mask=ts_token_mask if suppress_ts_tokens else None,
                                                          audio_features=audio_features)
 
             needs_fallback = False
@@ -504,7 +515,8 @@ def transcribe_stable(
                     audio_features=audio_features,
                     ts_num=ts_num,
                     ts_noise=ts_noise,
-                    split_callback=split_callback
+                    split_callback=split_callback,
+                    gap_padding=gap_padding
                 )
 
             if segment_silence_timing is not None:
@@ -686,6 +698,11 @@ def cli():
     parser.add_argument("--append_punctuations", '-ap', type=str, default="\"'.。,，!！?？:：”)]}、",
                         help="Punctuations to append to previous word")
 
+    parser.add_argument("--gap_padding", type=str, default=" ...",
+                        help="padding prepend to each segments for word timing alignment;"
+                             "used to reduce the probability of model predicting timestamps "
+                             "earlier than the first utterance")
+
     parser.add_argument("--word_timestamps", type=str2bool, default=True,
                         help="extract word-level timestamps using the cross-attention pattern and dynamic time warping,"
                              "and include the timestamps for each word in each segment;"
@@ -705,6 +722,11 @@ def cli():
                              "and word-level if [suppress_word_ts]=True")
     parser.add_argument('--suppress_word_ts', type=str2bool, default=True,
                         help="whether to suppress timestamps where audio is silent at word-level; "
+                             "ignored if [suppress_silence]=False")
+
+    parser.add_argument('--suppress_ts_tokens', type=str2bool, default=True,
+                        help="whether to use silence mask to suppress silent timestamp tokens during inference; "
+                             "increases word accuracy in some cases, but tends reduce 'verbatimness' of the transcript"
                              "ignored if [suppress_silence]=False")
 
     parser.add_argument("--q_levels", type=int, default=20,
