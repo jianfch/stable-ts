@@ -19,6 +19,7 @@ def _load_file(file: Union[str, bytes], verbose: bool = False):
             verbosity = ' -q' if verbose is None else (' --progress' if verbose else ' --progress -q')
             p = subprocess.run(
                 f'yt-dlp "{file}" -f ba/w -I 1{verbosity} -o -',
+                shell=True,
                 stdout=subprocess.PIPE
             )
             if len(p.stdout) == 0:
