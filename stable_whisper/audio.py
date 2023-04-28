@@ -34,6 +34,7 @@ def _load_file(file: Union[str, bytes], verbose: bool = False, only_ffmpeg: bool
                 verbosity = ' -q' if verbose is None else (' --progress' if verbose else ' --progress -q')
                 p = subprocess.run(
                     f'yt-dlp "{file}" -f ba/w -I 1{verbosity} -o -',
+                    shell=True,
                     stdout=subprocess.PIPE
                 )
                 if p.returncode != 0 or len(p.stdout) == 0:
