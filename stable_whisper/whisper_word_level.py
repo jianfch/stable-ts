@@ -64,6 +64,7 @@ def transcribe_stable(
         split_callback: Callable = None,
         suppress_ts_tokens: bool = True,
         gap_padding: str = ' ...',
+        only_ffmpeg: bool = False,
         **decode_options) \
         -> WhisperResult:
     """
@@ -191,6 +192,9 @@ def transcribe_stable(
         Padding prepend to each segments for word timing alignment. (Default: ' ...')
         Used to reduce the probability of model predicting timestamps earlier than the first utterance.
 
+    only_ffmpeg: bool
+        Whether to use only FFmpeg (and not yt-dlp) for URls. (Default: False)
+
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
 
@@ -229,7 +233,7 @@ def transcribe_stable(
                                  verbose=verbose,
                                  save_path=demucs_output)
         else:
-            audio = torch.from_numpy(load_audio(audio, sr=curr_sr, verbose=verbose))
+            audio = torch.from_numpy(load_audio(audio, sr=curr_sr, verbose=verbose, only_ffmpeg=only_ffmpeg))
     else:
         if isinstance(audio, np.ndarray):
             audio = torch.from_numpy(audio)
@@ -832,6 +836,9 @@ def cli():
     parser.add_argument("--threads", type=optional_int, default=0,
                         help="number of threads used by torch for CPU inference; "
                              "supercedes MKL_NUM_THREADS/OMP_NUM_THREADS")
+
+    parser.add_argument('--only_ffmpeg', action='store_true',
+                        help='whether to use only FFmpeg (and not yt-dlp) for URls')
 
     parser.add_argument('--overwrite', '-y', action='store_true',
                         help='overwrite all output files')

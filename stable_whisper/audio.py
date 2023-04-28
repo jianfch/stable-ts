@@ -13,7 +13,7 @@ def is_ytdlp_available():
     return subprocess.run('yt-dlp -h', shell=True, capture_output=True).returncode == 0
 
 
-def _load_file(file: Union[str, bytes], verbose: bool = False):
+def _load_file(file: Union[str, bytes], verbose: bool = False, only_ffmpeg: bool = False):
     if isinstance(file, str) and '://' in file:
         if is_ytdlp_available():
             verbosity = ' -q' if verbose is None else (' --progress' if verbose else ' --progress -q')
@@ -29,11 +29,25 @@ def _load_file(file: Union[str, bytes], verbose: bool = False):
             warnings.warn('URL detected but yt-dlp not available. '
                           'To handle a greater variety of URLs (i.e. non-direct links), '
                           'install yt-dlp, \'pip install yt-dlp\' (repo: https://github.com/yt-dlp/yt-dlp).')
+        if not only_ffmpeg:
+            if is_ytdlp_available():
+                verbosity = ' -q' if verbose is None else (' --progress' if verbose else ' --progress -q')
+                p = subprocess.run(
+                    f'yt-dlp "{file}" -f ba/w -I 1{verbosity} -o -',
+                    stdout=subprocess.PIPE
+                )
+                if p.returncode != 0 or len(p.stdout) == 0:
+                    raise RuntimeError(f'Failed to download media from "{file}" with yt-dlp')
+                return p.stdout
+            else:
+                warnings.warn('URL detected but yt-dlp not available. '
+                              'To handle a greater variety of URLs (i.e. non-direct links), '
+                              'install yt-dlp, \'pip install yt-dlp\' (repo: https://github.com/yt-dlp/yt-dlp).')
     return file
 
 
 # modified version of whisper.audio.load_audio
-def load_audio(file: Union[str, bytes], sr: int = SAMPLE_RATE, verbose: bool = True):
+def load_audio(file: Union[str, bytes], sr: int = SAMPLE_RATE, verbose: bool = True, only_ffmpeg: bool = False):
     """
     Open an audio file and read as mono waveform, resampling as necessary
 
@@ -48,11 +62,14 @@ def load_audio(file: Union[str, bytes], sr: int = SAMPLE_RATE, verbose: bool = T
     verbose: bool
         whether to print yt-dlp log
 
+    only_ffmpeg: bool
+        Whether to use only FFmpeg (and not yt-dlp) for URls. (Default: False)
+
     Returns
     -------
     A NumPy array containing the audio waveform, in float32 dtype.
     """
-    file = _load_file(file, verbose=verbose)
+    file = _load_file(file, verbose=verbose, only_ffmpeg=only_ffmpeg)
     if isinstance(file, bytes):
         inp, file = file, 'pipe:'
     else:
