@@ -227,6 +227,8 @@ def wav2mask(
     mask = mask.bool()
 
     temp_timings = mask2timing(mask)
+    if temp_timings is None:
+        return
     s, e = temp_timings
     se_mask = (e - s) > 0.1
     s = s[se_mask]
