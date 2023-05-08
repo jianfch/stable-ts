@@ -27,7 +27,7 @@ pip install -U git+https://github.com/jianfch/stable-ts.git
 ```
 
 ## Usage
-The following is a list of CLI usages each followed by their corresponding Python usages (if there is one). 
+The following is a list of CLI usages each followed by a corresponding Python usage (if there is one). 
 
 ### Transcribe
 ```commandline
@@ -51,9 +51,9 @@ result.to_ass('audio.ass') #ASS
 result.to_tsv('audio.tsv') #TSV
 ```
 Parameters: 
-[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/text_output.py#L267-L291), 
-[to_ass()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/text_output.py#L335-L353), 
-[to_tsv()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/text_output.py#L401-L434)
+[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/text_output.py#L267-L291),
+[to_ass()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/text_output.py#L401-L434),
+[to_tsv()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/text_output.py#L335-L353)
 <br /><br />
 There are word-level and segment-level timestamps. All output formats support them. 
 They also support will both levels simultaneously except TSV. 
@@ -104,7 +104,7 @@ Processing JSON file of the results into SRT.
 stable-ts audio.json -o audio.srt
 ```
 ```python
-# Reload the result:
+# Load the result:
 result = stable_whisper.WhisperResult('audio.json')
 result.to_srt_vtt('audio.srt')
 ```
@@ -151,7 +151,7 @@ if matches:
         f'end: {matches[0].end}\n')
   segments = matches[0].segments
   
-# Find two words before and after "and" in the matches
+# Find the word before and after "and" in the matches
 matches = matches.find(r'\W\(w+)\Wand\W\(w+)\W')
 if matches:
   print(f'match: {matches[0].text_match}\n'
@@ -165,13 +165,13 @@ Parameters:
 
 ### Boosting Performance
 * One of the methods that Stable-ts uses to increase timestamp accuracy 
-and reduce hallucinations is silence suppression, enabled by `suppress_silence=True` (default).
-This method essentially suppresses the timestamps where the audio 
+and reduce hallucinations is silence suppression, enabled with `suppress_silence=True` (default).
+This method essentially suppresses the timestamps where the audio is silent or contain no speech
 by suppressing the corresponding tokens during inference and also readjusting the timestamps after inference. 
 To figure out which parts of the audio track are silent or contain no speech, Stable-ts supports non-VAD and VAD methods.
 The default is `vad=False`. The VAD option uses [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.12.0+). 
 See [Visualizing Suppression](#visualizing-suppression).
-* The other method, enabled by `demucs=True`, uses [Demucs](https://github.com/facebookresearch/demucs)
+* The other method, enabled with `demucs=True`, uses [Demucs](https://github.com/facebookresearch/demucs)
 to isolate speech from the rest of the audio track. Generally best used in conjunction with silence suppression.
 Although Demucs is for music, it is also effective at isolating speech even if the track contains no music.
 
@@ -200,8 +200,6 @@ Parameters:
 ### Encode Comparison 
 You can encode videos similar to the ones in the doc for comparing transcriptions of the same audio. 
 ```python
-import stable_whisper
-
 stable_whisper.encode_video_comparison(
     'audio.mp3', 
     ['audio_sub1.srt', 'audio_sub2.srt'], 
