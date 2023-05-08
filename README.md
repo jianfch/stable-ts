@@ -9,7 +9,7 @@ https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-
   * [Transcribe](#transcribe)
   * [Output](#output)
   * [Regrouping Words](#regrouping-words)
-  * [Locating Words]()
+  * [Locating Words](#locating-words)
   * [Boosting Performance](#boosting-performance)
   * [Visualizing Suppression](#visualizing-suppression)
   * [Encode Comparison](#encode-comparison)
