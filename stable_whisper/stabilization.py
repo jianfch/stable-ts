@@ -40,13 +40,14 @@ def valid_ts(
 
 
 def mask2timing(
-        silence_mask: (np.ndarray, torch.Tensor)
+        silence_mask: (np.ndarray, torch.Tensor),
+        time_offset: float = 0.0,
 ) -> (Tuple[np.ndarray, np.ndarray], None):
     if silence_mask is None or not silence_mask.any():
         return
     assert silence_mask.ndim == 1
     if isinstance(silence_mask, torch.Tensor):
-        silences = silence_mask.cpu().numpy()
+        silences = silence_mask.cpu().numpy().copy()
     elif isinstance(silence_mask, np.ndarray):
         silences = silence_mask.copy()
     else:
@@ -54,7 +55,10 @@ def mask2timing(
     silences[0] = False
     silences[-1] = False
     silent_starts = np.logical_and(~silences[:-1], silences[1:]).nonzero()[0] / TOKENS_PER_SECOND
-    silent_ends = np.logical_and(silences[:-1], ~silences[1:]).nonzero()[0] / TOKENS_PER_SECOND
+    silent_ends = (np.logical_and(silences[:-1], ~silences[1:]).nonzero()[0] + 1) / TOKENS_PER_SECOND
+    if time_offset:
+        silent_starts += time_offset
+        silent_ends += time_offset
     return silent_starts, silent_ends
 
 
@@ -72,7 +76,7 @@ def timing2mask(
     mask_i = (silent_starts * TOKENS_PER_SECOND).round().astype(np.int16)
     mask_e = (silent_ends * TOKENS_PER_SECOND).round().astype(np.int16)
     for mi, me in zip(mask_i, mask_e):
-        ts_token_mask[mi:me] = True
+        ts_token_mask[mi:me+1] = True
 
     return ts_token_mask
 
@@ -132,9 +136,10 @@ def audio2loudness(
         threshold = top_values[-1]
     else:
         threshold = audio_tensor.quantile(0.999, dim=-1)
-    audio_tensor = audio_tensor / min(1., (threshold * 1.75))
-    token_count = round(audio_tensor.shape[-1] / N_SAMPLES_PER_TOKEN)
-    if token_count > 1:
+    if (token_count := round(audio_tensor.shape[-1] / N_SAMPLES_PER_TOKEN)+1) > 2:
+        if threshold < 1e-5:
+            return torch.zeros(token_count, dtype=audio_tensor.dtype, device=audio_tensor.device)
+        audio_tensor = audio_tensor / min(1., max(threshold * 1.75, .3))
         audio_tensor = F.interpolate(
             audio_tensor[None, None],
             size=token_count,
@@ -161,12 +166,12 @@ def visualize_mask(
         mid = round(height / 2)
         for i, j in enumerate(loudness_tensor.tolist()):
             j = round(abs(j) * mid)
-            if j == 0 or width < i:
+            if j == 0 or width <= i:
                 continue
             im[mid - j:mid + 1, i] = 255
             im[mid + 1:mid + j + 1, i] = 255
         if not no_silence:
-            im[:, silence_mask, 1:] = 0
+            im[:, silence_mask[:width], 1:] = 0
         im = im.cpu().numpy()
         if output and not output.endswith('.png'):
             output += '.png'
@@ -226,16 +231,16 @@ def wav2mask(
 
     mask = mask.bool()
 
+    if not mask.any():  # entirely silent
+        return ~mask
     temp_timings = mask2timing(mask)
-    if temp_timings is None:
-        return
     s, e = temp_timings
     se_mask = (e - s) > 0.1
     s = s[se_mask]
     e = e[se_mask]
     mask = ~timing2mask(s, e, loudness_tensor.shape[-1])
 
-    if not mask.any():
+    if not mask.any():  # no silence
         return
 
     return mask
@@ -364,7 +369,7 @@ def visualize_suppression(
 
     if vad:
         silence_timings = get_vad_silence_func()(audio, vad_threshold)
-        silence_mask = None if silence_timings is None else timing2mask(*silence_timings, size=width)
+        silence_mask = None if silence_timings is None else timing2mask(*silence_timings, size=loudness_tensor.shape[0])
     else:
         silence_mask = wav2mask(audio, q_levels=q_levels, k_size=k_size)
 

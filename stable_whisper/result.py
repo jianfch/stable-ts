@@ -797,6 +797,7 @@ class WhisperResult:
 
     to_srt_vtt = result_to_srt_vtt
     to_ass = result_to_ass
+    to_tsv = result_to_tsv
     save_as_json = save_as_json
 
 

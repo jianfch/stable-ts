@@ -5,7 +5,7 @@ from typing import List, Tuple, Union, Callable
 from itertools import chain
 from .stabilization import valid_ts
 
-__all__ = ['result_to_srt_vtt', 'result_to_ass', 'save_as_json', 'load_result']
+__all__ = ['result_to_srt_vtt', 'result_to_ass', 'result_to_tsv', 'save_as_json', 'load_result']
 
 
 def _save_as_file(content: str, path: str):
@@ -28,6 +28,14 @@ def sec2hhmmss(seconds: (float, int)):
     mm, ss = divmod(seconds, 60)
     hh, mm = divmod(mm, 60)
     return hh, mm, ss
+
+
+def sec2milliseconds(seconds: (float, int)) -> int:
+    return round(seconds * 1000)
+
+
+def sec2centiseconds(seconds: (float, int)) -> int:
+    return round(seconds * 100)
 
 
 def sec2vtt(seconds: (float, int)) -> str:
@@ -57,6 +65,12 @@ def segment2srtblock(segment: dict, idx: int, strip=True) -> str:
 def segment2assblock(segment: dict, idx: int, strip=True) -> str:
     return f'Dialogue: {idx},{sec2ass(segment["start"])},{sec2ass(segment["end"])},Default,,0,0,0,,' \
            f'{segment["text"].strip() if strip else segment["text"]}'
+
+
+def segment2tsvblock(segment: dict, strip=True) -> str:
+    return f'{sec2milliseconds(segment["start"])}' \
+           f'\t{sec2milliseconds(segment["end"])}' \
+           f'\t{segment["text"].strip() if strip else segment["text"]}'
 
 
 def words2segments(words: List[dict], tag: Tuple[str, str], reverse_text: bool = False) -> List[dict]:
@@ -98,6 +112,61 @@ def to_word_level_segments(segments: List[dict], tag: Tuple[str, str]) -> List[d
     )
 
 
+def to_vtt_word_level_segments(segments: List[dict], tag: Tuple[str, str] = None) -> List[dict]:
+    def to_segment_string(segment: dict):
+        segment_string = ''
+        prev_end = 0
+        for i, word in enumerate(segment['words']):
+            if i != 0:
+                curr_start = word['start']
+                if prev_end == curr_start:
+                    segment_string += f"<{sec2vtt(curr_start)}>"
+                else:
+                    if segment_string.endswith(' '):
+                        segment_string = segment_string[:-1]
+                    elif segment['words'][i]['word'].startswith(' '):
+                        segment['words'][i]['word'] = segment['words'][i]['word'][1:]
+                    segment_string += f"<{sec2vtt(prev_end)}> <{sec2vtt(curr_start)}>"
+            segment_string += word['word']
+            prev_end = word['end']
+        return segment_string
+
+    return [
+        dict(
+            text=to_segment_string(s),
+            start=s['start'],
+            end=s['end']
+        )
+        for s in segments
+    ]
+
+
+def to_ass_word_level_segments(segments: List[dict], tag: Tuple[str, str], karaoke: bool = False) -> List[dict]:
+
+    def to_segment_string(segment: dict):
+        segment_string = ''
+        for i, word in enumerate(segment['words']):
+            curr_word, space = (word['word'][1:], " ") if word['word'].startswith(" ") else (word['word'], "")
+            segment_string += (
+                    space +
+                    r"{\k" +
+                    ("f" if karaoke else "") +
+                    f"{sec2centiseconds(word['end']-word['start'])}" +
+                    r"}" +
+                    curr_word
+            )
+        return segment_string
+
+    return [
+        dict(
+            text=to_segment_string(s),
+            start=s['start'],
+            end=s['end']
+        )
+        for s in segments
+    ]
+
+
 def to_word_level(segments: List[dict]) -> List[dict]:
     return [dict(text=w['word'], start=w['start'], end=w['end']) for s in segments for w in s['words']]
 
@@ -132,7 +201,8 @@ def result_to_any(result: (dict, list),
                   tag: Tuple[str, str] = None,
                   default_tag: Tuple[str, str] = None,
                   strip=True,
-                  reverse_text: Union[bool, tuple] = False):
+                  reverse_text: Union[bool, tuple] = False,
+                  to_word_level_string_callback: Callable = None):
     """
 
     Generate file from result to display segment-level and/or word-level timestamp.
@@ -160,7 +230,9 @@ def result_to_any(result: (dict, list),
                 tag = ('<font color="#00ff00">', '</font>') if filetype == 'srt' else ('<u>', '</u>')
             else:
                 tag = default_tag
-        segments = to_word_level_segments(segments, tag)
+        if to_word_level_string_callback is None:
+            to_word_level_string_callback = to_word_level_segments
+        segments = to_word_level_string_callback(segments, tag)
     elif word_level:
         segments = to_word_level(segments)
 
@@ -226,9 +298,12 @@ def result_to_srt_vtt(result: (dict, list),
     is_srt = (filepath is None or not filepath.lower().endswith('.vtt')) if vtt is None else not vtt
     if is_srt:
         segments2blocks = None
+        to_word_level_string_callback = None
     else:
         def segments2blocks(segments):
             return 'WEBVTT\n\n' + '\n\n'.join(segment2vttblock(s, strip=strip) for i, s in enumerate(segments))
+        to_word_level_string_callback = to_vtt_word_level_segments if tag is None else tag
+
     return result_to_any(
         result=result,
         filepath=filepath,
@@ -238,6 +313,65 @@ def result_to_srt_vtt(result: (dict, list),
         word_level=word_level,
         min_dur=min_dur,
         tag=tag,
+        strip=strip,
+        reverse_text=reverse_text,
+        to_word_level_string_callback=to_word_level_string_callback
+    )
+
+
+def result_to_tsv(result: (dict, list),
+                  filepath: str = None,
+                  segment_level: bool = None,
+                  word_level: bool = None,
+                  min_dur: float = 0.02,
+                  strip=True,
+                  reverse_text: Union[bool, tuple] = False):
+    """
+
+    Generate TSV from result to display segment-level and/or word-level timestamp.
+
+    Parameters
+    ----------
+    result: (dict, list)
+        result from modified model
+    filepath: str:
+        path to save file. if no path is specified, the content will be returned as a str instead
+    segment_level: bool:
+        whether to use segment-level timestamps in output (default: True)
+    word_level: bool
+        whether to use word-level timestamps in output (default: False)
+    min_dur: float
+        minimum duration any word/segment is allowed to have. (default: 0.02)
+        if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
+    strip: bool
+        whether to remove spaces before and after text on each segment for output (default: True)
+    reverse_text: Union[bool, tuple]
+        whether to reverse the order of words for each segment (default: False)
+        or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
+        to match transcription settings (if True, the default punctuations will be used)
+        Note: This will not fix RTL text not displaying tags properly which is an issue with video player.
+                VLC seems to not suffer from this issue.
+
+    Returns
+    -------
+    string of content if no [filepath] is provided, else None
+
+    """
+    if segment_level is None and word_level is None:
+        segment_level = True
+    assert word_level is not segment_level, '[word_level] and [segment_level] cannot be the same ' \
+                                            'since [tag] is not support for this format'
+
+    def segments2blocks(segments):
+        return '\n\n'.join(segment2tsvblock(s, strip=strip) for i, s in enumerate(segments))
+    return result_to_any(
+        result=result,
+        filepath=filepath,
+        filetype='tsv',
+        segments2blocks=segments2blocks,
+        segment_level=segment_level,
+        word_level=word_level,
+        min_dur=min_dur,
         strip=strip,
         reverse_text=reverse_text
     )
@@ -252,6 +386,8 @@ def result_to_ass(result: (dict, list),
                   font: str = None,
                   font_size: int = 24,
                   strip=True,
+                  highlight_color: str = None,
+                  karaoke=False,
                   reverse_text: Union[bool, tuple] = False,
                   **kwargs):
     """
@@ -274,13 +410,17 @@ def result_to_ass(result: (dict, list),
         minimum duration any word/segment is allowed to have. (default: 0.02)
         if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
     tag: Tuple[str, str]
-        tag used to change the properties a word at its timestamp (default: '{\\1c&HFF00&}', '{\\r}')
+        tag used to change the properties a word at its timestamp (default: None)
     font: str
         word font (default: Arial)
     font_size: int
         word font size (default: 48)
     strip: bool
         whether to remove spaces before and after text on each segment for output (default: True)
+    highlight_color: str
+        hexadecimal of highlight color, or [PrimaryColour], as '<bb><gg><rr>' (default: '00ff00' if highlight is needed)
+    karaoke: bool
+        whether to use progressive filling highlights (for karaoke effect) (default: False)
     reverse_text: Union[bool, tuple]
         whether to reverse the order of words for each segment (default: False)
         or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
@@ -298,6 +438,8 @@ def result_to_ass(result: (dict, list),
     string of content if no [filepath] is provided, else None
 
     """
+    if highlight_color is None and (karaoke or (word_level and segment_level)):
+        highlight_color = '00ff00'
 
     def segments2blocks(segments):
         fmt_style_dict = {'Name': 'Default', 'Fontname': 'Arial', 'Fontsize': '48', 'PrimaryColour': '&Hffffff',
@@ -310,6 +452,10 @@ def result_to_ass(result: (dict, list),
             kwargs[k] = f'&H{kwargs[k]}'
 
         fmt_style_dict.update((k, v) for k, v in kwargs.items() if k in fmt_style_dict)
+
+        if highlight_color:
+            fmt_style_dict['PrimaryColour'] = \
+                highlight_color if highlight_color.startswith('&H') else f'&H{highlight_color}'
 
         if font:
             fmt_style_dict.update(Fontname=font)
@@ -328,6 +474,9 @@ def result_to_ass(result: (dict, list),
 
         return sub_str
 
+    if tag is not None and karaoke:
+        warnings.warn(f'[tag] is not support for [karaoke]=True; [tag] will be ignored.')
+
     return result_to_any(
         result=result,
         filepath=filepath,
@@ -337,9 +486,14 @@ def result_to_ass(result: (dict, list),
         word_level=word_level,
         min_dur=min_dur,
         tag=tag,
-        default_tag=(r'{\1c&' + 'HFF00&' + '}', r'{\r}'),
+        default_tag=(r'{\1c' + f'{highlight_color}&' + '}', r'{\r}'),
         strip=strip,
-        reverse_text=reverse_text
+        reverse_text=reverse_text,
+        to_word_level_string_callback=(
+            lambda s, t: to_ass_word_level_segments(s, t, karaoke=karaoke)
+            if karaoke or (word_level and segment_level)
+            else None
+        )
     )
 
 

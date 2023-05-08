@@ -256,27 +256,61 @@ def transcribe_stable(
         audio = voice_freq_filter(audio, curr_sr)
     sample_padding = int(N_FFT // 2) + 1
     whole_mel = log_mel_spectrogram(audio, padding=sample_padding) if mel_first else None
-
-    if decode_options.get("language", None) is None and model:
-        if not model.is_multilingual:
-            decode_options["language"] = "en"
-        else:
-            if verbose:
-                print("Detecting language using up to the first 30 seconds. Use `--language` to specify the language")
-            mel_segment = log_mel_spectrogram(audio[..., :N_SAMPLES], padding=sample_padding) \
-                if whole_mel is None else whole_mel[..., :N_FRAMES]
-            mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
-            _, probs = model.detect_language(mel_segment)
-            decode_options["language"] = max(probs, key=probs.get)
-            if verbose is not None:
-                print(f"Detected language: {LANGUAGES[decode_options['language']]}")
-
-    language = decode_options["language"]
+    tokenizer = None
+    initial_prompt_tokens = []
     task = decode_options.get("task", "transcribe")
-    tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
 
-    if word_timestamps and task == "translate":
-        warnings.warn("Word-level timestamps on translations may not be reliable.")
+    def detect_language():
+        nonlocal tokenizer
+        if tokenizer is None:
+            if decode_options.get("language", None) is None and model:
+                if not model.is_multilingual:
+                    decode_options["language"] = "en"
+                else:
+                    if verbose:
+                        print("Detecting language using up to 30 seconds following first non-silent sample. "
+                              "Use `--language` to specify the language")
+                    timing_mask = np.logical_and(
+                        segment_silence_timing[0] <= time_offset,
+                        segment_silence_timing[1] >= time_offset
+                    )
+                    start_sample = (
+                        None
+                        if segment_silence_timing is None or not timing_mask.any() else
+                        round(segment_silence_timing[1][timing_mask.nonzero()[0]][0] * SAMPLE_RATE)
+                    )
+                    if start_sample is None:
+                        nonlocal mel_segment
+                        curr_mel_segment = mel_segment
+                    else:
+                        if whole_mel is None:
+                            curr_mel_segment = log_mel_spectrogram(
+                                audio[..., start_sample:start_sample+N_SAMPLES],
+                                padding=sample_padding
+                            )
+                        else:
+                            start_frame = int(start_sample/HOP_LENGTH)
+                            curr_mel_segment = whole_mel[..., start_frame:start_frame+N_FRAMES]
+                        curr_mel_segment = pad_or_trim(curr_mel_segment, N_FRAMES).to(device=model.device, dtype=dtype)
+                    _, probs = model.detect_language(curr_mel_segment)
+                    decode_options["language"] = max(probs, key=probs.get)
+                    if verbose is not None:
+                        detected_msg = f"Detected language: {LANGUAGES[decode_options['language']]}"
+                        if tqdm_pbar.disable:
+                            print(detected_msg)
+                        else:
+                            tqdm_pbar.write(detected_msg)
+
+            language = decode_options["language"]
+            tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
+
+            if word_timestamps and task == "translate":
+                warnings.warn("Word-level timestamps on translations may not be reliable.")
+
+            if initial_prompt is not None:
+                nonlocal initial_prompt_tokens
+                initial_prompt_tokens = tokenizer.encode(" " + initial_prompt.strip())
+                all_tokens.extend(initial_prompt_tokens)
 
     audio_features = None
 
@@ -330,12 +364,6 @@ def transcribe_stable(
     all_tokens = []
     all_segments = []
     prompt_reset_since = 0
-
-    if initial_prompt is not None:
-        initial_prompt_tokens = tokenizer.encode(" " + initial_prompt.strip())
-        all_tokens.extend(initial_prompt_tokens)
-    else:
-        initial_prompt_tokens = []
 
     def new_segment(
             *, start: float, end: float, tokens: torch.Tensor, result: DecodingResult
@@ -399,7 +427,7 @@ def transcribe_stable(
             if suppress_silence:
                 if silence_timing is None:
                     ts_token_mask = wav2mask(audio_segment, q_levels=q_levels, k_size=k_size)
-                    segment_silence_timing = mask2timing(ts_token_mask)
+                    segment_silence_timing = mask2timing(ts_token_mask, time_offset=time_offset)
                 else:
                     timing_indices = np.logical_and(
                         silence_timing[1] > time_offset,
@@ -418,6 +446,7 @@ def transcribe_stable(
                         continue
                     ts_token_mask = pad_or_trim(ts_token_mask, 1501)
 
+            detect_language()
             decode_options["prompt"] = all_tokens[prompt_reset_since:]
             result: DecodingResult = decode_with_fallback(mel_segment, ts_token_mask=ts_token_mask)
             tokens = torch.tensor(result.tokens)
@@ -572,13 +601,16 @@ def transcribe_stable(
 
     final_result = WhisperResult(dict(text=tokenizer.decode(all_tokens[len(initial_prompt_tokens):]),
                                       segments=all_segments,
-                                      language=language,
+                                      language=tokenizer.language,
                                       time_scale=time_scale))
     if word_timestamps and regroup:
         final_result.regroup()
 
     if time_scale is not None:
         final_result.rescale_time(1 / time_scale)
+
+    if len(final_result.text) == 0:
+        warnings.warn(f'Failed to {task} audio. Result contains no text. ')
 
     return final_result
 
@@ -653,7 +685,7 @@ def cli():
             return str2val[string]
         raise ValueError(f"Expected one of {set(str2val.keys())}, got {string}")
 
-    output_formats = {"srt", "ass", "json", "vtt"}
+    output_formats = {"srt", "ass", "json", "vtt", "tsv"}
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("inputs", nargs="+", type=str,
@@ -836,6 +868,9 @@ def cli():
     parser.add_argument("--threads", type=optional_int, default=0,
                         help="number of threads used by torch for CPU inference; "
                              "supercedes MKL_NUM_THREADS/OMP_NUM_THREADS")
+
+    parser.add_argument('--mel_first', action='store_true',
+                        help='process entire audio track into log-Mel spectrogram first instead in chunks')
 
     parser.add_argument('--only_ffmpeg', action='store_true',
                         help='whether to use only FFmpeg (and not yt-dlp) for URls')
@@ -1051,6 +1086,14 @@ def cli():
                 segment_level=segment_level,
                 word_level=word_level,
                 tag=tag,
+                strip=strip,
+                reverse_text=reverse_text
+            )
+        elif output_path.endswith('.tsv'):
+            result.to_tsv(
+                filepath=output_path,
+                segment_level=segment_level,
+                word_level=word_level,
                 strip=strip,
                 reverse_text=reverse_text
             )
