@@ -13,12 +13,30 @@ from .text_output import *
 __all__ = ['WhisperResult', 'Segment']
 
 
+def _combine_attr(obj: object, other_obj: object, attr: str):
+    if (val := getattr(obj, attr)) is not None:
+        other_val = getattr(other_obj, attr)
+        if isinstance(val, list):
+            if other_val is None:
+                setattr(obj, attr, None)
+            else:
+                val.extend(other_val)
+        else:
+            new_val = None if other_val is None else ((val + other_val) / 2)
+            setattr(obj, attr, new_val)
+
+
+def _increment_attr(obj: object, attr: str, val: Union[int, float]):
+    if (curr_val := getattr(obj, attr, None)) is not None:
+        setattr(obj, attr, curr_val + val)
+
+
 @dataclass
 class WordTiming:
     word: str
     start: float
     end: float
-    probability: float
+    probability: float = None
     tokens: List[int] = None
     left_locked: bool = False
     right_locked: bool = False
@@ -34,10 +52,10 @@ class WordTiming:
         self_copy.start = min(self_copy.start, other.start)
         self_copy.end = max(other.end, self_copy.end)
         self_copy.word += other.word
-        self_copy.probability = (other.probability + self_copy.probability) / 2
-        self_copy.tokens.extend(other.tokens)
         self_copy.left_locked = self_copy.left_locked or other.left_locked
         self_copy.right_locked = self_copy.right_locked or other.right_locked
+        _combine_attr(self_copy, other, 'probability')
+        _combine_attr(self_copy, other, 'tokens')
 
         return self_copy
 
@@ -83,18 +101,18 @@ class WordTiming:
 
 @dataclass
 class Segment:
-    seek: float
     start: float
     end: float
     text: str
-    tokens: List[int]
-    temperature: float
-    avg_logprob: float
-    compression_ratio: float
-    no_speech_prob: float
-    id: int = None
+    seek: float = None
+    tokens: List[int] = None
+    temperature: float = None
+    avg_logprob: float = None
+    compression_ratio: float = None
+    no_speech_prob: float = None
     words: Union[List[WordTiming], List[dict]] = None
     ori_has_words: bool = None
+    id: int = None
 
     @property
     def has_words(self):
@@ -107,6 +125,7 @@ class Segment:
     def word_count(self):
         if self.has_words:
             return len(self.words)
+        return -1
 
     def char_count(self):
         if self.has_words:
@@ -128,40 +147,46 @@ class Segment:
         self_copy.start = min(self_copy.start, other.start)
         self_copy.end = max(other.end, self_copy.end)
         self_copy.text += other.text
-        self_copy.tokens.extend(other.tokens)
-        if self_copy.has_words:
-            self_copy.words.extend(other.words)
 
-        self_copy.temperature = (other.temperature + self_copy.temperature) / 2
-        self_copy.avg_logprob = (other.avg_logprob + self_copy.avg_logprob) / 2
-        self_copy.compression_ratio = (other.compression_ratio + self_copy.compression_ratio) / 2
-        self_copy.no_speech_prob = (other.no_speech_prob + self_copy.no_speech_prob) / 2
+        _combine_attr(self_copy, other, 'tokens')
+        _combine_attr(self_copy, other, 'temperature')
+        _combine_attr(self_copy, other, 'avg_logprob')
+        _combine_attr(self_copy, other, 'compression_ratio')
+        _combine_attr(self_copy, other, 'no_speech_prob')
+        if self_copy.has_words:
+            if other.has_words:
+                self_copy.words.extend(other.words)
+            else:
+                self_copy.words = None
 
         return self_copy
 
+    def _word_operations(self, operation: str, *args, **kwargs):
+        if self.has_words:
+            for w in self.words:
+                getattr(w, operation)(*args, **kwargs)
+
     def offset_time(self, offset_seconds: float):
-        self.seek = self.seek + offset_seconds
         self.start = self.start + offset_seconds
         self.end = self.end + offset_seconds
-        if self.has_words:
-            for w in self.words:
-                w.offset_time(offset_seconds)
+        _increment_attr(self, 'seek', offset_seconds)
+        self._word_operations('offset_time', offset_seconds)
 
     def add_words(self, index0: int, index1: int, inplace: bool = False):
-        new_word = self.words[index0] + self.words[index1]
-        if inplace:
-            i0, i1 = sorted([index0, index1])
-            self.words[i0] = new_word
-            del self.words[i1]
-        return new_word
+        if self.has_words:
+            new_word = self.words[index0] + self.words[index1]
+            if inplace:
+                i0, i1 = sorted([index0, index1])
+                self.words[i0] = new_word
+                del self.words[i1]
+            return new_word
 
     def rescale_time(self, scale_factor: float):
-        self.seek = round(self.seek * scale_factor, 3)
         self.start = round(self.start * scale_factor, 3)
         self.end = round(self.end * scale_factor, 3)
-        if self.has_words:
-            for w in self.words:
-                w.rescale_time(scale_factor)
+        if self.seek is not None:
+            self.seek = round(self.seek * scale_factor, 3)
+        self._word_operations('rescale_time', scale_factor)
         self.update_seg_with_words()
 
     def apply_min_dur(self, min_dur: float, inplace: bool = False):
@@ -288,17 +313,18 @@ class Segment:
         self.lock_right()
 
     def unlock_all_words(self):
-        if self.has_words:
-            for w in self.words:
-                w.unlock_both()
+        self._word_operations('unlock_both')
 
     def update_seg_with_words(self):
         if self.has_words:
             self.start = self.words[0].start
             self.end = self.words[-1].end
-            if self.words[0].tokens:
-                self.tokens = [t for w in self.words for t in w.tokens]
             self.text = ''.join(w.word for w in self.words)
+            self.tokens = (
+                None
+                if any(w.tokens is None for w in self.words) else
+                [t for w in self.words for t in w.tokens]
+            )
 
     def suppress_silence(self,
                          silent_starts: np.ndarray,
@@ -401,15 +427,46 @@ class Segment:
 
 class WhisperResult:
 
-    def __init__(self, result: (str, dict)):
-        if isinstance(result, str):
-            self.path = result
-            result = load_result(self.path)
+    def __init__(self, result: Union[str, dict, list]):
+        result, self.path = self._standardize_result(result)
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
-        segments = self.ori_dict.get('segments')
+        segments = deepcopy(result.get('segments', self.ori_dict.get('segments')))
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
         self.remove_no_word_segments()
+        self.update_all_segs_with_words()
+
+    @staticmethod
+    def _standardize_result(result: Union[str, dict, list]):
+        path = None
+        if isinstance(result, str):
+            path = result
+            result = load_result(path)
+        if isinstance(result, list):
+            if isinstance(result[0], list):
+                if not isinstance(result[0][0], dict):
+                    raise NotImplementedError(f'Got list of list of {type(result[0])} but expects list of list of dict')
+                result = dict(
+                    segments=[
+                        dict(
+                            start=words[0]['start'],
+                            end=words[-1]['end'],
+                            text=''.join(w['word'] for w in words),
+                            words=words
+                        )
+                        for words in result
+                    ]
+                )
+
+            elif isinstance(result[0], dict):
+                result = dict(segments=result)
+            else:
+                raise NotImplementedError(f'Got list of {type(result[0])} but expects list of list/dict')
+        return result, path
+
+    def update_all_segs_with_words(self):
+        for seg in self.segments:
+            seg.update_seg_with_words()
 
     def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False):
         new_seg = self.segments[index0] + self.segments[index1]
@@ -791,6 +848,10 @@ class WhisperResult:
         return self
 
     def reset(self):
+        """
+        Restore all values to that in `ori_dict` which is the state at initialization
+        or the state store in the `ori_dict` key of the dictionary that initialized this instance.
+        """
         self.language = self.ori_dict.get('language')
         segments = self.ori_dict.get('segments')
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []

@@ -828,6 +828,8 @@ def cli():
                         help="word font for ASS output(s)")
     parser.add_argument('--font_size', type=int, default=48,
                         help="word font size for ASS output(s)")
+    parser.add_argument('--karaoke', type=str2bool, default=False,
+                        help="whether to use progressive filling highlights for karaoke effect (only for ASS outputs)")
 
     parser.add_argument("--temperature", type=float, default=0,
                         help="temperature to use for sampling")
@@ -914,6 +916,7 @@ def cli():
     segment_level: bool = args.pop('segment_level')
     word_level: bool = args.pop('word_level')
     tag: List[str] = args.pop('tag')
+    karaoke: bool = args.pop('karaoke')
     if tag:
         assert len(tag) == 2, f'[tag] must be a pair of str but got {tag}'
 
@@ -1003,6 +1006,7 @@ def cli():
               f'segment_level: {segment_level}\n'
               f'word_level: {word_level}\n'
               f'tag: {tag}\n'
+              f'karaoke: {karaoke}\n'
               f'strip: {strip}\n'
               f'regroup: {regroup}\n'
               f'max_chars: {max_chars}\n'
@@ -1103,6 +1107,7 @@ def cli():
                 segment_level=segment_level,
                 word_level=word_level,
                 tag=tag,
+                karaoke=karaoke,
                 font=font,
                 font_size=font_size,
                 strip=strip,

@@ -143,22 +143,20 @@ You can locate words with regular expression.
 ```python
 # Find every sentence that contains "and"
 matches = result.find(r'[^.]+and[^.]+\.')
-# print the first match if there is one
-if matches:
-  print(f'match: {matches[0].text_match}\n'
-        f'text: {matches[0].text}\n'
-        f'start: {matches[0].start}\n'
-        f'end: {matches[0].end}\n')
-  segments = matches[0].segments
+# print the all matches if there are any
+for match in matches:
+  print(f'match: {match.text_match}\n'
+        f'text: {match.text}\n'
+        f'start: {match.start}\n'
+        f'end: {match.end}\n')
   
 # Find the word before and after "and" in the matches
-matches = matches.find(r'\W\(w+)\Wand\W\(w+)\W')
-if matches:
-  print(f'match: {matches[0].text_match}\n'
-        f'text: {matches[0].text}\n'
-        f'start: {matches[0].start}\n'
-        f'end: {matches[0].end}\n')
-  segments = matches[0].segments
+matches = matches.find(r'\s\S+\sand\s\S+')
+for match in matches:
+  print(f'match: {match.text_match}\n'
+        f'text: {match.text}\n'
+        f'start: {match.start}\n'
+        f'end: {match.end}\n')
 ```
 Parameters: 
 [find()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/result.py#L768-L773)
