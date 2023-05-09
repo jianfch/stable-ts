@@ -257,6 +257,7 @@ def transcribe_stable(
     sample_padding = int(N_FFT // 2) + 1
     whole_mel = log_mel_spectrogram(audio, padding=sample_padding) if mel_first else None
     tokenizer = None
+    language = None
     initial_prompt_tokens = []
     task = decode_options.get("task", "transcribe")
 
@@ -301,6 +302,7 @@ def transcribe_stable(
                         else:
                             tqdm_pbar.write(detected_msg)
 
+            nonlocal language
             language = decode_options["language"]
             tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
 
@@ -599,9 +601,10 @@ def transcribe_stable(
     if model.device != torch.device('cpu'):
         torch.cuda.empty_cache()
 
-    final_result = WhisperResult(dict(text=tokenizer.decode(all_tokens[len(initial_prompt_tokens):]),
+    text = '' if tokenizer is None else tokenizer.decode(all_tokens[len(initial_prompt_tokens):])
+    final_result = WhisperResult(dict(text=text,
                                       segments=all_segments,
-                                      language=tokenizer.language,
+                                      language=language,
                                       time_scale=time_scale))
     if word_timestamps and regroup:
         final_result.regroup()

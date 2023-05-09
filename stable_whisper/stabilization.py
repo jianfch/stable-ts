@@ -139,7 +139,7 @@ def audio2loudness(
     if (token_count := round(audio_tensor.shape[-1] / N_SAMPLES_PER_TOKEN)+1) > 2:
         if threshold < 1e-5:
             return torch.zeros(token_count, dtype=audio_tensor.dtype, device=audio_tensor.device)
-        audio_tensor = audio_tensor / min(1., max(threshold * 1.75, .3))
+        audio_tensor = audio_tensor / min(1., threshold * 1.75)
         audio_tensor = F.interpolate(
             audio_tensor[None, None],
             size=token_count,
