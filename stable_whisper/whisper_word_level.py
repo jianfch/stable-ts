@@ -748,7 +748,7 @@ def cli():
                              "and include the timestamps for each word in each segment;"
                              "disabling this will prevent segments from splitting/merging properly.")
 
-    parser.add_argument("--regroup", type=str, default=True,
+    parser.add_argument("--regroup", type=str, default="True",
                         help="whether to regroup all words into segments with more natural boundaries;"
                              "specify string for customizing the regrouping algorithm"
                              "ignored if [word_timestamps]=False.")
