@@ -737,7 +737,8 @@ class WhisperResult:
         return self
 
     def merge_by_punctuation(
-            self, punctuation: Union[List[str], List[Tuple[str, str]], str],
+            self,
+            punctuation: Union[List[str], List[Tuple[str, str]], str],
             max_words: int = None,
             max_chars: int = None,
             is_sum_max: bool = False,
@@ -803,10 +804,88 @@ class WhisperResult:
         self._split_segments(lambda x: x.get_length_indices(max_chars=max_chars, max_words=max_words), lock=lock)
         return self
 
-    def regroup(self):
+    def regroup(self, regroup_algo: str = None, verbose: bool = False, only_show: bool = False):
         """
+
         Regroup (in-place) all words into segments with more natural boundaries without locking.
+
+        Parameters
+        ----------
+        regroup_algo: str
+            string for customizing the regrouping algorithm
+
+                Method keys:
+                    sg: split_by_gap
+                    sp: split_by_punctuation
+                    sl: split_by_length
+                    mg: merge_by_gap
+                    mp: merge_by_punctuation
+                    ms: merge_all_segment
+
+                Metacharacters:
+                    = separates a method key and its arguments (not used if no argument)
+                    _ separates method keys (after arguments if there are any)
+                    + separates arguments for a method key
+                    / separates an argument into list of strings
+                    * separates an item in list of strings into a nested list of strings
+
+                -arguments are parsed positionally
+                -if no argument is provided, the default ones will be used
+                -use 1 or 0 to represent True or False
+
+                Example 1:
+                    merge_by_gap(.2, 10, lock=True)
+                    mg=.2+10+++1
+                    Note: [lock] is the 5th argument hence the 2 missing arguments inbetween the three + before 1
+
+                Example 2:
+                    split_by_punctuation([('.', ' '), '。', '?', '？'], True)
+                    sp=.* /。/?/？+1
+
+                Example 3:
+                    merge_all_segments().split_by_gap(.5).merge_by_gap(.15, 3)
+                    ms_sg=.5_mg=.15+3
+
+        verbose: bool
+            whether to show all the methods and arguments parsed from [regroup_algo]
+        only_show: bool
+            show the all methods and arguments parsed from [regroup_algo] without running the methods
+
         """
+        if isinstance(regroup_algo, str):
+            methods = dict(
+                sg=self.split_by_gap,
+                sp=self.split_by_punctuation,
+                sl=self.split_by_length,
+                mg=self.merge_by_gap,
+                mp=self.merge_by_punctuation,
+                ms=self.merge_all_segments
+            )
+
+            def _to_arg(x: str):
+                if len(x) == 0:
+                    return None
+                if '/' in x:
+                    return [a.split('*') if '*' in a else a for a in x.split('/')]
+                try:
+                    x = float(x) if '.' in x else int(x)
+                except ValueError:
+                    pass
+                finally:
+                    return x
+
+            for method in regroup_algo.split('_'):
+                method, args = method.split('=', maxsplit=1) if '=' in method else (method, '')
+                if method not in methods:
+                    raise NotImplementedError(f'{method} is not one of the available methods: {tuple(methods.keys())}')
+                args = [] if len(args) == 0 else list(map(_to_arg, args.split('+')))
+                if verbose or only_show:
+                    print(f'{methods[method].__name__}({", ".join(map(str, args))})')
+                if not only_show:
+                    methods[method](*args)
+
+            return self
+
         return (
             self
             .split_by_punctuation([('.', ' '), '。', '?', '？', ',', '，'])

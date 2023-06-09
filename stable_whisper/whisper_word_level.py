@@ -43,7 +43,7 @@ def transcribe_stable(
         condition_on_previous_text: bool = True,
         initial_prompt: Optional[str] = None,
         word_timestamps: bool = True,
-        regroup: bool = True,
+        regroup: Union[bool, str] = True,
         ts_num: int = 0,
         ts_noise: float = 0.1,
         suppress_silence: bool = True,
@@ -111,8 +111,9 @@ def transcribe_stable(
         and include the timestamps for each word in each segment. (Default: True)
         Disabling this will prevent segments from splitting/merging properly.
 
-    regroup: bool
-        Regroup all words into segments with more natural boundaries.(Default: True)
+    regroup: Union[bool, str]
+        Whether to regroup all words into segments with more natural boundaries. (Default: True)
+        Specify string for customizing the regrouping algorithm.
         Ignored if [word_timestamps]=False.
 
     ts_num: int
@@ -607,7 +608,7 @@ def transcribe_stable(
                                       language=language,
                                       time_scale=time_scale))
     if word_timestamps and regroup:
-        final_result.regroup()
+        final_result.regroup(regroup)
 
     if time_scale is not None:
         final_result.rescale_time(1 / time_scale)
@@ -747,8 +748,9 @@ def cli():
                              "and include the timestamps for each word in each segment;"
                              "disabling this will prevent segments from splitting/merging properly.")
 
-    parser.add_argument("--regroup", type=str2bool, default=True,
-                        help="regroup all words into segments with more natural boundaries;"
+    parser.add_argument("--regroup", type=str, default=True,
+                        help="whether to regroup all words into segments with more natural boundaries;"
+                             "specify string for customizing the regrouping algorithm"
                              "ignored if [word_timestamps]=False.")
 
     parser.add_argument('--ts_num', type=int, default=0,
@@ -903,6 +905,12 @@ def cli():
     max_chars = args.pop('max_chars')
     max_words = args.pop('max_words')
     reverse_text = args.pop('reverse_text')
+
+    if regroup:
+        try:
+            regroup = str2bool(regroup)
+        except ValueError:
+            pass
 
     if outputs:
         unsupported_formats = set(splitext(o)[-1].lower().strip('.') for o in outputs) - output_formats
@@ -1078,7 +1086,7 @@ def cli():
 
         if args.get('word_timestamps'):
             if regroup:
-                result.regroup()
+                result.regroup(regroup, verbose=args['verbose'] or debug)
             if max_chars or max_words:
                 result.split_by_length(max_chars=max_chars, max_words=max_words)
 

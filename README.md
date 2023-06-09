@@ -112,14 +112,14 @@ result.to_srt_vtt('audio.srt')
 ### Regrouping Words
 Stable-ts has a preset for regrouping words into different segments with more natural boundaries. 
 This preset is enabled by `regroup=True` (default). 
-But there are other built-in [regrouping methods](#regrouping-methods) that allow you to customize the regrouping logic. 
+But there are other built-in [regrouping methods](#regrouping-methods) that allow you to customize the regrouping algorithm. 
 This preset is just a predefined combination of those methods.
 
 https://user-images.githubusercontent.com/28970749/226504985-3d087539-cfa4-46d1-8eb5-7083f235b429.mp4
 
 ```python
+# The following all functionally equivalent:
 result0 = model.transcribe('audio.mp3', regroup=True) # regroup is True by default
-# regroup=True is same as below
 result1 = model.transcribe('audio.mp3', regroup=False)
 (
     result1
@@ -128,9 +128,11 @@ result1 = model.transcribe('audio.mp3', regroup=False)
     .merge_by_gap(.15, max_words=3)
     .split_by_punctuation([('.', ' '), '。', '?', '？'])
 )
-# result0 == result1
+result2 = model.transcribe('audio.mp3', regroup='sp=.* /。/?/？/,/，_sg=.5_mg=.15+3_sp=.* /。/?/？')
 ```
+Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
+- [regroup](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L808-L854)
 - [split_by_gap()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L526-L543)
 - [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L579-L595)
 - [split_by_length()](https://github.com/jianfch/stable-ts/blob/7c6953526dce5d9058b23e8d0c223272bf808be7/stable_whisper/result.py#L637-L658)
@@ -159,7 +161,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/result.py#L768-L773)
+[find()](https://github.com/jianfch/stable-ts/blob/d30d0d1cfb5b17b4bf59c3fafcbbd21e37598ab9/stable_whisper/result.py#L898-L913)
 
 ### Boosting Performance
 * One of the methods that Stable-ts uses to increase timestamp accuracy 
