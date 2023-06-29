@@ -40,8 +40,8 @@ result = model.transcribe('audio.mp3')
 result.to_srt_vtt('audio.srt')
 ```
 Parameters: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L637-L652), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L75-L199)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L636-L661), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L70-L206)
 ### Output
 Stable-ts supports various text output formats.
 ```python
@@ -51,9 +51,9 @@ result.to_ass('audio.ass') #ASS
 result.to_tsv('audio.tsv') #TSV
 ```
 Parameters: 
-[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L267-L291),
-[to_ass()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L401-L434),
-[to_tsv()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L335-L353)
+[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L261-L297),
+[to_ass()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L393-L440),
+[to_tsv()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L329-L359)
 <br /><br />
 There are word-level and segment-level timestamps. All output formats support them. 
 They also support will both levels simultaneously except TSV. 
@@ -132,13 +132,13 @@ result2 = model.transcribe('audio.mp3', regroup='sp=.* /。/?/？/,/，_sg=.5_mg
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L808-L854)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L526-L543)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L579-L595)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L637-L658)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L547-L573)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L599-L624)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L630-L633)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L808-L854)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L671-L683)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L724-L735)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L785-L801)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L695-L713)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L747-L765)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L772-L774)
 
 ### Locating Words
 You can locate words with regular expression.
@@ -195,7 +195,7 @@ stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_thr
 ```
 ![vad](https://user-images.githubusercontent.com/28970749/225825446-980924a5-7485-41e1-b0d9-c9b069d605f2.png)
 Parameters: 
-[visualize_suppression()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/stabilization.py#L334-L355)
+[visualize_suppression()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/stabilization.py#L328-L357)
 
 ### Encode Comparison 
 You can encode videos similar to the ones in the doc for comparing transcriptions of the same audio. 
