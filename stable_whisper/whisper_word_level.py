@@ -25,8 +25,6 @@ if TYPE_CHECKING:
 
 __all__ = ['modify_model', 'load_model']
 
-_processes = {}
-
 warnings.filterwarnings('ignore', module='whisper', message='.*Triton.*', category=UserWarning)
 
 

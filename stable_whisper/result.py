@@ -98,6 +98,13 @@ class WordTiming:
         self.start = round(self.start * scale_factor, 3)
         self.end = round(self.end * scale_factor, 3)
 
+    def clamp_max(self, max_dur: float, clip_start: bool = False):
+        if self.duration > max_dur:
+            if clip_start:
+                self.start = round(self.end - max_dur, 3)
+            else:
+                self.end = round(self.start + max_dur, 3)
+
 
 @dataclass
 class Segment:
@@ -804,6 +811,51 @@ class WhisperResult:
         self._split_segments(lambda x: x.get_length_indices(max_chars=max_chars, max_words=max_words), lock=lock)
         return self
 
+    def clamp_max(self, medium_factor: float = 2.5, max_dur: float = None, clip_start: bool = None):
+        """
+
+        Clamp all word durations above certain value.
+
+        Parameters
+        ----------
+        medium_factor: float
+            Clamp durations above ([medium_factor] * medium duration) per segment. (Default: 2.5)
+            If [medium_factor]=None/0 or segment has less than 3 words, it will be ignored and use only [max_dur].
+        max_dur: float
+            Clamp durations above [max_dur]. (Default: None)
+        clip_start: bool
+            Whether to clamp the start of a word. (Default: None)
+            Default only clamps the start of first word and end of last word per segment.
+
+        """
+        if not (medium_factor or max_dur):
+            raise ValueError('At least one of following arguments requires non-zero value: medium_factor; max_dur')
+
+        for seg in self.segments:
+            curr_max_dur = None
+            if medium_factor and len(seg.words) > 2:
+                durations = np.array([word.duration for word in seg.words])
+                print(durations)
+                durations.sort()
+                curr_max_dur = medium_factor * durations[len(durations)//2 + 1]
+
+            if max_dur and (not curr_max_dur or curr_max_dur > max_dur):
+                curr_max_dur = max_dur
+
+            if not curr_max_dur:
+                continue
+
+            if clip_start is None:
+                seg.words[0].clamp_max(curr_max_dur, clip_start=True)
+                seg.words[-1].clamp_max(curr_max_dur, clip_start=False)
+            else:
+                for i, word in enumerate(seg.words):
+                    word.clamp_max(curr_max_dur, clip_start=clip_start)
+
+            seg.update_seg_with_words()
+
+        return self
+
     def regroup(self, regroup_algo: str = None, verbose: bool = False, only_show: bool = False):
         """
 
@@ -821,6 +873,7 @@ class WhisperResult:
                     mg: merge_by_gap
                     mp: merge_by_punctuation
                     ms: merge_all_segment
+                    cm: clamp_max
 
                 Metacharacters:
                     = separates a method key and its arguments (not used if no argument)
@@ -859,7 +912,8 @@ class WhisperResult:
                 sl=self.split_by_length,
                 mg=self.merge_by_gap,
                 mp=self.merge_by_punctuation,
-                ms=self.merge_all_segments
+                ms=self.merge_all_segments,
+                cm=self.clamp_max
             )
 
             def _to_arg(x: str):
