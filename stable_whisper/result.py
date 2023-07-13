@@ -831,6 +831,10 @@ class WhisperResult:
         if not (medium_factor or max_dur):
             raise ValueError('At least one of following arguments requires non-zero value: medium_factor; max_dur')
 
+        if not self.has_words:
+            warnings.warn('Cannot clamp due to missing/no word-timestamps')
+            return self
+
         for seg in self.segments:
             curr_max_dur = None
             if medium_factor and len(seg.words) > 2:
@@ -988,6 +992,10 @@ class WhisperResult:
         self.language = self.ori_dict.get('language')
         segments = self.ori_dict.get('segments')
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
+
+    @property
+    def has_words(self):
+        return all(seg.has_words for seg in self.segments)
 
     to_srt_vtt = result_to_srt_vtt
     to_ass = result_to_ass

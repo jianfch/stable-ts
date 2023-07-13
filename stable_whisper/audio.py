@@ -145,7 +145,7 @@ def demucs_audio(audio: (torch.Tensor, str),
         audio = torch.from_numpy(load_audio(audio, model.samplerate))
     elif input_sr != model.samplerate:
         if input_sr is None:
-            raise ValueError('No samplerate provided for audio tensor.')
+            raise ValueError('No [input_sr] specified for audio tensor.')
         audio = torchaudio.functional.resample(audio,
                                                orig_freq=input_sr,
                                                new_freq=model.samplerate,
@@ -185,10 +185,29 @@ def demucs_audio(audio: (torch.Tensor, str),
                                                 new_freq=output_sr,
                                                 resampling_method="kaiser_window")
 
-    if save_path:
-        if not save_path.lower().endswith('.wav'):
+    if save_path is not None:
+        if isinstance(save_path, str) and not save_path.lower().endswith('.wav'):
             save_path += '.wav'
         torchaudio.save(save_path, vocals[None], output_sr or model.samplerate)
         print(f'Saved: {save_path}')
 
     return vocals
+
+
+def get_samplerate(audiofile: (str, bytes)) -> (int, None):
+    import re
+    if isinstance(audiofile, str):
+        metadata = subprocess.run(f'ffmpeg -i {audiofile}', capture_output=True, shell=True).stderr.decode()
+    else:
+        p = subprocess.Popen(f'ffmpeg -i -',  stderr=subprocess.PIPE, stdin=subprocess.PIPE, shell=True)
+        try:
+            p.stdin.write(audiofile)
+        except BrokenPipeError:
+            pass
+        finally:
+            metadata = p.communicate()[-1]
+            if metadata is not None:
+                metadata = metadata.decode()
+    sr = re.findall(r'\n.+Stream.+Audio.+\D+(\d+) Hz', metadata)
+    if sr:
+        return int(sr[0])

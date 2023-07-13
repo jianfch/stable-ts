@@ -60,7 +60,7 @@ def transcribe_stable(
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
         mel_first: bool = False,
         split_callback: Callable = None,
-        suppress_ts_tokens: bool = True,
+        suppress_ts_tokens: bool = False,
         gap_padding: str = ' ...',
         only_ffmpeg: bool = False,
         **decode_options) \
@@ -183,7 +183,7 @@ def transcribe_stable(
         Returns a tuple pair containing: list of words; list of token groups (i.e. each group is list of token(s))
 
     suppress_ts_tokens: bool
-        Whether to use silence mask to suppress silent timestamp tokens during inference. (Default: True)
+        Whether to use silence mask to suppress silent timestamp tokens during inference. (Default: False)
         Reduces hallucinations in some cases,
             but also can reduce 'verbatimness' (i.e. ignores disfluencies and repetitions).
 
@@ -199,8 +199,7 @@ def transcribe_stable(
 
     Returns
     -------
-    A dictionary containing the resulting text ("text") and segment-level details ("segments"), and
-    the spoken language ("language"), which is detected when `decode_options["language"]` is None.
+    An instance of WhisperResult.
     """
 
     dtype = torch.float16 if decode_options.get("fp16", True) and not getattr(model, 'dq', False) else torch.float32
@@ -763,7 +762,7 @@ def cli():
                         help="whether to suppress timestamps where audio is silent at word-level; "
                              "ignored if [suppress_silence]=False")
 
-    parser.add_argument('--suppress_ts_tokens', type=str2bool, default=True,
+    parser.add_argument('--suppress_ts_tokens', type=str2bool, default=False,
                         help="whether to use silence mask to suppress silent timestamp tokens during inference; "
                              "increases word accuracy in some cases, but tends reduce 'verbatimness' of the transcript"
                              "ignored if [suppress_silence]=False")

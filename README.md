@@ -14,6 +14,7 @@ https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-
   * [Visualizing Suppression](#visualizing-suppression)
   * [Encode Comparison](#encode-comparison)
   * [Tips](#tips)
+  * [Use with any ASR](#any-asr)
 * [Quick 1.X → 2.X Guide](#quick-1x--2x-guide)
 
 ## Setup
@@ -40,8 +41,8 @@ result = model.transcribe('audio.mp3')
 result.to_srt_vtt('audio.srt')
 ```
 Parameters: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L636-L661), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L70-L206)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L633-L658), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L68-L203)
 ### Output
 Stable-ts supports various text output formats.
 ```python
@@ -135,7 +136,7 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L860-L907)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L864-L911)
 - [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L678-L690)
 - [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L731-L742)
 - [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L792-L808)
@@ -165,7 +166,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L952-L968)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L956-L972)
 
 ### Boosting Performance
 * One of the methods that Stable-ts uses to increase timestamp accuracy 
@@ -226,6 +227,10 @@ Transcribe multiple audio files then process the results directly into SRT files
 ```commandline
 stable-ts audio1.mp3 audio2.mp3 audio3.mp3 -o audio1.srt audio2.srt audio3.srt
 ```
+
+### Any ASR
+You can use most of the features of Stable-ts improve the results of any ASR model/APIs. 
+[Just follow this notebook](https://github.com/jianfch/stable-ts/blob/main/examples/non-whisper.ipynb).
 
 ## Quick 1.X → 2.X Guide
 ### What's new in 2.0.0?

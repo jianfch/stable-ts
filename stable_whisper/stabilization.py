@@ -1,5 +1,5 @@
 import warnings
-from typing import List, Union, Tuple
+from typing import List, Union, Tuple, Optional
 from itertools import chain
 
 import torch
@@ -7,6 +7,10 @@ import torch.nn.functional as F
 import numpy as np
 
 from whisper.audio import TOKENS_PER_SECOND, SAMPLE_RATE, N_SAMPLES_PER_TOKEN
+
+
+NONVAD_SAMPLE_RATES = (16000,)
+VAD_SAMPLE_RATES = (16000, 8000)
 
 
 def is_ascending_sequence(
@@ -114,15 +118,25 @@ def suppress_silence(
 
 
 def standardize_audio(
-        audio: Union[torch.Tensor, np.ndarray, str]
+        audio: Union[torch.Tensor, np.ndarray, str, bytes],
+        resample_sr: Tuple[Optional[int], Union[int, Tuple[int]]] = None
 ) -> torch.Tensor:
-    if isinstance(audio, str):
-        from whisper.audio import load_audio
+    if isinstance(audio, (str, bytes)):
+        from .audio import load_audio
         audio = load_audio(audio)
     if isinstance(audio, np.ndarray):
         audio = torch.from_numpy(audio)
+    audio = audio.float()
+    if resample_sr:
+        in_sr, out_sr = resample_sr
+        if in_sr:
+            if isinstance(out_sr, int):
+                out_sr = [out_sr]
+            if in_sr not in out_sr:
+                from torchaudio.functional import resample
+                audio = resample(audio, in_sr, out_sr[0], resampling_method="kaiser_window")
 
-    return audio.float()
+    return audio
 
 
 def audio2loudness(
@@ -201,14 +215,16 @@ def visualize_mask(
 
 
 def wav2mask(
-        audio: (torch.Tensor, np.ndarray, str),
+        audio: (torch.Tensor, np.ndarray, str, bytes),
         q_levels: int = 20,
-        k_size: int = 5
+        k_size: int = 5,
+        sr: int = None
 ) -> (Tuple[torch.Tensor, Tuple[np.ndarray, np.ndarray]], None):
     """
     Generate 1D mask from waveform for suppressing timestamp tokens.
     """
-    loudness_tensor = audio2loudness(standardize_audio(audio))
+    audio = standardize_audio(audio, (sr, NONVAD_SAMPLE_RATES))
+    loudness_tensor = audio2loudness(audio)
     if loudness_tensor is None:
         return
     p = k_size // 2 if k_size else 0
@@ -251,9 +267,8 @@ _model_cache = {}
 
 def get_vad_silence_func(
         onnx=False,
-        verbose: bool = False
+        verbose: (bool, None) = False
 ):
-    assert SAMPLE_RATE in (16000, 8000), f'silero-vad does not support samplerate: {SAMPLE_RATE}'
     if onnx in _model_cache:
         model, get_ts = _model_cache[onnx]
     else:
@@ -270,11 +285,12 @@ def get_vad_silence_func(
         return get_ts(wav, model, threshold, min_speech_duration_ms=100, min_silence_duration_ms=20)
 
     def vad_silence_timing(
-            audio: (torch.Tensor, np.ndarray, str),
-            speech_threshold: float = .35
+            audio: (torch.Tensor, np.ndarray, str, bytes),
+            speech_threshold: float = .35,
+            sr: int = None
     ) -> (Tuple[np.ndarray, np.ndarray], None):
 
-        audio = standardize_audio(audio)
+        audio = standardize_audio(audio, (sr, VAD_SAMPLE_RATES))
 
         total_duration = round(audio.shape[-1] / SAMPLE_RATE, 3)
         if not total_duration:
@@ -316,7 +332,7 @@ def get_vad_silence_func(
 
 
 def visualize_suppression(
-        audio: Union[torch.Tensor, np.ndarray, str],
+        audio: Union[torch.Tensor, np.ndarray, str, bytes],
         output: str = None,
         q_levels: int = 20,
         k_size: int = 5,
@@ -331,7 +347,7 @@ def visualize_suppression(
 
     Parameters
     ----------
-    audio: Union[torch.Tensor, np.ndarray, str]
+    audio: Union[torch.Tensor, np.ndarray, str, bytes]
         Audio to visualize.
     output: str
         Path to save visualization. If none is provided, image will be shown directly via Pillow or opencv-python.
