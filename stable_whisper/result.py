@@ -98,12 +98,19 @@ class WordTiming:
         self.start = round(self.start * scale_factor, 3)
         self.end = round(self.end * scale_factor, 3)
 
-    def clamp_max(self, max_dur: float, clip_start: bool = False):
+    def clamp_max(self, max_dur: float, clip_start: bool = False, verbose: bool = False):
         if self.duration > max_dur:
             if clip_start:
-                self.start = round(self.end - max_dur, 3)
+                new_start = round(self.end - max_dur, 3)
+                if verbose:
+                    print(f'Start: {self.start} -> {new_start}\nEnd: {self.end}\nText:"{self.word}"\n')
+                self.start = new_start
+
             else:
-                self.end = round(self.start + max_dur, 3)
+                new_end = round(self.start + max_dur, 3)
+                if verbose:
+                    print(f'Start: {self.start}\nEnd: {self.end} -> {new_end}\nText:"{self.word}"\n')
+                self.end = new_end
 
 
 @dataclass
@@ -811,7 +818,12 @@ class WhisperResult:
         self._split_segments(lambda x: x.get_length_indices(max_chars=max_chars, max_words=max_words), lock=lock)
         return self
 
-    def clamp_max(self, medium_factor: float = 2.5, max_dur: float = None, clip_start: bool = None):
+    def clamp_max(
+            self,
+            medium_factor: float = 2.5,
+            max_dur: float = None,
+            clip_start: bool = None,
+            verbose: bool = True):
         """
 
         Clamp all word durations above certain value.
@@ -826,6 +838,8 @@ class WhisperResult:
         clip_start: bool
             Whether to clamp the start of a word. (Default: None)
             Default only clamps the start of first word and end of last word per segment.
+        verbose: bool
+            Whether to print out the timestamp changes. (Default: False)
 
         """
         if not (medium_factor or max_dur):
@@ -839,7 +853,6 @@ class WhisperResult:
             curr_max_dur = None
             if medium_factor and len(seg.words) > 2:
                 durations = np.array([word.duration for word in seg.words])
-                print(durations)
                 durations.sort()
                 curr_max_dur = medium_factor * durations[len(durations)//2 + 1]
 
@@ -850,11 +863,11 @@ class WhisperResult:
                 continue
 
             if clip_start is None:
-                seg.words[0].clamp_max(curr_max_dur, clip_start=True)
-                seg.words[-1].clamp_max(curr_max_dur, clip_start=False)
+                seg.words[0].clamp_max(curr_max_dur, clip_start=True, verbose=verbose)
+                seg.words[-1].clamp_max(curr_max_dur, clip_start=False, verbose=verbose)
             else:
                 for i, word in enumerate(seg.words):
-                    word.clamp_max(curr_max_dur, clip_start=clip_start)
+                    word.clamp_max(curr_max_dur, clip_start=clip_start, verbose=verbose)
 
             seg.update_seg_with_words()
 
