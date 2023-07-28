@@ -348,13 +348,13 @@ class Segment:
         if self.has_words:
             words = self.words if word_level or len(self.words) == 1 else [self.words[0], self.words[-1]]
             for w in words:
-                w.suppress_silence(silent_starts, silent_ends)
+                w.suppress_silence(silent_starts, silent_ends, min_word_dur)
             self.update_seg_with_words()
         else:
             suppress_silence(self,
                              silent_starts,
                              silent_ends,
-                             max((self.end - self.start) * .75, min_word_dur))
+                             min_word_dur)
 
         return self
 
