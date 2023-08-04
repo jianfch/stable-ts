@@ -400,26 +400,46 @@ class Segment:
 
         return sorted(set(indices) - set(self.get_locked_indices()))
 
-    def get_length_indices(self, max_chars: int = None, max_words: int = None):  # for splitting
+    def get_length_indices(self, max_chars: int = None, max_words: int = None, even_split: bool = True):
+        # for splitting
         if max_chars is None and max_words is None:
             return []
         assert max_chars != 0 and max_words != 0, \
             f'max_chars and max_words must be greater 0, but got {max_chars} and {max_words}'
         indices = []
-        curr_words = 0
-        curr_chars = 0
-        for i, word in enumerate(self.words):
-            curr_words += 1
-            curr_chars += len(word)
-            if i != 0:
-                if (
-                        max_chars is not None and curr_chars > max_chars
-                        or
-                        max_words is not None and curr_words > max_words
-                ):
-                    indices.append(i-1)
-                    curr_words = 1
-                    curr_chars = len(word)
+        if even_split:
+            char_count = -1 if max_chars is None else sum(map(len, self.words))
+            word_count = -1 if max_words is None else len(self.words)
+            exceed_chars = max_chars is not None and char_count > max_chars
+            exceed_words = max_words is not None and word_count > max_words
+            if exceed_chars:
+                splits = np.ceil(char_count / max_chars)
+                chars_per_split = char_count / splits
+                char_indices = list(chain.from_iterable([i]*len(word) for i, word in enumerate(self.words)))
+                indices = [char_indices[round(i * chars_per_split)] - 1 for i in range(1, int(splits))]
+                if max_words is not None:
+                    exceed_words = any(j-i+1 > max_words for i, j in zip([0]+indices, indices+[len(self.words)]))
+
+            if exceed_words:
+                splits = np.ceil(word_count / max_words)
+                words_per_split = word_count / splits
+                indices = [round(i*words_per_split)-1 for i in range(1, int(splits))]
+
+        else:
+            curr_words = 0
+            curr_chars = 0
+            for i, word in enumerate(self.words):
+                curr_words += 1
+                curr_chars += len(word)
+                if i != 0:
+                    if (
+                            max_chars is not None and curr_chars > max_chars
+                            or
+                            max_words is not None and curr_words > max_words
+                    ):
+                        indices.append(i-1)
+                        curr_words = 1
+                        curr_chars = len(word)
         return indices
 
     def split(self, indices: List[int]):
@@ -793,6 +813,7 @@ class WhisperResult:
             self,
             max_chars: int = None,
             max_words: int = None,
+            even_split: bool = True,
             force_len: bool = False,
             lock: bool = False
     ):
@@ -806,8 +827,11 @@ class WhisperResult:
             Maximum number of character allowed in each segment.
         max_words: int
             Maximum number of words allowed in each segment.
+        even_split: bool
+            Whether to evenly split a segment in length if it exceeds [max_chars] or [max_words]. (Default: True)
+            Note that some segments might still slightly exceed [max_chars] to avoid uneven splits.
         force_len: bool
-            Maintain a relatively constant length for each segment. (Default: False)
+            Whether to force a constant length for each segment except the last segment. (Default: False)
             This will ignore all previous non-locked segment boundaries (e.g. boundaries set by `regroup()`).
         lock: bool
             Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
@@ -815,7 +839,14 @@ class WhisperResult:
         """
         if force_len:
             self.merge_all_segments()
-        self._split_segments(lambda x: x.get_length_indices(max_chars=max_chars, max_words=max_words), lock=lock)
+        self._split_segments(
+            lambda x: x.get_length_indices(
+                max_chars=max_chars,
+                max_words=max_words,
+                even_split=even_split
+            ),
+            lock=lock
+        )
         return self
 
     def clamp_max(
@@ -823,7 +854,7 @@ class WhisperResult:
             medium_factor: float = 2.5,
             max_dur: float = None,
             clip_start: bool = None,
-            verbose: bool = True):
+            verbose: bool = False):
         """
 
         Clamp all word durations above certain value.
@@ -881,7 +912,7 @@ class WhisperResult:
         Parameters
         ----------
         regroup_algo: str
-            string for customizing the regrouping algorithm
+            string for customizing the regrouping algorithm (default: 'da')
 
                 Method keys:
                     sg: split_by_gap
@@ -891,6 +922,7 @@ class WhisperResult:
                     mp: merge_by_punctuation
                     ms: merge_all_segment
                     cm: clamp_max
+                    da: default algorithm (sp=.* /。/?/？/,/，_sg=.5_mg=.3+3_sp=.* /。/?/？)
 
                 Metacharacters:
                     = separates a method key and its arguments (not used if no argument)
@@ -922,48 +954,46 @@ class WhisperResult:
             show the all methods and arguments parsed from [regroup_algo] without running the methods
 
         """
-        if isinstance(regroup_algo, str):
-            methods = dict(
-                sg=self.split_by_gap,
-                sp=self.split_by_punctuation,
-                sl=self.split_by_length,
-                mg=self.merge_by_gap,
-                mp=self.merge_by_punctuation,
-                ms=self.merge_all_segments,
-                cm=self.clamp_max
-            )
+        if regroup_algo is None:
+            regroup_algo = 'da'
 
-            def _to_arg(x: str):
-                if len(x) == 0:
-                    return None
-                if '/' in x:
-                    return [a.split('*') if '*' in a else a for a in x.split('/')]
-                try:
-                    x = float(x) if '.' in x else int(x)
-                except ValueError:
-                    pass
-                finally:
-                    return x
-
-            for method in regroup_algo.split('_'):
-                method, args = method.split('=', maxsplit=1) if '=' in method else (method, '')
-                if method not in methods:
-                    raise NotImplementedError(f'{method} is not one of the available methods: {tuple(methods.keys())}')
-                args = [] if len(args) == 0 else list(map(_to_arg, args.split('+')))
-                if verbose or only_show:
-                    print(f'{methods[method].__name__}({", ".join(map(str, args))})')
-                if not only_show:
-                    methods[method](*args)
-
-            return self
-
-        return (
-            self
-            .split_by_punctuation([('.', ' '), '。', '?', '？', ',', '，'])
-            .split_by_gap(.5)
-            .merge_by_gap(.3, max_words=3)
-            .split_by_punctuation([('.', ' '), '。', '?', '？'])
+        methods = dict(
+            sg=self.split_by_gap,
+            sp=self.split_by_punctuation,
+            sl=self.split_by_length,
+            mg=self.merge_by_gap,
+            mp=self.merge_by_punctuation,
+            ms=self.merge_all_segments,
+            cm=self.clamp_max
         )
+
+        def _to_arg(x: str):
+            if len(x) == 0:
+                return None
+            if '/' in x:
+                return [a.split('*') if '*' in a else a for a in x.split('/')]
+            try:
+                x = float(x) if '.' in x else int(x)
+            except ValueError:
+                pass
+            finally:
+                return x
+
+        calls = regroup_algo.split('_')
+        if 'da' in calls:
+            default_calls = 'sp=.* /。/?/？/,/，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
+            calls = chain.from_iterable(default_calls if method == 'da' else [method] for method in calls)
+        for method in calls:
+            method, args = method.split('=', maxsplit=1) if '=' in method else (method, '')
+            if method not in methods:
+                raise NotImplementedError(f'{method} is not one of the available methods: {tuple(methods.keys())}')
+            args = [] if len(args) == 0 else list(map(_to_arg, args.split('+')))
+            if verbose or only_show:
+                print(f'{methods[method].__name__}({", ".join(map(str, args))})')
+            if not only_show:
+                methods[method](*args)
+
+        return self
 
     def find(self, pattern: str, word_level=True, flags=None) -> "WhisperResultMatches":
         """
