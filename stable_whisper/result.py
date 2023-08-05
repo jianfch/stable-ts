@@ -904,14 +904,14 @@ class WhisperResult:
 
         return self
 
-    def regroup(self, regroup_algo: str = None, verbose: bool = False, only_show: bool = False):
+    def regroup(self, regroup_algo: Union[str, bool] = None, verbose: bool = False, only_show: bool = False):
         """
 
         Regroup (in-place) all words into segments with more natural boundaries without locking.
 
         Parameters
         ----------
-        regroup_algo: str
+        regroup_algo: Union[str, bool]
             string for customizing the regrouping algorithm (default: 'da')
 
                 Method keys:
@@ -954,8 +954,10 @@ class WhisperResult:
             show the all methods and arguments parsed from [regroup_algo] without running the methods
 
         """
-        if regroup_algo is None:
+        if regroup_algo is None or regroup_algo is True:
             regroup_algo = 'da'
+        if regroup_algo is False:
+            return self
 
         methods = dict(
             sg=self.split_by_gap,
