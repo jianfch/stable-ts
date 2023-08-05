@@ -166,7 +166,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L999-L1015)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1001-L1017)
 
 ### Boosting Performance
 * One of the methods that Stable-ts uses to increase timestamp accuracy 
