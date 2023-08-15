@@ -922,7 +922,7 @@ class WhisperResult:
                     mp: merge_by_punctuation
                     ms: merge_all_segment
                     cm: clamp_max
-                    da: default algorithm (sp=.* /。/?/？/,/，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                    da: default algorithm (sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
 
                 Metacharacters:
                     = separates a method key and its arguments (not used if no argument)
@@ -983,7 +983,7 @@ class WhisperResult:
 
         calls = regroup_algo.split('_')
         if 'da' in calls:
-            default_calls = 'sp=.* /。/?/？/,/，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
+            default_calls = 'sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
             calls = chain.from_iterable(default_calls if method == 'da' else [method] for method in calls)
         for method in calls:
             method, args = method.split('=', maxsplit=1) if '=' in method else (method, '')

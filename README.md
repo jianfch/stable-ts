@@ -129,7 +129,7 @@ result1 = model.transcribe('audio.mp3', regroup=False)
     .merge_by_gap(.3, max_words=3)
     .split_by_punctuation([('.', ' '), '。', '?', '？'])
 )
-result2 = model.transcribe('audio.mp3', regroup='sp=.* /。/?/？/,/，_sg=.5_mg=.3+3_sp=.* /。/?/？')
+result2 = model.transcribe('audio.mp3', regroup='sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？')
 
 # To undo all regrouping operations:
 result0.reset()

@@ -588,7 +588,7 @@ def transcribe_stable(
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
-            if not single_timestamp_ending and len(consecutive) > 0 and \
+            if not single_timestamp_ending and \
                     (alt_segment_duration := (current_segments[-1]['end'] - time_offset)) > 0:
                 segment_samples = min(round(alt_segment_duration * SAMPLE_RATE), segment_samples)
             fast_forward()
