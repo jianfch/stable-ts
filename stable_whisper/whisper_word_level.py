@@ -348,6 +348,11 @@ def transcribe_stable(
                     and decode_result.avg_logprob < logprob_threshold
             ):
                 needs_fallback = True  # average log probability is too low
+            if (
+                no_speech_threshold is not None
+                and decode_result.no_speech_prob > no_speech_threshold
+            ):
+                needs_fallback = False  # silence
 
             if not needs_fallback:
                 break
@@ -381,6 +386,8 @@ def transcribe_stable(
             "compression_ratio": result.compression_ratio,
             "no_speech_prob": result.no_speech_prob,
         }
+
+    punctuations = prepend_punctuations + append_punctuations
 
     total_samples = audio.shape[-1]
     total_duration = round(total_samples / curr_sr, 2)
@@ -487,19 +494,13 @@ def transcribe_stable(
                     current_segments.append(
                         new_segment(
                             start=round(time_offset + start_timestamp_pos * time_precision, 3),
-                            end=round(time_offset + end_timestamp_pos * time_precision, 3),
+                            end=round(time_offset + min(end_timestamp_pos * time_precision, segment_duration), 3),
                             tokens=sliced_tokens,
                             result=result,
                         )
                     )
                     last_slice = current_slice
 
-                if not single_timestamp_ending:
-                    # otherwise, ignore the unfinished segment and seek to the last timestamp
-                    last_timestamp_pos = (
-                            tokens[last_slice - 1].item() - tokenizer.timestamp_begin
-                    )
-                    segment_samples = min(segment_samples, round(last_timestamp_pos * N_SAMPLES_PER_TOKEN))
             else:
                 duration = segment_duration
                 timestamps = tokens[timestamp_tokens.nonzero().flatten()]
@@ -508,10 +509,12 @@ def transcribe_stable(
                         and timestamps[-1].item() != tokenizer.timestamp_begin
                 ):
                     # no consecutive timestamps but it has a timestamp; use the last one.
-                    last_timestamp_pos = (
+                    end_timestamp_pos = (
                             timestamps[-1].item() - tokenizer.timestamp_begin
                     )
-                    duration = last_timestamp_pos * time_precision
+                    duration = min(end_timestamp_pos * time_precision, segment_duration)
+                else:
+                    end_timestamp_pos = 0
 
                 current_segments.append(
                     new_segment(
@@ -525,24 +528,20 @@ def transcribe_stable(
             # if a segment is instantaneous or does not contain text, remove it
             for i in reversed(range(len(current_segments))):
                 seg = current_segments[i]
-                if seg["start"] == seg["end"] or seg["text"].strip() == "":
+                if seg["start"] == seg["end"] or seg["text"].strip() in punctuations:
                     del current_segments[i]
 
-            if len(current_segments) == 0:
-                fast_forward()
-                continue
-
-            if not condition_on_previous_text or result.temperature > 0.5:
-                # do not feed the prompt tokens if a high temperature was used
-                prompt_reset_since = len(all_tokens)
+            num_samples = segment_samples
 
             if word_timestamps:
+                if end_timestamp_pos > 0:
+                    num_samples = min(round(end_timestamp_pos * N_SAMPLES_PER_TOKEN), num_samples)
                 add_word_timestamps_stable(
                     segments=current_segments,
                     model=model,
                     tokenizer=tokenizer,
                     mel=mel_segment,
-                    num_samples=segment_samples,
+                    num_samples=num_samples,
                     prepend_punctuations=prepend_punctuations,
                     append_punctuations=append_punctuations,
                     audio_features=audio_features,
@@ -551,6 +550,26 @@ def transcribe_stable(
                     split_callback=split_callback,
                     gap_padding=gap_padding
                 )
+
+                # if 50%+ of the words in a segment are instantaneous, remove it
+                for i in reversed(range(len(current_segments))):
+                    zero_duration_percent = (
+                        np.array(
+                            [w['start'] == w['end'] for w in current_segments[i]['words']]
+                        )
+                        .astype(np.float16)
+                        .mean()
+                    )
+                    if zero_duration_percent >= 0.5:
+                        del current_segments[i]
+
+            if len(current_segments) == 0:
+                fast_forward()
+                continue
+
+            if not condition_on_previous_text or result.temperature > 0.5:
+                # do not feed the prompt tokens if a high temperature was used
+                prompt_reset_since = len(all_tokens)
 
             if segment_silence_timing is not None:
                 for seg_i, segment in enumerate(current_segments):
@@ -588,9 +607,8 @@ def transcribe_stable(
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
-            if not single_timestamp_ending and \
-                    (alt_segment_duration := (current_segments[-1]['end'] - time_offset)) > 0:
-                segment_samples = min(round(alt_segment_duration * SAMPLE_RATE), segment_samples)
+            if not single_timestamp_ending:
+                segment_samples = num_samples
             fast_forward()
 
         # final update

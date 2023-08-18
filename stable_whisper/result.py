@@ -467,6 +467,7 @@ class WhisperResult:
         self.language = self.ori_dict.get('language')
         segments = deepcopy(result.get('segments', self.ori_dict.get('segments')))
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
+        self.raise_for_unsorted()
         self.remove_no_word_segments()
         self.update_all_segs_with_words()
 
@@ -497,6 +498,17 @@ class WhisperResult:
             else:
                 raise NotImplementedError(f'Got list of {type(result[0])} but expects list of list/dict')
         return result, path
+
+    def raise_for_unsorted(self):
+        parts = self.all_words() if self.has_words else self.segments
+        timestamps = np.array(list(chain.from_iterable((part.start, part.end) for part in parts)))
+        if len(timestamps) < 2:
+            return
+        if ((timestamps[1:] - timestamps[:-1]) < 0).any():
+            raise NotImplementedError(f'Timestamps are not in ascending order. '
+                                      f'For transcribe_any() or data not produced by Stable-ts, '
+                                      f'sort segments/words by timestamps. '
+                                      f'Otherwise, please submit an issue.')
 
     def update_all_segs_with_words(self):
         for seg in self.segments:
@@ -857,7 +869,7 @@ class WhisperResult:
             verbose: bool = False):
         """
 
-        Clamp all word durations above certain value.
+        Clamp all word durations above certain value. Note: most effective when applied before other regroup operations.
 
         Parameters
         ----------
@@ -922,7 +934,7 @@ class WhisperResult:
                     mp: merge_by_punctuation
                     ms: merge_all_segment
                     cm: clamp_max
-                    da: default algorithm (sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                    da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
 
                 Metacharacters:
                     = separates a method key and its arguments (not used if no argument)
@@ -983,7 +995,7 @@ class WhisperResult:
 
         calls = regroup_algo.split('_')
         if 'da' in calls:
-            default_calls = 'sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
+            default_calls = 'cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
             calls = chain.from_iterable(default_calls if method == 'da' else [method] for method in calls)
         for method in calls:
             method, args = method.split('=', maxsplit=1) if '=' in method else (method, '')
