@@ -490,8 +490,8 @@ def result_to_ass(result: (dict, list),
         strip=strip,
         reverse_text=reverse_text,
         to_word_level_string_callback=(
-            lambda s, t: to_ass_word_level_segments(s, t, karaoke=karaoke)
-            if karaoke or (word_level and segment_level)
+            (lambda s, t: to_ass_word_level_segments(s, t, karaoke=karaoke))
+            if karaoke or (word_level and segment_level and tag is None)
             else None
         )
     )
