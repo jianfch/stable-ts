@@ -30,12 +30,12 @@ warnings.filterwarnings('ignore', module='whisper', message='.*Triton.*', catego
 
 
 _required_whisper_ver = list(
-    filter(lambda x: x.startswith('openai-whisper='), importlib.metadata.distribution('stable-ts').requires)
+    filter(lambda x: x.startswith('openai-whisper'), importlib.metadata.distribution('stable-ts').requires)
 )[0].split('==')[-1]
 
 if (
         whisper.__version__ != _required_whisper_ver or  # check version
-        importlib.metadata.distribution('openai_whisper').read_text('direct_url.json')  # check if installed from repo
+        importlib.metadata.distribution('openai-whisper').read_text('direct_url.json')  # check if installed from repo
 ):
     warnings.warn('The installed version of Whisper might be incompatible.\n'
                   'To prevent errors and performance issues, reinstall correct version with: '
