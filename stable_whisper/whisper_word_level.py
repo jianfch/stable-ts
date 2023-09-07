@@ -4,6 +4,7 @@ import numpy as np
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union, Callable
 from types import MethodType
 from tqdm import tqdm
+import importlib.metadata
 
 import whisper
 from whisper.audio import (
@@ -26,6 +27,19 @@ if TYPE_CHECKING:
 __all__ = ['modify_model', 'load_model']
 
 warnings.filterwarnings('ignore', module='whisper', message='.*Triton.*', category=UserWarning)
+
+
+_required_whisper_ver = list(
+    filter(lambda x: x.startswith('openai-whisper='), importlib.metadata.distribution('stable-ts').requires)
+)[0].split('==')[-1]
+
+if (
+        whisper.__version__ != _required_whisper_ver or  # check version
+        importlib.metadata.distribution('openai_whisper').read_text('direct_url.json')  # check if installed from repo
+):
+    warnings.warn('The installed version of Whisper might be incompatible.\n'
+                  'To prevent errors and performance issues, reinstall correct version with: '
+                  f'"pip install --upgrade --no-deps --force-reinstall openai-whisper=={_required_whisper_ver}".')
 
 
 # modified version of whisper.transcribe.transcribe
