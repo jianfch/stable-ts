@@ -20,6 +20,7 @@ from .decode import decode_stable
 from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable
 from .stabilization import get_vad_silence_func, wav2mask, mask2timing, timing2mask
+from .non_whisper import transcribe_any
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
@@ -32,14 +33,10 @@ warnings.filterwarnings('ignore', module='whisper', message='.*Triton.*', catego
 _required_whisper_ver = list(
     filter(lambda x: x.startswith('openai-whisper'), importlib.metadata.distribution('stable-ts').requires)
 )[0].split('==')[-1]
-
-if (
+_is_whisper_incompatible = (
         whisper.__version__ != _required_whisper_ver or  # check version
         importlib.metadata.distribution('openai-whisper').read_text('direct_url.json')  # check if installed from repo
-):
-    warnings.warn('The installed version of Whisper might be incompatible.\n'
-                  'To prevent errors and performance issues, reinstall correct version with: '
-                  f'"pip install --upgrade --no-deps --force-reinstall openai-whisper=={_required_whisper_ver}".')
+)
 
 
 # modified version of whisper.transcribe.transcribe
@@ -77,6 +74,8 @@ def transcribe_stable(
         suppress_ts_tokens: bool = False,
         gap_padding: str = ' ...',
         only_ffmpeg: bool = False,
+        max_instant_words: float = 0.5,
+        progress_callback: Callable = None,
         **decode_options) \
         -> WhisperResult:
     """
@@ -208,6 +207,18 @@ def transcribe_stable(
     only_ffmpeg: bool
         Whether to use only FFmpeg (and not yt-dlp) for URls. (Default: False)
 
+    max_instant_words: float
+        If percentage of instantaneous words in a segment exceed this amount, the segment is removed. (Default: 0.5)
+
+    progress_callback: Callable
+        A function that will be called when transcription progress is updated.
+        The function needs to have the following parameters:
+             seek: float
+                seconds of the audio that has been transcribed
+            total: float
+                total duration of audio in seconds
+
+
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
 
@@ -215,7 +226,11 @@ def transcribe_stable(
     -------
     An instance of WhisperResult.
     """
-
+    if _is_whisper_incompatible:
+        warnings.warn('The installed version of Whisper might be incompatible.\n'
+                      'To prevent errors and performance issues, reinstall correct version with: '
+                      f'"pip install --upgrade --no-deps --force-reinstall openai-whisper=={_required_whisper_ver}" '
+                      'or use transcribe_minimal().')
     dtype = torch.float16 if decode_options.get("fp16", True) and not getattr(model, 'dq', False) else torch.float32
     if model.device == torch.device("cpu"):
         if torch.cuda.is_available():
@@ -234,7 +249,6 @@ def transcribe_stable(
 
     if time_scale == 1:
         time_scale = None
-
     curr_sr = SAMPLE_RATE if time_scale is None else SAMPLE_RATE * time_scale
     if isinstance(audio, (str, bytes)):
         if demucs:
@@ -346,10 +360,11 @@ def transcribe_stable(
                 kwargs.pop("best_of", None)
 
             options = DecodingOptions(**kwargs, temperature=t)
-            decode_result, audio_features = model.decode(seg,
-                                                         options,
-                                                         ts_token_mask=ts_token_mask if suppress_ts_tokens else None,
-                                                         audio_features=audio_features)
+            decode_result, audio_features = decode_stable(model,
+                                                          seg,
+                                                          options,
+                                                          ts_token_mask=ts_token_mask if suppress_ts_tokens else None,
+                                                          audio_features=audio_features)
 
             needs_fallback = False
             if (
@@ -416,8 +431,11 @@ def transcribe_stable(
         def update_pbar():
             nonlocal audio_features
             audio_features = None
+            seek_duration = min(total_duration, round(seek_sample / curr_sr, 2))
             if not tqdm_pbar.disable:
-                tqdm_pbar.update(min(total_duration, round(seek_sample / curr_sr, 2)) - tqdm_pbar.n)
+                tqdm_pbar.update(seek_duration - tqdm_pbar.n)
+            if progress_callback is not None:
+                progress_callback(seek=seek_duration, total=total_duration)
 
         def update_seek():
             nonlocal seek_sample
@@ -565,7 +583,7 @@ def transcribe_stable(
                     gap_padding=gap_padding
                 )
 
-                # if 50%+ of the words in a segment are instantaneous, remove it
+                # if [max_instant_words] of the words in a segment are instantaneous, remove it
                 for i in reversed(range(len(current_segments))):
                     zero_duration_percent = (
                         np.array(
@@ -574,7 +592,7 @@ def transcribe_stable(
                         .astype(np.float16)
                         .mean()
                     )
-                    if zero_duration_percent >= 0.5:
+                    if zero_duration_percent > max_instant_words:
                         del current_segments[i]
 
             if len(current_segments) == 0:
@@ -648,14 +666,67 @@ def transcribe_stable(
     return final_result
 
 
+def transcribe_minimal(
+        model: "Whisper",
+        audio: Union[str, np.ndarray, torch.Tensor, bytes],
+        *,
+        verbose: bool = False,
+        word_timestamps: bool = True,
+        regroup: Union[bool, str] = True,
+        suppress_silence: bool = True,
+        suppress_word_ts: bool = True,
+        q_levels: int = 20,
+        k_size: int = 5,
+        demucs: bool = False,
+        demucs_output: str = None,
+        vad: bool = False,
+        vad_threshold: float = 0.35,
+        vad_onnx: bool = False,
+        min_word_dur: float = 0.1,
+        only_voice_freq: bool = False,
+        only_ffmpeg: bool = False,
+        **kwargs) \
+        -> WhisperResult:
+    """
+    Transcribe audio using unmodified Whisper.transcribe().
+    """
+    inference_kwargs = dict(
+        model=model,
+        audio=audio,
+        word_timestamps=word_timestamps,
+        verbose=verbose
+    )
+    inference_kwargs.update(kwargs)
+    return transcribe_any(
+        inference_func=whisper.transcribe,
+        audio=audio,
+        inference_kwargs=inference_kwargs,
+        verbose=kwargs.get('verbose'),
+        regroup=regroup,
+        suppress_silence=suppress_silence, 
+        suppress_word_ts=suppress_word_ts,
+        q_levels=q_levels,
+        k_size=k_size,
+        demucs=demucs,
+        demucs_output=demucs_output,
+        vad=vad,
+        vad_threshold=vad_threshold,
+        vad_onnx=vad_onnx,
+        min_word_dur=min_word_dur,
+        only_voice_freq=only_voice_freq,
+        only_ffmpeg=only_ffmpeg,
+        force_order=True
+    )
+
+
 def modify_model(model: "Whisper"):
     """
     Modifies model instance by:
         -replacing model.decode with decode_word_level
         -replacing model.transcribe with transcribe_word_level
     """
-    model.decode = MethodType(decode_stable, model)
     model.transcribe = MethodType(transcribe_stable, model)
+    model.transcribe_minimal = MethodType(transcribe_minimal, model)
 
 
 # modified version of whisper.load_model

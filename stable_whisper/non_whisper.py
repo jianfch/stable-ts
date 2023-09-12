@@ -35,7 +35,8 @@ def transcribe_any(
         vad_onnx: bool = False,
         min_word_dur: float = 0.1,
         only_voice_freq: bool = False,
-        only_ffmpeg: bool = False) \
+        only_ffmpeg: bool = False,
+        force_order: bool = False) \
         -> WhisperResult:
     """
     Transcribe an audio file using any ASR system.
@@ -144,6 +145,10 @@ def transcribe_any(
 
     only_ffmpeg: bool
         Whether to use only FFmpeg (and not yt-dlp) for URls. (Default: False)
+
+    force_order: bool
+        Whether to use adjacent timestamps if to replace timestamps that are out of order. (Default: False)
+        Note: Use only if the words/segments returned by [inference_func] are order.
 
     Returns
     -------
@@ -311,7 +316,7 @@ def transcribe_any(
     try:
         result = inference_func(**inference_kwargs)
         if not isinstance(result, WhisperResult):
-            result = WhisperResult(result)
+            result = WhisperResult(result, force_order=force_order)
         if suppress_silence:
             if vad:
                 silent_timings = get_vad_silence_func(

@@ -461,12 +461,14 @@ class Segment:
 
 class WhisperResult:
 
-    def __init__(self, result: Union[str, dict, list]):
+    def __init__(self, result: Union[str, dict, list], force_order: bool = False):
         result, self.path = self._standardize_result(result)
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
         segments = deepcopy(result.get('segments', self.ori_dict.get('segments')))
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
+        if force_order:
+            self.force_order()
         self.raise_for_unsorted()
         self.remove_no_word_segments()
         self.update_all_segs_with_words()
@@ -498,6 +500,24 @@ class WhisperResult:
             else:
                 raise NotImplementedError(f'Got list of {type(result[0])} but expects list of list/dict')
         return result, path
+
+    def force_order(self):
+        prev_ts = 0
+        max_seg_idx = len(self.segments) - 1
+        for seg_idx, seg in enumerate(self.segments):
+            next_seg = self.segments[seg_idx+1] if seg_idx != max_seg_idx else None
+            if self.has_words:
+                max_word_idx = len(seg.words) - 1
+                for word_idx, word in enumerate(seg.words):
+                    next_word = seg.words[word_idx+1] if word_idx != max_word_idx else (next_seg and next_seg.words[0])
+                    if word.start < prev_ts:
+                        word.start = prev_ts
+                    if word.start > word.end:
+                        if next_word is None or word.start != prev_ts:
+                            word.start = prev_ts
+                        else:
+                            word.end = next_word.start
+                    prev_ts = word.end
 
     def raise_for_unsorted(self):
         parts = self.all_words() if self.has_words else self.segments
@@ -865,7 +885,7 @@ class WhisperResult:
             self,
             medium_factor: float = 2.5,
             max_dur: float = None,
-            clip_start: bool = None,
+            clip_start: (bool, None) = True,
             verbose: bool = False):
         """
 
@@ -878,9 +898,9 @@ class WhisperResult:
             If [medium_factor]=None/0 or segment has less than 3 words, it will be ignored and use only [max_dur].
         max_dur: float
             Clamp durations above [max_dur]. (Default: None)
-        clip_start: bool
-            Whether to clamp the start of a word. (Default: None)
-            Default only clamps the start of first word and end of last word per segment.
+        clip_start: (bool, None)
+            Whether to clamp the start of a word. (Default: True)
+            If None, clamp the start of first word and end of last word per segment.
         verbose: bool
             Whether to print out the timestamp changes. (Default: False)
 
