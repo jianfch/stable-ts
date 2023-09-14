@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple, Union, Callable
 from types import MethodType
 from tqdm import tqdm
 import importlib.metadata
+import re
 
 import whisper
 from whisper.audio import (
@@ -30,13 +31,11 @@ __all__ = ['modify_model', 'load_model']
 warnings.filterwarnings('ignore', module='whisper', message='.*Triton.*', category=UserWarning)
 
 
-_required_whisper_ver = list(
-    filter(lambda x: x.startswith('openai-whisper'), importlib.metadata.distribution('stable-ts').requires)
-)[0].split('==')[-1]
-_is_whisper_incompatible = (
-        whisper.__version__ != _required_whisper_ver or  # check version
-        importlib.metadata.distribution('openai-whisper').read_text('direct_url.json')  # check if installed from repo
-)
+_required_whisper_ver = re.findall(
+    r'=(\d+)',
+    next(filter(lambda x: x.startswith('openai-whisper'), importlib.metadata.distribution('stable-ts').requires))
+)[0]
+_is_repo_version = bool(importlib.metadata.distribution('openai-whisper').read_text('direct_url.json'))
 
 
 # modified version of whisper.transcribe.transcribe
@@ -62,6 +61,7 @@ def transcribe_stable(
         time_scale: float = None,
         demucs: bool = False,
         demucs_output: str = None,
+        demucs_options: dict = None,
         vad: bool = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
@@ -76,6 +76,7 @@ def transcribe_stable(
         only_ffmpeg: bool = False,
         max_instant_words: float = 0.5,
         progress_callback: Callable = None,
+        ignore_compatibility: bool = False,
         **decode_options) \
         -> WhisperResult:
     """
@@ -163,6 +164,10 @@ def transcribe_stable(
         Path to save the vocals isolated by Demucs as WAV file. Ignored if [demucs]=False.
         Demucs must be installed to use. Official repo: https://github.com/facebookresearch/demucs
 
+    demucs_options: dict
+        Args to use for Demucs.
+        See available parameters: https://github.com/facebookresearch/demucs/blob/main/demucs/apply.py#L132
+
     vad: bool
         Whether to use Silero VAD to generate timestamp suppression mask. (Default: False)
         Silero VAD requires PyTorch 1.12.0+. Official repo: https://github.com/snakers4/silero-vad
@@ -218,6 +223,8 @@ def transcribe_stable(
             total: float
                 total duration of audio in seconds
 
+    ignore_compatibility: bool
+        Whether to ignore warnings for compatibility issues with the detected Whisper version. (Default: False)
 
     decode_options: dict
         Keyword arguments to construct `DecodingOptions` instances
@@ -226,11 +233,22 @@ def transcribe_stable(
     -------
     An instance of WhisperResult.
     """
-    if _is_whisper_incompatible:
-        warnings.warn('The installed version of Whisper might be incompatible.\n'
-                      'To prevent errors and performance issues, reinstall correct version with: '
-                      f'"pip install --upgrade --no-deps --force-reinstall openai-whisper=={_required_whisper_ver}" '
-                      'or use transcribe_minimal().')
+    compatibility_warning = ''
+    if not ignore_compatibility:
+        if _required_whisper_ver != whisper.__version__:
+            compatibility_warning += (f'Version {_required_whisper_ver} is required '
+                                      f'but {whisper.__version__} is installed.\n')
+        if _is_repo_version:
+            compatibility_warning += ('The detected version appears to be installed from the repository '
+                                      'which can have compatibility issues '
+                                      'due to multiple commits sharing the same version number. '
+                                      f'It is recommended to install version {_required_whisper_ver} from PyPI.\n')
+        if compatibility_warning:
+            warnings.warn('The installed version of Whisper might be incompatible.\n'
+                          + compatibility_warning +
+                          'To prevent errors and performance issues, reinstall correct version with: '
+                          f'"pip install --upgrade --no-deps --force-reinstall openai-whisper=={_required_whisper_ver}"'
+                          '. Or use transcribe_minimal().')
     dtype = torch.float16 if decode_options.get("fp16", True) and not getattr(model, 'dq', False) else torch.float32
     if model.device == torch.device("cpu"):
         if torch.cuda.is_available():
@@ -253,11 +271,15 @@ def transcribe_stable(
     if isinstance(audio, (str, bytes)):
         if demucs:
             from .audio import demucs_audio
-            audio = demucs_audio(audio,
-                                 output_sr=curr_sr,
-                                 device=device,
-                                 verbose=verbose,
-                                 save_path=demucs_output)
+            demucs_kwargs = dict(
+                audio=audio,
+                output_sr=curr_sr,
+                device=device,
+                verbose=verbose,
+                save_path=demucs_output
+            )
+            demucs_kwargs.update(demucs_options or {})
+            audio = demucs_audio(**demucs_kwargs)
         else:
             audio = torch.from_numpy(load_audio(audio, sr=curr_sr, verbose=verbose, only_ffmpeg=only_ffmpeg))
     else:
@@ -266,12 +288,16 @@ def transcribe_stable(
         input_sr = decode_options.pop('input_sr', SAMPLE_RATE)
         if demucs:
             from .audio import demucs_audio
-            audio = demucs_audio(audio,
-                                 input_sr=input_sr,
-                                 output_sr=curr_sr,
-                                 device=device,
-                                 verbose=verbose,
-                                 save_path=demucs_output)
+            demucs_kwargs = dict(
+                audio=audio,
+                input_sr=input_sr,
+                output_sr=curr_sr,
+                device=device,
+                verbose=verbose,
+                save_path=demucs_output
+            )
+            demucs_kwargs.update(demucs_options or {})
+            audio = demucs_audio(**demucs_kwargs)
         elif input_sr != curr_sr:
             from torchaudio.functional import resample
             if isinstance(audio, np.ndarray):

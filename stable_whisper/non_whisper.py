@@ -30,6 +30,7 @@ def transcribe_any(
         demucs: bool = False,
         demucs_device: str = None,
         demucs_output: str = None,
+        demucs_options: dict = None,
         vad: bool = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
@@ -125,6 +126,10 @@ def transcribe_any(
     demucs_output: str
         Path to save the vocals isolated by Demucs as WAV file. Ignored if [demucs]=False.
         Demucs must be installed to use. Official repo: https://github.com/facebookresearch/demucs
+
+    demucs_options: dict
+        Args to use for Demucs.
+        See available parameters: https://github.com/facebookresearch/demucs/blob/main/demucs/apply.py#L132
 
     vad: bool
         Whether to use Silero VAD to generate timestamp suppression mask. (Default: False)
@@ -224,13 +229,17 @@ def transcribe_any(
         from .audio import demucs_audio
         if demucs_device is None:
             demucs_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        audio = demucs_audio(
-            audio,
+        demucs_kwargs = dict(
+            audio=audio,
             input_sr=curr_sr,
             model=demucs_model,
             save_path=demucs_output,
             device=demucs_device,
             verbose=verbose
+        )
+        demucs_kwargs.update(demucs_options or {})
+        audio = demucs_audio(
+            **demucs_kwargs
         )
         curr_sr = demucs_model.samplerate
         if demucs_output and audio_type == 'str':

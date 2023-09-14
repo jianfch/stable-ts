@@ -126,7 +126,8 @@ def demucs_audio(audio: (torch.Tensor, str),
                  device=None,
                  verbose: bool = True,
                  track_name: str = None,
-                 save_path: str = None) -> torch.Tensor:
+                 save_path: str = None,
+                 **demucs_options) -> torch.Tensor:
     """
     Load audio waveform and process to isolate vocals with Demucs
     """
@@ -161,19 +162,26 @@ def demucs_audio(audio: (torch.Tensor, str),
         if audio_dims < 3:
             audio = audio[None]
 
+    if 'mix' in demucs_options:
+        audio = demucs_options.pop('mix')
+
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
     vocals_idx = model.sources.index('vocals')
     if verbose:
         print(f'Isolating vocals from {track_name}')
-    vocals = apply_model(
-        model,
-        audio,
+    apply_kwarg = dict(
+        model=model,
+        mix=audio,
         device=device,
         split=True,
         overlap=.25,
-        progress=verbose is not None
+        progress=verbose is not None,
+    )
+    apply_kwarg.update(demucs_options)
+    vocals = apply_model(
+        **apply_kwarg
     )[0, vocals_idx].mean(0)
 
     if device != 'cpu':
