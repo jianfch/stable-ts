@@ -8,12 +8,13 @@ https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-
 * [Usage](#usage)
   * [Transcribe](#transcribe)
   * [Output](#output)
+  * [Alignment](#alignment)
+    * [Adjustments](#adjustments)
   * [Regrouping Words](#regrouping-words)
   * [Locating Words](#locating-words)
-  * [Boosting Performance](#boosting-performance)
+  * [Tips](#tips)
   * [Visualizing Suppression](#visualizing-suppression)
   * [Encode Comparison](#encode-comparison)
-  * [Tips](#tips)
   * [Use with any ASR](#any-asr)
 * [Quick 1.X → 2.X Guide](#quick-1x--2x-guide)
 
@@ -28,22 +29,40 @@ pip install -U git+https://github.com/jianfch/stable-ts.git
 ```
 
 ## Usage
-The following is a list of CLI usages each followed by a corresponding Python usage (if there is one). 
 
 ### Transcribe
-```commandline
-stable-ts audio.mp3 -o audio.srt
-```
+
 ```python
 import stable_whisper
 model = stable_whisper.load_model('base')
 result = model.transcribe('audio.mp3')
 result.to_srt_vtt('audio.srt')
 ```
+<details>
+<summary>CLI</summary>
+
+```commandline
+stable-ts audio.mp3 -o audio.srt
+```
+
+</details>
+
 Parameters: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L762-L787), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L82-L235),
-[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L696-L718)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L824-L849), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L75-L228),
+[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L674-L696)
+
+<details>
+<summary>faster-whisper</summary>
+
+Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper)
+```python
+model = stable_whisper.load_faster_whisper('base')
+result = model.transcribe('audio.mp3')
+```
+
+</details>
+
 ### Output
 Stable-ts supports various text output formats.
 ```python
@@ -62,19 +81,26 @@ They also support will both levels simultaneously except TSV.
 By default, `segment_level` and `word_level` are both `True` for all the formats that support both simultaneously.<br /><br />
 Examples in VTT.
 
-Default: `segment_level=True` + `word_level=True` or `--segment_level true` + `--word_level true` for CLI
+Default: `segment_level=True` + `word_level=True`
+<details>
+<summary>CLI</summary>
+
+`--segment_level true` + `--word_level true`
+
+</details>
+
 ```
 00:00:07.760 --> 00:00:09.900
 But<00:00:07.860> when<00:00:08.040> you<00:00:08.280> arrived<00:00:08.580> at<00:00:08.800> that<00:00:09.000> distant<00:00:09.400> world,
 ```
 
-`segment_level=True`  + `word_level=False` (Note: `segment_level=True` is default)
+`segment_level=True`  + `word_level=False`
 ```
 00:00:07.760 --> 00:00:09.900
 But when you arrived at that distant world,
 ```
 
-`segment_level=False` + `word_level=True` (Note: `word_level=True` is default)
+`segment_level=False` + `word_level=True`
 ```
 00:00:07.760 --> 00:00:07.860
 But
@@ -94,22 +120,56 @@ arrived
 #### JSON
 The result can also be saved as a JSON file to preserve all the data for future reprocessing. 
 This is useful for testing different sets of postprocessing arguments without the need to redo inference.
+
+```python
+result.save_as_json('audio.json')
+```
+<details>
+<summary>CLI</summary>
+
 ```commandline
 stable-ts audio.mp3 -o audio.json
 ```
-```python
-# Save result as JSON:
-result.save_as_json('audio.json')
-```
+
+</details>
+
 Processing JSON file of the results into SRT.
-```commandline
-stable-ts audio.json -o audio.srt
-```
 ```python
-# Load the result:
 result = stable_whisper.WhisperResult('audio.json')
 result.to_srt_vtt('audio.srt')
 ```
+<details>
+<summary>CLI</summary>
+
+```commandline
+stable-ts audio.json -o audio.srt
+```
+
+</details>
+
+### Alignment
+Audio can be aligned/synced with plain text on word-level.
+```python
+text = 'Machines thinking, breeding. You were to bear us a new, promised land.'
+result = model.align('audio.mp3', text)
+```
+When the text is correct but the timestamps need more work, 
+`align()` is a faster alternative for testing various settings/models.
+```python
+new_result = model.align('audio.mp3', result)
+```
+#### Adjustments
+Timestamps are adjusted after the model predicts them. 
+When `suppress_silence=True` (default), `transcribe()`/`transcribe_minimal()`/`align()` adjust based on silence/non-speech. 
+The timestamps can be further adjusted base on another result with `adjust_by_result()`, 
+which acts as a logical AND operation for the timestamps of both results, further reducing duration of each word.
+Note: both results are required to have word timestamps and matching words.
+```python
+# the adjustments are in-place for `result`
+result.adjust_by_result(new_result)
+```
+Parameters:
+[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L657-L670)
 
 ### Regrouping Words
 Stable-ts has a preset for regrouping words into different segments with more natural boundaries. 
@@ -120,7 +180,7 @@ This preset is just a predefined combination of those methods.
 https://user-images.githubusercontent.com/28970749/226504985-3d087539-cfa4-46d1-8eb5-7083f235b429.mp4
 
 ```python
-# The following all functionally equivalent:
+# The following results are all functionally equivalent:
 result0 = model.transcribe('audio.mp3', regroup=True) # regroup is True by default
 result1 = model.transcribe('audio.mp3', regroup=False)
 (
@@ -138,14 +198,14 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L940-L988)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L7137-L749)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L770-L801)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L852-L871)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L761-L779)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L813-L831)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L838-L840)
-- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L890-L907)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1019-L1067)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L816-L828)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L869-L880)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L931-L950)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L840-L858)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L892-L910)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L917-L919)
+- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L969-L986)
 
 ### Locating Words
 You can locate words with regular expression.
@@ -168,19 +228,17 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1033-L1049)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1112-L1128)
 
-### Boosting Performance
-* One of the methods that Stable-ts uses to increase timestamp accuracy 
-and reduce hallucinations is silence suppression, enabled with `suppress_silence=True` (default).
-This method essentially suppresses the timestamps where the audio is silent or contain no speech
-by suppressing the corresponding tokens during inference and also readjusting the timestamps after inference. 
-To figure out which parts of the audio track are silent or contain no speech, Stable-ts supports non-VAD and VAD methods.
-The default is `vad=False`. The VAD option uses [Silero VAD](https://github.com/snakers4/silero-vad) (requires PyTorch 1.12.0+). 
-See [Visualizing Suppression](#visualizing-suppression).
-* The other method, enabled with `demucs=True`, uses [Demucs](https://github.com/facebookresearch/demucs)
-to isolate speech from the rest of the audio track. Generally best used in conjunction with silence suppression.
-Although Demucs is for music, it is also effective at isolating speech even if the track contains no music.
+### Tips
+- do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
+- use `vad=True` for more accurate non-speech detection
+- use `demucs=True` to isolate vocals with [Demucs](https://github.com/facebookresearch/demucs); it is also effective at isolating vocals even if there is no music
+- use `demucs=True` and `vad=True` for music
+- `--dq true` or `dq=True` for `stable_whisper.load_model` to enable dynamic quantization for inference on CPU
+- use `encode_video_comparison()` to encode multiple transcripts into one video for synced comparison; see [Encode Comparison](#encode-comparison) 
+- use `visualize_suppression()` to visualize the differences between non-VAD and VAD options; see [Visualizing Suppression](#visualizing-suppression)
+- if the non-speech/silence seems to be detected but the starting timestamps do not reflect that, then try `min_word_dur=0`
 
 ### Visualizing Suppression
 You can visualize which parts of the audio will likely be suppressed (i.e. marked as silent). 
@@ -204,7 +262,7 @@ stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_thr
 Parameters: 
 [visualize_suppression()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/stabilization.py#L344-L373)
 
-### Encode Comparison 
+### Encode Comparison
 You can encode videos similar to the ones in the doc for comparing transcriptions of the same audio. 
 ```python
 stable_whisper.encode_video_comparison(
@@ -215,14 +273,7 @@ stable_whisper.encode_video_comparison(
 )
 ```
 Parameters: 
-[encode_video_comparison()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/video_output.py#L10-L27)
-
-### Tips
-- for reliable segment timestamps, do not disable word timestamps with `word_timestamps=False` because word timestamps are also used to correct segment timestamps
-- use `demucs=True` and `vad=True` for music but also works for non-music
-- if audio is not transcribing properly compared to whisper, try `mel_first=True` at the cost of more memory usage for long audio tracks
-- enable dynamic quantization to decrease memory usage for inference on CPU (also increases inference speed for large model);
-`--dq true`/`dq=True` for `stable_whisper.load_model`
+[encode_video_comparison()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/video_output.py#L29-L91)
 
 #### Multiple Files with CLI 
 Transcribe multiple audio files then process the results directly into SRT files.

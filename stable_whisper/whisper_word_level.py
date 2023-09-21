@@ -4,8 +4,6 @@ import numpy as np
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union, Callable
 from types import MethodType
 from tqdm import tqdm
-import importlib.metadata
-import re
 
 import whisper
 from whisper.audio import (
@@ -22,20 +20,15 @@ from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable
 from .stabilization import get_vad_silence_func, wav2mask, mask2timing, timing2mask
 from .non_whisper import transcribe_any
+from .utils import warn_compatibility_issues
+from .alignment import align
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
 
-__all__ = ['modify_model', 'load_model']
+__all__ = ['modify_model', 'load_model', 'load_faster_whisper']
 
 warnings.filterwarnings('ignore', module='whisper', message='.*Triton.*', category=UserWarning)
-
-
-_required_whisper_ver = re.findall(
-    r'=(\d+)',
-    next(filter(lambda x: x.startswith('openai-whisper'), importlib.metadata.distribution('stable-ts').requires))
-)[0]
-_is_repo_version = bool(importlib.metadata.distribution('openai-whisper').read_text('direct_url.json'))
 
 
 # modified version of whisper.transcribe.transcribe
@@ -90,7 +83,7 @@ def transcribe_stable(
     audio: Union[str, np.ndarray, torch.Tensor, bytes]
         The path/URL to the audio file, the audio waveform, or bytes of audio file.
 
-    verbose: bool
+    verbose: Optional[bool]
         Whether to display the text being decoded to the console. If True, displays all the details,
         If False, displays progressbar. If None, does not display anything (Default: False)
 
@@ -233,22 +226,7 @@ def transcribe_stable(
     -------
     An instance of WhisperResult.
     """
-    compatibility_warning = ''
-    if not ignore_compatibility:
-        if _required_whisper_ver != whisper.__version__:
-            compatibility_warning += (f'Version {_required_whisper_ver} is required '
-                                      f'but {whisper.__version__} is installed.\n')
-        if _is_repo_version:
-            compatibility_warning += ('The detected version appears to be installed from the repository '
-                                      'which can have compatibility issues '
-                                      'due to multiple commits sharing the same version number. '
-                                      f'It is recommended to install version {_required_whisper_ver} from PyPI.\n')
-        if compatibility_warning:
-            warnings.warn('The installed version of Whisper might be incompatible.\n'
-                          + compatibility_warning +
-                          'To prevent errors and performance issues, reinstall correct version with: '
-                          f'"pip install --upgrade --no-deps --force-reinstall openai-whisper=={_required_whisper_ver}"'
-                          '. Or use transcribe_minimal().')
+    warn_compatibility_issues(ignore_compatibility, 'Or use transcribe_minimal().')
     dtype = torch.float16 if decode_options.get("fp16", True) and not getattr(model, 'dq', False) else torch.float32
     if model.device == torch.device("cpu"):
         if torch.cuda.is_available():
@@ -696,7 +674,7 @@ def transcribe_minimal(
         model: "Whisper",
         audio: Union[str, np.ndarray, torch.Tensor, bytes],
         *,
-        verbose: bool = False,
+        verbose: Optional[bool] = False,
         word_timestamps: bool = True,
         regroup: Union[bool, str] = True,
         suppress_silence: bool = True,
@@ -727,7 +705,7 @@ def transcribe_minimal(
         inference_func=whisper.transcribe,
         audio=audio,
         inference_kwargs=inference_kwargs,
-        verbose=kwargs.get('verbose'),
+        verbose=verbose,
         regroup=regroup,
         suppress_silence=suppress_silence, 
         suppress_word_ts=suppress_word_ts,
@@ -745,6 +723,89 @@ def transcribe_minimal(
     )
 
 
+def load_faster_whisper(model_size_or_path: str, **model_init_options):
+    from faster_whisper import WhisperModel
+    faster_model = WhisperModel(model_size_or_path, **model_init_options)
+
+    def _inner_transcribe(model, audio, verbose, **faster_transcribe_options):
+        if isinstance(audio, bytes):
+            import io
+            audio = io.BytesIO(audio)
+        segments, info = model.transcribe(audio, **faster_transcribe_options)
+        language = LANGUAGES.get(info.language, info.language)
+        if verbose is not None:
+            print(f'Detected Language: {language}')
+            print(f'Transcribing with faster-whisper ({model_size_or_path})...\r', end='')
+
+        final_segments = []
+
+        for segment in segments:
+            segment = segment._asdict()
+            if (words := segment.get('words')) is not None:
+                segment['words'] = [w._asdict() for w in words]
+            else:
+                del segment['words']
+            final_segments.append(segment)
+
+        if verbose is not None:
+            print(f'Completed transcription with faster-whisper ({model_size_or_path}).')
+
+        return dict(language=language, segments=final_segments)
+
+    def faster_transcribe(
+            model: WhisperModel,
+            audio: Union[str, bytes, np.ndarray],
+            verbose: Optional[bool] = False,
+            regroup: Union[bool, str] = True,
+            suppress_silence: bool = True,
+            suppress_word_ts: bool = True,
+            q_levels: int = 20,
+            k_size: int = 5,
+            demucs: bool = False,
+            demucs_output: str = None,
+            vad: bool = False,
+            vad_threshold: float = 0.35,
+            vad_onnx: bool = False,
+            min_word_dur: float = 0.1,
+            only_voice_freq: bool = False,
+            only_ffmpeg: bool = False,
+            **faster_whisper_options
+    ) -> WhisperResult:
+        """
+
+        Transcribe audio using faster-whisper (https://github.com/guillaumekln/faster-whisper).
+
+        """
+        faster_whisper_options['model'] = model
+        faster_whisper_options['audio'] = audio
+        faster_whisper_options['verbose'] = verbose
+
+        return transcribe_any(
+            inference_func=_inner_transcribe,
+            audio=audio,
+            inference_kwargs=faster_whisper_options,
+            verbose=verbose,
+            regroup=regroup,
+            suppress_silence=suppress_silence,
+            suppress_word_ts=suppress_word_ts,
+            q_levels=q_levels,
+            k_size=k_size,
+            demucs=demucs,
+            demucs_output=demucs_output,
+            vad=vad,
+            vad_threshold=vad_threshold,
+            vad_onnx=vad_onnx,
+            min_word_dur=min_word_dur,
+            only_voice_freq=only_voice_freq,
+            only_ffmpeg=only_ffmpeg,
+
+        )
+
+    faster_model.transcribe_stable = MethodType(faster_transcribe, faster_model)
+
+    return faster_model
+
+
 def modify_model(model: "Whisper"):
     """
     Modifies model instance by:
@@ -753,6 +814,7 @@ def modify_model(model: "Whisper"):
     """
     model.transcribe = MethodType(transcribe_stable, model)
     model.transcribe_minimal = MethodType(transcribe_minimal, model)
+    model.align = MethodType(align, model)
 
 
 # modified version of whisper.load_model

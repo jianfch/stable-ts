@@ -297,11 +297,11 @@ def get_vad_silence_func(
             return
         ori_t = torch.get_num_threads()
         if verbose is not None:
-            print(f'Predicting silences(s) with VAD...\r', end='')
+            print('Predicting silences(s) with VAD...\r', end='')
         torch.set_num_threads(1)  # vad was optimized for single performance
         speech_ts = get_speech_timestamps(audio, speech_threshold)
         if verbose is not None:
-            print(f'Predicted silence(s) with VAD       ')
+            print('Predicted silence(s) with VAD.       ')
         torch.set_num_threads(ori_t)
         if len(speech_ts) == 0:  # all silent
             return np.array([0.0]), np.array([total_duration])

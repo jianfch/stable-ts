@@ -7,7 +7,7 @@ __all__ = ['encode_video_comparison']
 
 
 def encode_video_comparison(
-        audiofile,
+        audiofile: str,
         subtitle_files: List[str],
         output_videopath: str = None,
         *,
@@ -26,9 +26,73 @@ def encode_video_comparison(
         only_cmd: bool = False,
         verbose=True
 ) -> (str, None):
+    """
+
+    Encode multiple subtitle files into one video. The subtitles are vertically stacked.
+
+    Parameters
+    ----------
+    audiofile: str
+        path of audio file
+
+    subtitle_files: List[str]
+        list of paths for subtitle file
+
+    output_videopath: str
+        output video path
+
+    labels: List[str]
+        list of labels for [subtitle_files]
+        the path are the default labeels
+
+    height: int
+        height for each subtitle section
+
+    width: int
+        width for each subtitle section
+
+    color: str
+        background color of the video
+
+    fontsize: int
+        font size for subtitles
+
+    border_color: str
+        border color for separating the sections of subtitle
+
+    label_color: str
+        color of labels
+
+    label_size: int
+        font size of labels
+
+    fps: int
+        frame-rate of the video
+
+    video_codec: str
+        video codec opf the video
+
+    audio_codec: str
+        audio codec opf the video
+
+    overwrite: bool
+        whether to overwrite existing video files with the same path as the output video
+
+    only_cmd: bool
+        whether to skip encoding and only return the full command generate from the specified options
+
+    verbose: bool
+        whether to display ffmpeg processing info
+
+    Returns
+    -------
+        -string of command if [only_cmd]=True
+
+    """
     vc = '' if video_codec is None else f' -c:v {video_codec}'
     ac = '' if audio_codec is None else f' -c:a {audio_codec}'
     background = f'-f lavfi -i color=size={width}x{height}:rate={fps}:color={color}'
+    border = f'-f lavfi -i color=size={width}x3:rate={fps}:color={border_color}'
     audio = f'-i "{audiofile}"'
     cfilters0 = []
     assert labels is None or len(labels) == len(subtitle_files)
@@ -38,15 +102,20 @@ def encode_video_comparison(
         fil = f"[0]drawtext=text='{label}':fontcolor={label_color}:fontsize={label_size}:x=10:y=10[a{i}]," \
               f"[a{i}]subtitles='{sub}':force_style='Fontsize={fontsize}'[b{i}]"
         cfilters0.append(fil)
-    cfilters0.append(f'color={border_color}:{width}x3[c]')
-    cfilters1 = ('[c]'.join(
-        f'[b{i}]' for i in range(len(cfilters0) - 1)) + f'vstack=inputs={(len(cfilters0) - 1) * 2 - 1}')
+    cfilters1 = (
+            '[1]'.join(
+                f'[b{i}]' for i in range(len(cfilters0))
+            )
+            +
+            f'vstack=inputs={len(cfilters0) * 2 - 1}'
+    )
     final_fil = ','.join(cfilters0) + f';{cfilters1}'
     ow = '-y' if overwrite else '-n'
     if output_videopath is None:
         name = os.path.split(os.path.splitext(audiofile)[0])[1]
         output_videopath = f'{name}_sub_comparison.mp4'
-    cmd = f'ffmpeg {ow} {background} {audio} -filter_complex "{final_fil}"{vc}{ac} -shortest "{output_videopath}"'
+    cmd = (f'ffmpeg {ow} {background} {border} {audio} '
+           f'-filter_complex "{final_fil}"{vc}{ac} -shortest "{output_videopath}"')
     if only_cmd:
         return cmd
     if verbose:

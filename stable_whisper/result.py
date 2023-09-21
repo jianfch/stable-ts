@@ -1,12 +1,13 @@
 import warnings
 import re
+import torch
 import numpy as np
 from typing import Union, List, Tuple
 from dataclasses import dataclass
 from copy import deepcopy
 from itertools import chain
 
-from .stabilization import suppress_silence
+from .stabilization import suppress_silence, get_vad_silence_func, mask2timing, wav2mask
 from .text_output import *
 
 
@@ -614,6 +615,81 @@ class WhisperResult:
 
         return self
 
+    def adjust_by_silence(
+            self,
+            audio: Union[torch.Tensor, np.ndarray, str, bytes],
+            vad: bool = False,
+            *,
+            verbose: (bool, None) = False,
+            sample_rate: int = None,
+            vad_onnx: bool = False,
+            vad_threshold: float = 0.35,
+            q_levels: int = 20,
+            k_size: int = 5,
+            min_word_dur: float = 0.1,
+            word_level: bool = True
+
+    ):
+        """
+
+        Wrapper for suppress_silence() with auto silence detection.
+        Note: This is already performed by transcribe()/transcribe_minimal()/align() if [suppress_silence]=True
+
+        """
+        if vad:
+            silent_timings = get_vad_silence_func(
+                onnx=vad_onnx,
+                verbose=verbose
+            )(audio, speech_threshold=vad_threshold, sr=sample_rate)
+        else:
+            silent_timings = mask2timing(
+                wav2mask(audio, q_levels=q_levels, k_size=k_size, sr=sample_rate)
+            )
+
+        return self.suppress_silence(*silent_timings, min_word_dur=min_word_dur, word_level=word_level)
+
+    def adjust_by_result(
+            self,
+            other_result: "WhisperResult",
+            min_word_dur: float = 0.1,
+            verbose: bool = False
+    ):
+        """
+
+        Minimize the duration of words using timestamps of another result.
+
+        Parameters
+        ----------
+        other_result: "WhisperResult"
+            Timing data of the same words in a WhisperResult instance.
+        min_word_dur: float
+            Prevent changes to timestamps if the resultant word duration is less than [min_word_dur]. (Default: 0.1)
+        verbose: bool
+            Whether to print out the timestamp changes. (Default: False)
+
+        """
+        if not (self.has_words and other_result.has_words):
+            raise NotImplementedError('This operation can only be performed on results with word timestamps')
+        assert [w.word for w in self.all_words()] == [w.word for w in other_result.all_words()], \
+            'The words in [other_result] do not match the current words.'
+        for word, other_word in zip(self.all_words(), other_result.all_words()):
+            if word.end > other_word.start:
+                new_start = max(word.start, other_word.start)
+                new_end = min(word.end, other_word.end)
+                if new_end - new_start >= min_word_dur:
+                    line = ''
+                    if word.start != new_start:
+                        if verbose:
+                            line += f'[Start:{word.start:.3f}->{new_start:.3f}] '
+                        word.start = new_start
+                    if word.end != new_end:
+                        if verbose:
+                            line += f'[End:{word.end:.3f}->{new_end:.3f}]  '
+                        word.end = new_end
+                    if line:
+                        print(f'{line}"{word.word}"')
+        self.update_all_segs_with_words()
+
     def reassign_ids(self):
         for i, s in enumerate(self.segments):
             s.id = i
@@ -666,6 +742,9 @@ class WhisperResult:
 
     def all_words(self):
         return list(chain.from_iterable(s.words for s in self.segments))
+
+    def all_tokens(self):
+        return list(chain.from_iterable(s.tokens for s in self.all_words()))
 
     def to_dict(self):
         return dict(text=self.text,
@@ -986,10 +1065,10 @@ class WhisperResult:
             show the all methods and arguments parsed from [regroup_algo] without running the methods
 
         """
-        if regroup_algo is None or regroup_algo is True:
-            regroup_algo = 'da'
         if regroup_algo is False:
             return self
+        if regroup_algo is None or regroup_algo is True:
+            regroup_algo = 'da'
 
         methods = dict(
             sg=self.split_by_gap,

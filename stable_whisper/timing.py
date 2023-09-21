@@ -157,7 +157,7 @@ def split_word_tokens(segments: List[dict],
     words = []
     word_tokens = []
     for i, s in enumerate(segments):
-        temp_word_tokens = [t for t in s['tokens'] if t < tokenizer.eot]
+        temp_word_tokens = [t for t in s['tokens'] if not isinstance(t, int) or t < tokenizer.eot]
         curr_words, curr_word_tokens = (
             _split_tokens(temp_word_tokens, tokenizer)
             if split_callback is None else

@@ -4,11 +4,10 @@ import io
 import torch
 import torchaudio
 import numpy as np
-from typing import Union, Callable
+from typing import Union, Callable, Optional
 
 from .audio import load_audio
 from .result import WhisperResult
-from .stabilization import get_vad_silence_func, wav2mask, mask2timing
 
 AUDIO_TYPES = ('str', 'byte', 'torch', 'numpy')
 
@@ -21,7 +20,7 @@ def transcribe_any(
         model_sr: int = None,
         inference_kwargs: dict = None,
         temp_file: str = None,
-        verbose: bool = False,
+        verbose: Optional[bool] = False,
         regroup: Union[bool, str] = True,
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
@@ -91,7 +90,7 @@ def transcribe_any(
     temp_file: str
         Temporary path for the preprocessed audio when [audio_type]='str'. (Default: './_temp_stable-ts_audio_.wav')
 
-    verbose: bool
+    verbose: Optional[bool]
         Whether to display the text being decoded to the console. If True, displays all the details,
         If False, displays progressbar. If None, does not display anything (Default: False)
 
@@ -327,16 +326,13 @@ def transcribe_any(
         if not isinstance(result, WhisperResult):
             result = WhisperResult(result, force_order=force_order)
         if suppress_silence:
-            if vad:
-                silent_timings = get_vad_silence_func(
-                    onnx=vad_onnx,
-                    verbose=None
-                )(audio, speech_threshold=vad_threshold, sr=curr_sr)
-            else:
-                silent_timings = mask2timing(
-                    wav2mask(audio, q_levels=q_levels, k_size=k_size, sr=curr_sr)
-                )
-            result.suppress_silence(*silent_timings, min_word_dur=min_word_dur, word_level=suppress_word_ts)
+            result.adjust_by_silence(
+                audio, vad,
+                vad_onnx=vad_onnx, vad_threshold=vad_threshold,
+                q_levels=q_levels, k_size=k_size,
+                sample_rate=curr_sr, min_word_dur=min_word_dur,
+                word_level=suppress_word_ts, verbose=True
+            )
 
         if result.has_words and regroup:
             result.regroup(regroup)
