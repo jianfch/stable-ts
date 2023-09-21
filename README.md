@@ -60,6 +60,8 @@ Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper)
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
 ```
+Parameters: 
+[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L757-L772), 
 
 </details>
 
