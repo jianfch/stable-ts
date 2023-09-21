@@ -58,7 +58,7 @@ Parameters:
 Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper)
 ```python
 model = stable_whisper.load_faster_whisper('base')
-result = model.transcribe('audio.mp3')
+result = model.transcribe_stable('audio.mp3')
 ```
 
 </details>
