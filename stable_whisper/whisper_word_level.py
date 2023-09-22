@@ -798,7 +798,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             min_word_dur=min_word_dur,
             only_voice_freq=only_voice_freq,
             only_ffmpeg=only_ffmpeg,
-
+            force_order=True
         )
 
     faster_model.transcribe_stable = MethodType(faster_transcribe, faster_model)

@@ -55,7 +55,7 @@ Parameters:
 <details>
 <summary>faster-whisper</summary>
 
-Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper)
+Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper):
 ```python
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
@@ -160,6 +160,9 @@ When the text is correct but the timestamps need more work,
 ```python
 new_result = model.align('audio.mp3', result)
 ```
+Parameters:
+[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L27-L71)
+
 #### Adjustments
 Timestamps are adjusted after the model predicts them. 
 When `suppress_silence=True` (default), `transcribe()`/`transcribe_minimal()`/`align()` adjust based on silence/non-speech. 

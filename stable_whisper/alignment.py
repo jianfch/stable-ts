@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Union, List, Callable
 
+import re
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -44,8 +45,35 @@ def align(
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
         progress_callback: Callable = None,
         ignore_compatibility: bool = False,
-        remove_instant_words: bool = False
+        remove_instant_words: bool = False,
+        token_step: int = 100,
 ) -> WhisperResult:
+    """
+    Align plain text with audio at word-level.
+
+    Parameters
+    ----------
+    text: Union[str, List[int], WhisperResult]
+        string of plain-text, list of tokens, or instance of WhisperResult containing words/text
+
+    remove_instant_words: bool
+        Whether to truncate any words with zero duration. (Default: False)
+
+    token_step: int
+        Max number of tokens to align each pass. (Default: 100)
+        If [token_step] is less than 1, than [token_step] will be set to maximum value.
+        Use higher values to reduce chance of misalignment.
+        Note: maximum value is 442 (model.dims.n_text_ctx - 6).
+
+    Returns
+    -------
+    An instance of WhisperResult.
+    """
+    max_token_step = model.dims.n_text_ctx - 6
+    if token_step < 1:
+        token_step = max_token_step
+    elif token_step > max_token_step:
+        raise ValueError(f'The max value for [token_step] is {max_token_step} but got {token_step}.')
 
     warn_compatibility_issues(ignore_compatibility)
 
@@ -53,8 +81,10 @@ def align(
         if language is None:
             language = text.language
         text = text.all_tokens()
-    elif isinstance(text, str) and not text.startswith(' '):
-        text = ' ' + text
+    elif isinstance(text, str):
+        text = re.sub(r'\s', ' ', text)
+        if not text.startswith(' '):
+            text = ' ' + text
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task='transcribe')
     tokens = tokenizer.encode(text) if isinstance(text, str) else text
     tokens = [t for t in tokens if t < tokenizer.eot]
@@ -79,10 +109,20 @@ def align(
     seek_sample = 0
     total_samples = audio.shape[-1]
     total_tokens = sum(len(wt) for wt in word_tokens)
-
-    word_intervals = 30
     finished_tokens = 0
 
+    def get_curr_words():
+        nonlocal words, word_tokens
+        curr_tk_count = 0
+        w, wt = [], []
+        for _ in range(len(words)):
+            tk_count = len(word_tokens[0])
+            if curr_tk_count + tk_count > token_step and w:
+                break
+            w.append(words.pop(0))
+            wt.append(word_tokens.pop(0))
+            curr_tk_count += tk_count
+        return w, wt
     result = []
 
     with tqdm(total=total_tokens, unit='token', disable=verbose is not False) as tqdm_pbar:
@@ -96,10 +136,7 @@ def align(
                 progress_callback(seek=finished_tokens, total=total_tokens)
 
         while words and seek_sample < total_samples:
-            curr_words = words[:word_intervals]
-            curr_word_tokens = word_tokens[:word_intervals]
-            words = words[word_intervals:]
-            word_tokens = word_tokens[word_intervals:]
+            curr_words, curr_word_tokens = get_curr_words()
 
             seek_sample_end = seek_sample + N_SAMPLES
             audio_segment = audio[seek_sample:seek_sample_end]
