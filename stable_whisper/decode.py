@@ -33,7 +33,6 @@ class DecodingTaskStable(DecodingTask):
 
     # modified version of whisper.DecodingTask._main_loop
     def _main_loop(self, audio_features: torch.Tensor, tokens: torch.Tensor):
-        assert audio_features.shape[0] == tokens.shape[0]
         n_batch = tokens.shape[0]
         sum_logprobs: torch.Tensor = torch.zeros(n_batch, device=audio_features.device)
         no_speech_probs = [np.nan] * n_batch

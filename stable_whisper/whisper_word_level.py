@@ -603,9 +603,6 @@ def transcribe_stable(
                 fast_forward()
                 continue
 
-            if not condition_on_previous_text or result.temperature > 0.5:
-                # do not feed the prompt tokens if a high temperature was used
-                prompt_reset_since = len(all_tokens)
 
             if segment_silence_timing is not None:
                 for seg_i, segment in enumerate(current_segments):
@@ -645,6 +642,11 @@ def transcribe_stable(
             )
             if not single_timestamp_ending:
                 segment_samples = num_samples
+
+            if not condition_on_previous_text or result.temperature > 0.5:
+                # do not feed the prompt tokens if a high temperature was used
+                prompt_reset_since = len(all_tokens)
+
             fast_forward()
 
         # final update

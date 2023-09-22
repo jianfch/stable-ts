@@ -1,13 +1,13 @@
 import warnings
-import re
 import importlib.metadata
 
 import whisper
 
-_required_whisper_ver = re.findall(
-    r'=(\d+)',
-    next(filter(lambda x: x.startswith('openai-whisper'), importlib.metadata.distribution('stable-ts').requires))
-)[0]
+_COMPATIBLE_WHISPER_VERSIONS = (
+    '20230314',
+    '20230918'
+)
+_required_whisper_ver = _COMPATIBLE_WHISPER_VERSIONS[-1]
 _is_whisper_repo_version = bool(importlib.metadata.distribution('openai-whisper').read_text('direct_url.json'))
 
 
@@ -17,9 +17,9 @@ def warn_compatibility_issues(
 ):
     compatibility_warning = ''
     if not ignore:
-        if _required_whisper_ver != whisper.__version__:
-            compatibility_warning += (f'Version {_required_whisper_ver} is required '
-                                      f'but {whisper.__version__} is installed.\n')
+        if whisper.__version__ not in _COMPATIBLE_WHISPER_VERSIONS:
+            compatibility_warning += (f'Whisper {whisper.__version__} is installed.'
+                                      f'Versions confirm to be compatible: {", ".join(_COMPATIBLE_WHISPER_VERSIONS)}\n')
         if _is_whisper_repo_version:
             compatibility_warning += ('The detected version appears to be installed from the repository '
                                       'which can have compatibility issues '

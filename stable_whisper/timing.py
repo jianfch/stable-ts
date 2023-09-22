@@ -71,7 +71,7 @@ def find_alignment_stable(
         hook.remove()
 
     # heads * tokens * frames
-    weights = torch.cat([QKs[l][:, h] for l, h in model.alignment_heads.indices().T], dim=0)
+    weights = torch.cat([QKs[_l][:, _h] for _l, _h in model.alignment_heads.indices().T], dim=0)
     weights = weights[:, :, : round(num_samples / N_SAMPLES_PER_TOKEN)]
     weights = (weights * qk_scale).softmax(dim=-1)
     std, mean = torch.std_mean(weights, dim=-2, keepdim=True, unbiased=False)
