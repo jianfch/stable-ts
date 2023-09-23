@@ -603,7 +603,6 @@ def transcribe_stable(
                 fast_forward()
                 continue
 
-
             if segment_silence_timing is not None:
                 for seg_i, segment in enumerate(current_segments):
                     current_segments[seg_i] = (
@@ -771,6 +770,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             min_word_dur: float = 0.1,
             only_voice_freq: bool = False,
             only_ffmpeg: bool = False,
+            check_sorted: bool = True,
             **faster_whisper_options
     ) -> WhisperResult:
         """
@@ -800,7 +800,8 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             min_word_dur=min_word_dur,
             only_voice_freq=only_voice_freq,
             only_ffmpeg=only_ffmpeg,
-            force_order=True
+            force_order=True,
+            check_sorted=check_sorted
         )
 
     faster_model.transcribe_stable = MethodType(faster_transcribe, faster_model)

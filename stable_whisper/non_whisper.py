@@ -36,8 +36,9 @@ def transcribe_any(
         min_word_dur: float = 0.1,
         only_voice_freq: bool = False,
         only_ffmpeg: bool = False,
-        force_order: bool = False) \
-        -> WhisperResult:
+        force_order: bool = False,
+        check_sorted: bool = True
+) -> WhisperResult:
     """
     Transcribe an audio file using any ASR system.
 
@@ -153,6 +154,9 @@ def transcribe_any(
     force_order: bool
         Whether to use adjacent timestamps if to replace timestamps that are out of order. (Default: False)
         Note: Use only if the words/segments returned by [inference_func] are order.
+
+    check_sorted: bool
+        Whether to raise exception if the timestamps are not in ascending order. (Default: True)
 
     Returns
     -------
@@ -324,7 +328,7 @@ def transcribe_any(
     try:
         result = inference_func(**inference_kwargs)
         if not isinstance(result, WhisperResult):
-            result = WhisperResult(result, force_order=force_order)
+            result = WhisperResult(result, force_order=force_order, check_sorted=check_sorted)
         if suppress_silence:
             result.adjust_by_silence(
                 audio, vad,
