@@ -64,6 +64,10 @@ class WordTiming:
     def duration(self):
         return self.end - self.start
 
+    def round_all_timestamps(self):
+        self.start = round(self.start, 3)
+        self.end = round(self.end, 3)
+
     def offset_time(self, offset_seconds: float):
         self.start = self.start + offset_seconds
         self.end = self.end + offset_seconds
@@ -153,6 +157,7 @@ class Segment:
                 [WordTiming(**word) if isinstance(word, dict) else word for word in self.words]
         if self.ori_has_words is None:
             self.ori_has_words = self.has_words
+        self.round_all_timestamps()
 
     def __add__(self, other: 'Segment'):
         assert self.start <= other.start or self.end <= other.end
@@ -180,6 +185,13 @@ class Segment:
         if self.has_words:
             for w in self.words:
                 getattr(w, operation)(*args, **kwargs)
+
+    def round_all_timestamps(self):
+        self.start = round(self.start, 3)
+        self.end = round(self.end, 3)
+        if self.has_words:
+            for word in self.words:
+                word.round_all_timestamps()
 
     def offset_time(self, offset_seconds: float):
         self.start = self.start + offset_seconds
@@ -505,28 +517,25 @@ class WhisperResult:
 
     def force_order(self):
         prev_ts = 0
-        max_seg_idx = len(self.segments) - 1
-        for seg_idx, seg in enumerate(self.segments):
-            next_seg = self.segments[seg_idx+1] if seg_idx != max_seg_idx else None
-            if self.has_words:
-                max_word_idx = len(seg.words) - 1
-                for word_idx, word in enumerate(seg.words):
-                    next_word = seg.words[word_idx+1] if word_idx != max_word_idx else (next_seg and next_seg.words[0])
-                    if word.start < prev_ts:
-                        word.start = prev_ts
-                    if word.start > word.end:
-                        if next_word is None or word.start != prev_ts:
-                            word.start = prev_ts
-                        else:
-                            word.end = next_word.start
-                    prev_ts = word.end
+        timestamps = [word for seg in self.segments for word in seg.words] if self.has_words else self.segments
+        for i, ts in enumerate(timestamps, 1):
+            if ts.start < prev_ts:
+                ts.start = prev_ts
+            if ts.start > ts.end:
+                if ts.start != prev_ts:
+                    ts.start = prev_ts
+                else:
+                    ts.end = ts.start if i == len(timestamps) else timestamps[i+1].start
+            prev_ts = ts.end
+        if self.has_words:
+            self.update_all_segs_with_words()
 
     def raise_for_unsorted(self):
         parts = self.all_words() if self.has_words else self.segments
         timestamps = np.array(list(chain.from_iterable((part.start, part.end) for part in parts)))
         if len(timestamps) < 2:
             return
-        if ((timestamps[1:] - timestamps[:-1]) < 0).any():
+        if (timestamps[:-1] > timestamps[1:]).any():
             raise NotImplementedError(f'Timestamps are not in ascending order. '
                                       f'For transcribe_any() or data not produced by Stable-ts, '
                                       f'sort segments/words by timestamps. '

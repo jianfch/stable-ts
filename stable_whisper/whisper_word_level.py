@@ -756,6 +756,8 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
     def faster_transcribe(
             model: WhisperModel,
             audio: Union[str, bytes, np.ndarray],
+            *,
+            word_timestamps: bool = True,
             verbose: Optional[bool] = False,
             regroup: Union[bool, str] = True,
             suppress_silence: bool = True,
@@ -780,6 +782,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
         """
         faster_whisper_options['model'] = model
         faster_whisper_options['audio'] = audio
+        faster_whisper_options['word_timestamps'] = word_timestamps
         faster_whisper_options['verbose'] = verbose
 
         return transcribe_any(
