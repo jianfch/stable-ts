@@ -462,7 +462,7 @@ class Segment:
 
 class WhisperResult:
 
-    def __init__(self, result: Union[str, dict, list], force_order: bool = False):
+    def __init__(self, result: Union[str, dict, list], force_order: bool = False, check_sorted: bool = True):
         result, self.path = self._standardize_result(result)
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
@@ -470,7 +470,8 @@ class WhisperResult:
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
         if force_order:
             self.force_order()
-        self.raise_for_unsorted()
+        if check_sorted:
+            self.raise_for_unsorted()
         self.remove_no_word_segments()
         self.update_all_segs_with_words()
 
