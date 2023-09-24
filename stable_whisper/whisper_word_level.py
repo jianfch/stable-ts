@@ -740,13 +740,15 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
 
         final_segments = []
 
-        for segment in segments:
-            segment = segment._asdict()
-            if (words := segment.get('words')) is not None:
-                segment['words'] = [w._asdict() for w in words]
-            else:
-                del segment['words']
-            final_segments.append(segment)
+        with tqdm(total=round(info.duration), unit='sec', disable=verbose is not False) as tqdm_pbar:
+            for segment in segments:
+                segment = segment._asdict()
+                if (words := segment.get('words')) is not None:
+                    segment['words'] = [w._asdict() for w in words]
+                else:
+                    del segment['words']
+                final_segments.append(segment)
+                tqdm_pbar.update(segment["end"] - segment["start"])
 
         if verbose is not None:
             print(f'Completed transcription with faster-whisper ({model_size_or_path}).')
