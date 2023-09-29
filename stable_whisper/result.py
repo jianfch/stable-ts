@@ -1047,9 +1047,9 @@ class WhisperResult:
         endswith: Union[str, bool]
             String or list of string(s) to check if word/segment start with.
         right: bool
-            Whether prevent splits/merges with the previous word/segment. (Default: True)
+            Whether prevent splits/merges with the next word/segment. (Default: True)
         left: bool
-            Whether prevent splits/merges with the next word/segment. (Default: False)
+            Whether prevent splits/merges with the previous word/segment. (Default: False)
         case_sensitive: bool
             Whether to match the case of the prefix/suffix with the words/segment. (Default: False)
 
