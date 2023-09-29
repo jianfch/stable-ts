@@ -480,7 +480,8 @@ class WhisperResult:
         self.language = self.ori_dict.get('language')
         segments = deepcopy(result.get('segments', self.ori_dict.get('segments')))
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
-        if force_order:
+        self._forced_order = force_order
+        if self._forced_order:
             self.force_order()
         if check_sorted:
             self.raise_for_unsorted()
@@ -517,7 +518,7 @@ class WhisperResult:
 
     def force_order(self):
         prev_ts = 0
-        timestamps = [word for seg in self.segments for word in seg.words] if self.has_words else self.segments
+        timestamps = self.all_words_or_segments()
         for i, ts in enumerate(timestamps, 1):
             if ts.start < prev_ts:
                 ts.start = prev_ts
@@ -752,6 +753,9 @@ class WhisperResult:
 
     def all_words(self):
         return list(chain.from_iterable(s.words for s in self.segments))
+
+    def all_words_or_segments(self):
+        return self.all_words() if self.has_words else self.segments
 
     def all_tokens(self):
         return list(chain.from_iterable(s.tokens for s in self.all_words()))
@@ -1025,6 +1029,55 @@ class WhisperResult:
 
         return self
 
+    def lock(
+            self,
+            startswith: Union[str, bool] = None,
+            endswith: Union[str, bool] = None,
+            right: bool = True,
+            left: bool = False,
+            case_sensitive: bool = False,
+    ):
+        """
+        Prevent words/segment with matching prefix/suffix from splitting/merging.
+
+        Parameters
+        ----------
+        startswith: Union[str, bool]
+            String or list of string(s) to check if word/segment ends with.
+        endswith: Union[str, bool]
+            String or list of string(s) to check if word/segment start with.
+        right: bool
+            Whether prevent splits/merges with the previous word/segment. (Default: True)
+        left: bool
+            Whether prevent splits/merges with the next word/segment. (Default: False)
+        case_sensitive: bool
+            Whether to match the case of the prefix/suffix with the words/segment. (Default: False)
+
+        """
+        assert startswith or endswith, 'Must specify [startswith] or/and [endswith].'
+        startswith = [] if startswith is None else ([startswith] if isinstance(startswith, str) else startswith)
+        endswith = [] if endswith is None else ([endswith] if isinstance(endswith, str) else endswith)
+        if not case_sensitive:
+            startswith = [t.lower() for t in startswith]
+            endswith = [t.lower() for t in endswith]
+        for part in self.all_words_or_segments():
+            text = part.word if hasattr(part, 'word') else part.text
+            if not case_sensitive:
+                text = text.lower()
+            for prefix in startswith:
+                if text.startswith(prefix):
+                    if right:
+                        part.lock_right()
+                    if left:
+                        part.lock_left()
+            for suffix in endswith:
+                if text.endswith(suffix):
+                    if right:
+                        part.lock_right()
+                    if left:
+                        part.lock_left()
+        return self
+
     def regroup(self, regroup_algo: Union[str, bool] = None, verbose: bool = False, only_show: bool = False):
         """
 
@@ -1043,6 +1096,7 @@ class WhisperResult:
                     mp: merge_by_punctuation
                     ms: merge_all_segment
                     cm: clamp_max
+                    l: lock
                     da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
 
                 Metacharacters:
@@ -1087,7 +1141,8 @@ class WhisperResult:
             mg=self.merge_by_gap,
             mp=self.merge_by_punctuation,
             ms=self.merge_all_segments,
-            cm=self.clamp_max
+            cm=self.clamp_max,
+            l=self.lock
         )
 
         def _to_arg(x: str):
@@ -1111,10 +1166,12 @@ class WhisperResult:
             if method not in methods:
                 raise NotImplementedError(f'{method} is not one of the available methods: {tuple(methods.keys())}')
             args = [] if len(args) == 0 else list(map(_to_arg, args.split('+')))
+            kwargs = {k: v for k, v in zip(methods[method].__code__.co_varnames[1:], args) if v is not None}
             if verbose or only_show:
-                print(f'{methods[method].__name__}({", ".join(map(str, args))})')
+                kwargs_str = ', '.join(f'{k}="{v}"' if isinstance(v, str) else f'{k}={v}' for k, v in kwargs.items())
+                print(f'{methods[method].__name__}({kwargs_str})')
             if not only_show:
-                methods[method](*args)
+                methods[method](**kwargs)
 
         return self
 
@@ -1158,6 +1215,10 @@ class WhisperResult:
         self.language = self.ori_dict.get('language')
         segments = self.ori_dict.get('segments')
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
+        if self._forced_order:
+            self.force_order()
+        self.remove_no_word_segments()
+        self.update_all_segs_with_words()
 
     @property
     def has_words(self):

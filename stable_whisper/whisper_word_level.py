@@ -817,11 +817,14 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
 def modify_model(model: "Whisper"):
     """
     Modifies model instance by:
-        -replacing model.decode with decode_word_level
-        -replacing model.transcribe with transcribe_word_level
+        -replacing model.transcribe() with transcribe_word_level()
+        -assigning model.transcribe_minimal() to transcribe_minimal()
+        -assigning model.transcribe_original() to whisper.transcribe()
+        -assigning model.transcribe_original() to alignment.align()
     """
     model.transcribe = MethodType(transcribe_stable, model)
     model.transcribe_minimal = MethodType(transcribe_minimal, model)
+    model.transcribe_original = MethodType(whisper.transcribe, model)
     model.align = MethodType(align, model)
 
 
@@ -885,7 +888,7 @@ def cli():
             return str2val[string]
         raise ValueError(f"Expected one of {set(str2val.keys())}, got {string}")
 
-    output_formats = {"srt", "ass", "json", "vtt", "tsv"}
+    OUTPUT_FORMATS = {"srt", "ass", "json", "vtt", "tsv"}
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("inputs", nargs="+", type=str,
@@ -907,8 +910,10 @@ def cli():
     parser.add_argument("--output_dir", "-d", type=str,
                         help="directory to save the outputs;"
                              "if a path in [output] does not have parent, that output will be save to this directory")
-    parser.add_argument("--output_format", "-f", type=str, default='json', choices=list(output_formats),
-                        help="format of the output file(s)")
+    parser.add_argument("--output_format", "-f", type=str,
+                        help="format of the output file(s); "
+                             f"Supported Formats: {OUTPUT_FORMATS}; "
+                             "use ',' to separate multiple formats")
     parser.add_argument("--verbose", '-v', type=int, default=1, choices=(0, 1, 2),
                         help="whether to display the text being decoded to the console; "
                              "if 2, display all the details; "
@@ -1093,7 +1098,7 @@ def cli():
     inputs: List[Union[str, torch.Tensor]] = args.pop("inputs")
     outputs: List[str] = args.pop("output")
     output_dir: str = args.pop("output_dir")
-    output_format: str = args.pop("output_format")
+    output_format = args.pop("output_format")
     overwrite: bool = args.pop("overwrite")
     use_demucs = args.pop('demucs')
     demucs_outputs: List[Optional[str]] = args.pop("demucs_output")
@@ -1107,11 +1112,12 @@ def cli():
             regroup = str2bool(regroup)
         except ValueError:
             pass
-
+    curr_output_formats: List[str] = output_format.split(',') if output_format else []
+    unsupported_formats = list(set(map(str.lower, curr_output_formats)) - OUTPUT_FORMATS)
     if outputs:
-        unsupported_formats = set(splitext(o)[-1].lower().strip('.') for o in outputs) - output_formats
-        if len(unsupported_formats) != 0:
-            raise NotImplementedError(f'{unsupported_formats} are not supported. Supported formats: {outputs}.')
+        unsupported_formats.extend(list(set(splitext(o)[-1].lower().strip('.') for o in outputs) - OUTPUT_FORMATS))
+    if len(unsupported_formats) != 0:
+        raise NotImplementedError(f'{unsupported_formats} are not supported. Supported formats: {OUTPUT_FORMATS}.')
 
     has_demucs_output = bool(demucs_outputs)
     if use_demucs and has_demucs_output and len(demucs_outputs) != len(inputs):
@@ -1137,29 +1143,31 @@ def cli():
     def is_json(file: str):
         return file.endswith(".json")
 
-    def get_output_ext(input_file: str) -> str:
-        if not output_format:
-            return f'.{"srt" if is_json(input_file) else "json"}'
-        return f'.{output_format}'
+    def finalize_outputs(input_file: str, _output: str = None) -> List[str]:
+        _curr_output_formats = curr_output_formats.copy()
+        basename, ext = splitext(_output or input_file)
+        ext = ext[1:]
+        if _output:
+            if ext.lower() in OUTPUT_FORMATS:
+                _curr_output_formats.append(ext)
+            else:
+                basename = _output
+        if not _curr_output_formats:
+            _curr_output_formats = ["srt" if is_json(input_file) else "json"]
+        _outputs = [f'{basename}.{ext}' for ext in set(_curr_output_formats)]
+        if output_dir:
+            _outputs = [join(output_dir, o) for o in _outputs]
+
+        return _outputs
 
     if outputs:
         if len(outputs) != len(inputs):
             raise NotImplementedError(f'Got {len(inputs)} audio file(s) but specified {len(outputs)} output file(s).')
-        if output_dir:
-            for i in range(len(outputs)):
-                if splitext(outputs[i])[1].strip('.') not in output_formats:
-                    outputs[i] += get_output_ext(inputs[i])
-                outputs[i] = join(output_dir, outputs[i])
+        final_outputs = [finalize_outputs(i, o) for i, o in zip(inputs, outputs)]
     else:
         if not output_dir:
             output_dir = '.'
-        outputs = [
-            join(
-                output_dir,
-                f'{splitext(split(i)[1])[0]}{get_output_ext(i)}'
-            )
-            for i in inputs
-        ]
+        final_outputs = [finalize_outputs(i) for i in inputs]
 
     if not overwrite:
 
@@ -1170,9 +1178,10 @@ def cli():
             print(f'Expected "y" or "n", but got {resp}.')
             return True
 
-        for path in outputs:
-            if isfile(path) and cancel_overwrite():
-                return
+        for paths in final_outputs:
+            for path in paths:
+                if isfile(path) and cancel_overwrite():
+                    return
 
     device: str = args.pop("device")
     dq = args.pop('dynamic_quantization', False)
@@ -1224,9 +1233,9 @@ def cli():
               f'font_size: {font_size}\n')
 
         print('Input(s)  ->  Outputs(s)')
-        for i, (input_audio, output_path) in enumerate(zip(inputs, outputs)):
+        for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
             dm_output = f' {demucs_outputs[i]} ->' if demucs_outputs else ''
-            print(f'{input_audio}  ->{dm_output}  {output_path}')
+            print(f'{input_audio}  ->{dm_output}  {output_paths}')
         print('\n')
 
     args['verbose'] = False if args['verbose'] == 1 else (True if args['verbose'] == 2 else None)
@@ -1262,7 +1271,7 @@ def cli():
 
     model = None
 
-    for input_audio, output_path in zip(inputs, outputs):
+    for input_audio, output_paths in zip(inputs, final_outputs):
         if isinstance(input_audio, str) and is_json(input_audio):
             result = WhisperResult(input_audio)
         else:
@@ -1288,38 +1297,39 @@ def cli():
 
         if reverse_text:
             reverse_text = (args.get('prepend_punctuations'), args.get('append_punctuations'))
-        make_parent(output_path)
-        if is_json(output_path):
-            result.save_as_json(output_path)
-        elif output_path.endswith('.srt') or output_path.endswith('.vtt'):
-            result.to_srt_vtt(
-                filepath=output_path,
-                segment_level=segment_level,
-                word_level=word_level,
-                tag=tag,
-                strip=strip,
-                reverse_text=reverse_text
-            )
-        elif output_path.endswith('.tsv'):
-            result.to_tsv(
-                filepath=output_path,
-                segment_level=segment_level,
-                word_level=word_level,
-                strip=strip,
-                reverse_text=reverse_text
-            )
-        else:
-            result.to_ass(
-                filepath=output_path,
-                segment_level=segment_level,
-                word_level=word_level,
-                tag=tag,
-                karaoke=karaoke,
-                font=font,
-                font_size=font_size,
-                strip=strip,
-                reverse_text=reverse_text
-            )
+        for path in output_paths:
+            make_parent(path)
+            if is_json(path):
+                result.save_as_json(path)
+            elif path.endswith('.srt') or path.endswith('.vtt'):
+                result.to_srt_vtt(
+                    filepath=path,
+                    segment_level=segment_level,
+                    word_level=word_level,
+                    tag=tag,
+                    strip=strip,
+                    reverse_text=reverse_text
+                )
+            elif path.endswith('.tsv'):
+                result.to_tsv(
+                    filepath=path,
+                    segment_level=segment_level,
+                    word_level=word_level,
+                    strip=strip,
+                    reverse_text=reverse_text
+                )
+            else:
+                result.to_ass(
+                    filepath=path,
+                    segment_level=segment_level,
+                    word_level=word_level,
+                    tag=tag,
+                    karaoke=karaoke,
+                    font=font,
+                    font_size=font_size,
+                    strip=strip,
+                    reverse_text=reverse_text
+                )
 
 
 if __name__ == '__main__':
