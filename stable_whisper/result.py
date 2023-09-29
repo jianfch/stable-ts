@@ -1036,9 +1036,10 @@ class WhisperResult:
             right: bool = True,
             left: bool = False,
             case_sensitive: bool = False,
+            strip: bool = True
     ):
         """
-        Prevent words/segment with matching prefix/suffix from splitting/merging.
+        Prevent words/segments with matching prefix/suffix from splitting/merging.
 
         Parameters
         ----------
@@ -1052,6 +1053,8 @@ class WhisperResult:
             Whether prevent splits/merges with the previous word/segment. (Default: False)
         case_sensitive: bool
             Whether to match the case of the prefix/suffix with the words/segment. (Default: False)
+        strip: bool
+            Whether to ignore spaces before and after both words/segments and prefixes/suffixes. (Default: True)
 
         """
         assert startswith or endswith, 'Must specify [startswith] or/and [endswith].'
@@ -1060,10 +1063,15 @@ class WhisperResult:
         if not case_sensitive:
             startswith = [t.lower() for t in startswith]
             endswith = [t.lower() for t in endswith]
+        if strip:
+            startswith = [t.strip() for t in startswith]
+            endswith = [t.strip() for t in endswith]
         for part in self.all_words_or_segments():
             text = part.word if hasattr(part, 'word') else part.text
             if not case_sensitive:
                 text = text.lower()
+            if strip:
+                text = text.strip()
             for prefix in startswith:
                 if text.startswith(prefix):
                     if right:

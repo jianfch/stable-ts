@@ -203,7 +203,7 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1082-L1131)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1090-L1139)
 - [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L830-L842)
 - [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L883-L894)
 - [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L945-L964)
@@ -211,7 +211,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 - [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L906-L924)
 - [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L931-L933)
 - [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L983-L1000)
-- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1040-L1056)
+- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1041-L1059)
 
 ### Locating Words
 You can locate words with regular expression.
@@ -234,7 +234,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1179-L1195)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1187-L1203)
 
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
