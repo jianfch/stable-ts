@@ -413,7 +413,7 @@ class Segment:
 
         return sorted(set(indices) - set(self.get_locked_indices()))
 
-    def get_length_indices(self, max_chars: int = None, max_words: int = None, even_split: bool = True):
+    def get_length_indices(self, max_chars: int = None, max_words: int = None, even_split: bool = True, include_lock: bool = False):
         # for splitting
         if max_chars is None and max_words is None:
             return []
@@ -441,6 +441,9 @@ class Segment:
         else:
             curr_words = 0
             curr_chars = 0
+            locked_indices = []
+            if include_lock:
+                locked_indices = self.get_locked_indices()
             for i, word in enumerate(self.words):
                 curr_words += 1
                 curr_chars += len(word)
@@ -449,7 +452,7 @@ class Segment:
                             max_chars is not None and curr_chars > max_chars
                             or
                             max_words is not None and curr_words > max_words
-                    ):
+                    ) and i-1 not in locked_indices:
                         indices.append(i-1)
                         curr_words = 1
                         curr_chars = len(word)
@@ -940,7 +943,8 @@ class WhisperResult:
             max_words: int = None,
             even_split: bool = True,
             force_len: bool = False,
-            lock: bool = False
+            lock: bool = False,
+            include_lock: bool = False
     ):
         """
 
@@ -960,7 +964,9 @@ class WhisperResult:
             This will ignore all previous non-locked segment boundaries (e.g. boundaries set by `regroup()`).
         lock: bool
             Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
-
+        include_lock: bool
+            Whether to include previous lock before splitting based on max_words, if even_split=False. 
+            Splitting will be done after the first word that is not locked > max_words. (Default: False)
         """
         if force_len:
             self.merge_all_segments()
@@ -968,7 +974,8 @@ class WhisperResult:
             lambda x: x.get_length_indices(
                 max_chars=max_chars,
                 max_words=max_words,
-                even_split=even_split
+                even_split=even_split,
+                include_lock=include_lock
             ),
             lock=lock
         )
