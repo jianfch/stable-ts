@@ -1311,8 +1311,9 @@ def cli():
         for path in output_paths:
             make_parent(path)
             save_method = getattr(result, OUTPUT_FORMATS_METHODS[splitext(path)[-1][1:]])
-            save_options = dict(filepath=path)
-            save_options.update(isolate_useful_options(args, save_method))
+            args['filepath'] = path
+            args['path'] = path
+            save_options = isolate_useful_options(args, save_method)
             update_options_with_args('save_option', save_options)
             call_method_with_options(save_method, save_options)
 
