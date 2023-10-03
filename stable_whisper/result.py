@@ -9,6 +9,7 @@ from itertools import chain
 
 from .stabilization import suppress_silence, get_vad_silence_func, mask2timing, wav2mask
 from .text_output import *
+from .utils import str_to_valid_type
 
 
 __all__ = ['WhisperResult', 'Segment']
@@ -116,6 +117,23 @@ class WordTiming:
                 if verbose:
                     print(f'Start: {self.start}\nEnd: {self.end} -> {new_end}\nText:"{self.word}"\n')
                 self.end = new_end
+
+
+def _words_by_lock(words: List[WordTiming], only_text: bool = False, include_single: bool = False):
+    """
+    Returns a nested list of words such that each sublist contains words that are locked together.
+    """
+    all_words = []
+    for word in words:
+        if len(all_words) == 0 or not (all_words[-1][-1].right_locked or word.left_locked):
+            all_words.append([word])
+        else:
+            all_words[-1].append(word)
+    if only_text:
+        all_words = list(map(lambda ws: list(map(lambda w: w.word, ws)), all_words))
+    if not include_single:
+        all_words = [ws for ws in all_words if len(ws) > 1]
+    return all_words
 
 
 @dataclass
@@ -315,6 +333,9 @@ class Segment:
             seg_dict['reversed_text'] = True
         return seg_dict
 
+    def words_by_lock(self, only_text: bool = True, include_single: bool = False):
+        return _words_by_lock(self.words, only_text=only_text, include_single=include_single)
+
     @property
     def left_locked(self):
         if self.has_words:
@@ -413,12 +434,15 @@ class Segment:
 
         return sorted(set(indices) - set(self.get_locked_indices()))
 
-    def get_length_indices(self, max_chars: int = None, max_words: int = None, even_split: bool = True, include_lock: bool = False):
+    def get_length_indices(self, max_chars: int = None, max_words: int = None, even_split: bool = True,
+                           include_lock: bool = False):
         # for splitting
-        if max_chars is None and max_words is None:
+        if not self.has_words or (max_chars is None and max_words is None):
             return []
         assert max_chars != 0 and max_words != 0, \
             f'max_chars and max_words must be greater 0, but got {max_chars} and {max_words}'
+        if len(self.words) < 2:
+            return []
         indices = []
         if even_split:
             char_count = -1 if max_chars is None else sum(map(len, self.words))
@@ -428,15 +452,22 @@ class Segment:
             if exceed_chars:
                 splits = np.ceil(char_count / max_chars)
                 chars_per_split = char_count / splits
-                char_indices = list(chain.from_iterable([i]*len(word) for i, word in enumerate(self.words)))
-                indices = [char_indices[round(i * chars_per_split)] - 1 for i in range(1, int(splits))]
+                cum_char_count = np.cumsum([len(w.word) for w in self.words[:-1]])
+                indices = [
+                    (np.abs(cum_char_count-(i*chars_per_split))).argmin()
+                    for i in range(1, int(splits))
+                ]
                 if max_words is not None:
                     exceed_words = any(j-i+1 > max_words for i, j in zip([0]+indices, indices+[len(self.words)]))
 
             if exceed_words:
                 splits = np.ceil(word_count / max_words)
                 words_per_split = word_count / splits
-                indices = [round(i*words_per_split)-1 for i in range(1, int(splits))]
+                cum_word_count = np.array(range(1, len(self.words)+1))
+                indices = [
+                    np.abs(cum_word_count-(i*words_per_split)).argmin()
+                    for i in range(1, int(splits))
+                ]
 
         else:
             curr_words = 0
@@ -760,6 +791,14 @@ class WhisperResult:
     def all_words_or_segments(self):
         return self.all_words() if self.has_words else self.segments
 
+    def all_words_by_lock(self, only_text: bool = True, by_segment: bool = False, include_single: bool = False):
+        if by_segment:
+            return [
+                segment.words_by_lock(only_text=only_text, include_single=include_single)
+                for segment in self.segments
+            ]
+        return _words_by_lock(self.all_words(), only_text=only_text, include_single=include_single)
+
     def all_tokens(self):
         return list(chain.from_iterable(s.tokens for s in self.all_words()))
 
@@ -958,15 +997,15 @@ class WhisperResult:
             Maximum number of words allowed in each segment.
         even_split: bool
             Whether to evenly split a segment in length if it exceeds [max_chars] or [max_words]. (Default: True)
-            Note that some segments might still slightly exceed [max_chars] to avoid uneven splits.
+            If True, segments can still exceed [max_chars] and locked words will be ignored to avoid uneven splits.
         force_len: bool
             Whether to force a constant length for each segment except the last segment. (Default: False)
             This will ignore all previous non-locked segment boundaries (e.g. boundaries set by `regroup()`).
         lock: bool
             Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
         include_lock: bool
-            Whether to include previous lock before splitting based on max_words, if even_split=False. 
-            Splitting will be done after the first word that is not locked > max_words. (Default: False)
+            Whether to include previous lock before splitting based on max_words, if even_split=False.
+            Splitting will be done after the first word that is not locked > max_chars/max_words. (Default: False)
         """
         if force_len:
             self.merge_all_segments()
@@ -1112,6 +1151,7 @@ class WhisperResult:
                     ms: merge_all_segment
                     cm: clamp_max
                     l: lock
+                    us: unlock_all_segments
                     da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
 
                 Metacharacters:
@@ -1157,20 +1197,9 @@ class WhisperResult:
             mp=self.merge_by_punctuation,
             ms=self.merge_all_segments,
             cm=self.clamp_max,
+            us=self.unlock_all_segments,
             l=self.lock
         )
-
-        def _to_arg(x: str):
-            if len(x) == 0:
-                return None
-            if '/' in x:
-                return [a.split('*') if '*' in a else a for a in x.split('/')]
-            try:
-                x = float(x) if '.' in x else int(x)
-            except ValueError:
-                pass
-            finally:
-                return x
 
         calls = regroup_algo.split('_')
         if 'da' in calls:
@@ -1180,7 +1209,7 @@ class WhisperResult:
             method, args = method.split('=', maxsplit=1) if '=' in method else (method, '')
             if method not in methods:
                 raise NotImplementedError(f'{method} is not one of the available methods: {tuple(methods.keys())}')
-            args = [] if len(args) == 0 else list(map(_to_arg, args.split('+')))
+            args = [] if len(args) == 0 else list(map(str_to_valid_type, args.split('+')))
             kwargs = {k: v for k, v in zip(methods[method].__code__.co_varnames[1:], args) if v is not None}
             if verbose or only_show:
                 kwargs_str = ', '.join(f'{k}="{v}"' if isinstance(v, str) else f'{k}={v}' for k, v in kwargs.items())

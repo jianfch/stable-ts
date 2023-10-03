@@ -879,6 +879,7 @@ def cli():
     from os.path import splitext, split, isfile, join
     from whisper import available_models
     from whisper.utils import optional_int, optional_float
+    from .utils import str_to_valid_type, get_func_parameters
 
     str2val = {"true": True, "false": False, "1": True, "0": False}
 
@@ -888,7 +889,27 @@ def cli():
             return str2val[string]
         raise ValueError(f"Expected one of {set(str2val.keys())}, got {string}")
 
-    OUTPUT_FORMATS = {"srt", "ass", "json", "vtt", "tsv"}
+    def update_options_with_args(arg_key: str, options: Optional[dict] = None, pop: bool = False):
+        extra_options = args.pop(arg_key) if pop else args.get(arg_key)
+        if not extra_options:
+            return
+        extra_options = [kv.split('=', maxsplit=1) for kv in extra_options]
+        missing_val = [kv[0] for kv in extra_options if len(kv) == 1]
+        if missing_val:
+            raise ValueError(f'Following expected values for the following custom options: {missing_val}')
+        extra_options = dict((k, str_to_valid_type(v)) for k, v in extra_options)
+        if options is None:
+            return extra_options
+        options.update(extra_options)
+
+    OUTPUT_FORMATS_METHODS = {
+        "srt": "to_srt_vtt",
+        "ass": "to_ass",
+        "json": "save_as_json",
+        "vtt": "to_srt_vtt",
+        "tsv": "to_tsv"}
+
+    OUTPUT_FORMATS = set(OUTPUT_FORMATS_METHODS.keys())
 
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("inputs", nargs="+", type=str,
@@ -1089,9 +1110,24 @@ def cli():
     parser.add_argument('--debug', action='store_true',
                         help='print all input/output pair(s) and all arguments used for transcribing/translating')
 
+    parser.add_argument('--transcribe_method', '-tm', type=str, default='transcribe',
+                        choices=('transcribe', 'transcribe_minimal'))
+
+    parser.add_argument('--demucs_option', '-do', nargs='+', type=str,
+                        help='Extra option(s) to use for demucs; Replace True/False with 1/0; '
+                             'E.g. --demucs_option "shifts=3" --demucs_options "overlap=0.5"')
+    parser.add_argument('--model_option', '-mo', nargs='+', type=str,
+                        help='Extra option(s) to use for loading model; Replace True/False with 1/0; '
+                             'E.g. --model_option "download_root=./downloads"')
+    parser.add_argument('--transcribe_option', '-to', nargs='+', type=str,
+                        help='Extra option(s) to use for transcribing; Replace True/False with 1/0; '
+                             'E.g. --transcribe_option "ignore_compatibility=1"')
+    parser.add_argument('--save_option', '-so', nargs='+', type=str,
+                        help='Extra option(s) to use for text outputs; Replace True/False with 1/0; '
+                             'E.g. --save_option "highlight_color=ffffff"')
+
     args = parser.parse_args().__dict__
     debug = args.pop('debug')
-    cpu_preload = args.pop('cpu_preload')
 
     model_name: str = args.pop("model")
     model_dir: str = args.pop("model_dir")
@@ -1100,12 +1136,18 @@ def cli():
     output_dir: str = args.pop("output_dir")
     output_format = args.pop("output_format")
     overwrite: bool = args.pop("overwrite")
-    use_demucs = args.pop('demucs')
+    use_demucs = args['demucs'] or False
     demucs_outputs: List[Optional[str]] = args.pop("demucs_output")
+    args['demucs_options']= update_options_with_args('demucs_option', pop=True)
     regroup = args.pop('regroup')
     max_chars = args.pop('max_chars')
     max_words = args.pop('max_words')
-    reverse_text = args.pop('reverse_text')
+    args['verbose'] = False if args['verbose'] == 1 else (True if args['verbose'] == 2 else None)
+    show_curr_task = args['verbose'] is not None
+    if dq := args.pop('dynamic_quantization', False):
+        args['device'] = 'cpu'
+    if args['reverse_text']:
+        args['reverse_text'] = (args.get('prepend_punctuations'), args.get('append_punctuations'))
 
     if regroup:
         try:
@@ -1124,17 +1166,8 @@ def cli():
         raise NotImplementedError(f'[demucs_output] and [inputs] do not match in count. '
                                   f'Got {len(demucs_outputs)} and {len(inputs)}')
 
-    strip: bool = args.pop('strip')
-
-    segment_level: bool = args.pop('segment_level')
-    word_level: bool = args.pop('word_level')
-    tag: List[str] = args.pop('tag')
-    karaoke: bool = args.pop('karaoke')
-    if tag:
+    if tag := args.get('tag'):
         assert len(tag) == 2, f'[tag] must be a pair of str but got {tag}'
-
-    font: str = args.pop('font')
-    font_size: int = args.pop('font_size')
 
     def make_parent(filepath: str):
         if parent := split(filepath)[0]:
@@ -1142,6 +1175,34 @@ def cli():
 
     def is_json(file: str):
         return file.endswith(".json")
+
+    def call_method_with_options(method, options: dict, include_first: bool = False):
+        def val_to_str(val) -> str:
+            if isinstance(val, (np.ndarray, torch.Tensor)):
+                return f'{val.__class__}(shape:{list(val.shape)})'
+            elif isinstance(val, str):
+                return f'"{val}"'
+            elif isinstance(val, bytes):
+                return f'{type(val)}(len:{len(val)})'
+            elif isinstance(val, torch.nn.Module):
+                return str(type(val))
+            return str(val)
+
+        params = tuple(get_func_parameters(method))
+        if debug:
+            temp_options = {k: options.pop(k) for k in params if k in options}
+            temp_options.update(options)
+            options = temp_options
+            options_str = ',\n'.join(
+                f'    {k}={val_to_str(v)}'
+                for k, v in options.items()
+                if include_first or k != params[0]
+            )
+            print(f'{method.__qualname__}(\n{options_str}\n)')
+        return method(**options)
+
+    def isolate_useful_options(options: dict, method) -> dict:
+        return {k: options.get(k) for k in get_func_parameters(method) if k in options}
 
     def finalize_outputs(input_file: str, _output: str = None) -> List[str]:
         _curr_output_formats = curr_output_formats.copy()
@@ -1183,11 +1244,6 @@ def cli():
                 if isfile(path) and cancel_overwrite():
                     return
 
-    device: str = args.pop("device")
-    dq = args.pop('dynamic_quantization', False)
-    if dq:
-        device = 'cpu'
-
     if model_name.endswith(".en") and args["language"] not in {"en", "English"}:
         if args["language"] is not None:
             warnings.warn(f"{model_name} is an English-only model but receipted "
@@ -1208,86 +1264,43 @@ def cli():
         torch.set_num_threads(threads)
 
     if debug:
-        print(f'\nModel Arguments',
-              f'\nModel: {model_name}\n'
-              f'device: {device}\n'
-              f'download_root: {model_dir}\n'
-              f'dynamic_quantization: {dq}\n')
-        print(f'Arguments for {args.get("task")}')
-        for k, v in args.items():
-            print(f'{k}: {v}')
-        print(f'use_demucs: {use_demucs}')
-        print(f'\nArguments for Output(s)',
-              f'\noverwrite: {overwrite}\n'
-              f'segment_level: {segment_level}\n'
-              f'word_level: {word_level}\n'
-              f'tag: {tag}\n'
-              f'karaoke: {karaoke}\n'
-              f'strip: {strip}\n'
-              f'regroup: {regroup}\n'
-              f'max_chars: {max_chars}\n'
-              f'max_words: {max_words}\n'
-              f'reverse_text: {reverse_text}\n'
-              f'\nArguments for ASS Output',
-              f'\nfont: {font}\n'
-              f'font_size: {font_size}\n')
-
         print('Input(s)  ->  Outputs(s)')
         for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
             dm_output = f' {demucs_outputs[i]} ->' if demucs_outputs else ''
             print(f'{input_audio}  ->{dm_output}  {output_paths}')
-        print('\n')
-
-    args['verbose'] = False if args['verbose'] == 1 else (True if args['verbose'] == 2 else None)
-    show_curr_task = args['verbose'] is not None
-
-    if use_demucs:
-        from .audio import demucs_audio, load_demucs_model
-        demucs_model = load_demucs_model()
-        audio_inputs = []
-        for i, input_audio in enumerate(inputs):
-            demucs_path = demucs_outputs[i] if has_demucs_output else None
-            audio_inputs.append(
-                demucs_audio(
-                    input_audio,
-                    model=demucs_model,
-                    device=device,
-                    verbose=show_curr_task,
-                    save_path=demucs_path
-                )
-            )
-        args['input_sr'] = demucs_model.samplerate
-        inputs = audio_inputs
-        del demucs_model
-        if device != 'cpu':
-            torch.cuda.empty_cache()
+        print('')
 
     if show_curr_task:
         model_from_str = '' if model_dir is None else f' from {model_dir}'
         model_loading_str = f'Whisper {model_name} model {model_from_str}'
-        print(f'Loading {model_loading_str}\r', end='')
+        print(f'Loading {model_loading_str}\r', end='\n' if debug else '')
     else:
         model_loading_str = ''
 
     model = None
-
-    for input_audio, output_paths in zip(inputs, final_outputs):
+    for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
         if isinstance(input_audio, str) and is_json(input_audio):
             result = WhisperResult(input_audio)
         else:
             if model is None:
-                model = load_model(
-                    model_name,
-                    device=device,
+                model_options = dict(
+                    name=model_name,
+                    device=args.get('device'),
                     download_root=model_dir,
-                    cpu_preload=cpu_preload,
-                    dq=dq
+                    dq=dq,
                 )
-
+                update_options_with_args('model_option', model_options)
+                model = call_method_with_options(load_model, model_options, include_first=True)
                 if model_loading_str:
                     print(f'Loaded {model_loading_str}  ')
             args['regroup'] = False
-            result: WhisperResult = model.transcribe(input_audio, **args)
+            args['audio'] = input_audio
+            transcribe_method = getattr(model, args.get('transcribe_method'))
+            if has_demucs_output:
+                args['demucs_output'] = demucs_outputs[i]
+            transcribe_options = isolate_useful_options(args, transcribe_method)
+            update_options_with_args('transcribe_option', transcribe_options)
+            result: WhisperResult = call_method_with_options(transcribe_method, transcribe_options)
 
         if args.get('word_timestamps'):
             if regroup:
@@ -1295,41 +1308,13 @@ def cli():
             if max_chars or max_words:
                 result.split_by_length(max_chars=max_chars, max_words=max_words)
 
-        if reverse_text:
-            reverse_text = (args.get('prepend_punctuations'), args.get('append_punctuations'))
         for path in output_paths:
             make_parent(path)
-            if is_json(path):
-                result.save_as_json(path)
-            elif path.endswith('.srt') or path.endswith('.vtt'):
-                result.to_srt_vtt(
-                    filepath=path,
-                    segment_level=segment_level,
-                    word_level=word_level,
-                    tag=tag,
-                    strip=strip,
-                    reverse_text=reverse_text
-                )
-            elif path.endswith('.tsv'):
-                result.to_tsv(
-                    filepath=path,
-                    segment_level=segment_level,
-                    word_level=word_level,
-                    strip=strip,
-                    reverse_text=reverse_text
-                )
-            else:
-                result.to_ass(
-                    filepath=path,
-                    segment_level=segment_level,
-                    word_level=word_level,
-                    tag=tag,
-                    karaoke=karaoke,
-                    font=font,
-                    font_size=font_size,
-                    strip=strip,
-                    reverse_text=reverse_text
-                )
+            save_method = getattr(result, OUTPUT_FORMATS_METHODS[splitext(path)[-1][1:]])
+            save_options = dict(filepath=path)
+            save_options.update(isolate_useful_options(args, save_method))
+            update_options_with_args('save_option', save_options)
+            call_method_with_options(save_method, save_options)
 
 
 if __name__ == '__main__':

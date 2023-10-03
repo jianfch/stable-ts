@@ -1,5 +1,6 @@
 import warnings
 import importlib.metadata
+import inspect
 
 import whisper
 
@@ -36,3 +37,20 @@ def warn_compatibility_issues(
             if additional_msg:
                 compatibility_warning += f' {additional_msg}'
             warnings.warn(compatibility_warning)
+
+
+def str_to_valid_type(val: str):
+    if len(val) == 0:
+        return None
+    if '/' in val:
+        return [a.split('*') if '*' in a else a for a in val.split('/')]
+    try:
+        val = float(val) if '.' in val else int(val)
+    except ValueError:
+        pass
+    finally:
+        return val
+
+
+def get_func_parameters(func):
+    return inspect.signature(func).parameters.keys()
