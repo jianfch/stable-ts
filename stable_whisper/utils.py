@@ -54,3 +54,8 @@ def str_to_valid_type(val: str):
 
 def get_func_parameters(func):
     return inspect.signature(func).parameters.keys()
+
+
+def isolate_useful_options(options: dict, method, pop: bool = False) -> dict:
+    _get = dict.pop if pop else dict.get
+    return {k: _get(options, k) for k in get_func_parameters(method) if k in options}

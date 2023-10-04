@@ -20,7 +20,7 @@ from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable
 from .stabilization import get_vad_silence_func, wav2mask, mask2timing, timing2mask
 from .non_whisper import transcribe_any
-from .utils import warn_compatibility_issues
+from .utils import warn_compatibility_issues, isolate_useful_options
 from .alignment import align
 
 if TYPE_CHECKING:
@@ -684,13 +684,14 @@ def transcribe_minimal(
         k_size: int = 5,
         demucs: bool = False,
         demucs_output: str = None,
+        demucs_options: dict = None,
         vad: bool = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         min_word_dur: float = 0.1,
         only_voice_freq: bool = False,
         only_ffmpeg: bool = False,
-        **kwargs) \
+        **options) \
         -> WhisperResult:
     """
     Transcribe audio using unmodified Whisper.transcribe().
@@ -701,7 +702,13 @@ def transcribe_minimal(
         word_timestamps=word_timestamps,
         verbose=verbose
     )
-    inference_kwargs.update(kwargs)
+    extra_options = isolate_useful_options(options, transcribe_any, True)
+    if demucs:
+        if 'audio_type' not in extra_options:
+            extra_options['audio_type'] = 'torch'
+        if 'model_sr' not in extra_options:
+            extra_options['model_sr'] = SAMPLE_RATE
+    inference_kwargs.update(options)
     return transcribe_any(
         inference_func=whisper.transcribe,
         audio=audio,
@@ -714,13 +721,15 @@ def transcribe_minimal(
         k_size=k_size,
         demucs=demucs,
         demucs_output=demucs_output,
+        demucs_options=demucs_options,
         vad=vad,
         vad_threshold=vad_threshold,
         vad_onnx=vad_onnx,
         min_word_dur=min_word_dur,
         only_voice_freq=only_voice_freq,
         only_ffmpeg=only_ffmpeg,
-        force_order=True
+        force_order=True,
+        **extra_options
     )
 
 
@@ -1176,7 +1185,7 @@ def cli():
     def is_json(file: str):
         return file.endswith(".json")
 
-    def call_method_with_options(method, options: dict, include_first: bool = False):
+    def call_method_with_options(method, options: dict, include_first: bool = True):
         def val_to_str(val) -> str:
             if isinstance(val, (np.ndarray, torch.Tensor)):
                 return f'{val.__class__}(shape:{list(val.shape)})'
@@ -1198,11 +1207,12 @@ def cli():
                 for k, v in options.items()
                 if include_first or k != params[0]
             )
-            print(f'{method.__qualname__}(\n{options_str}\n)')
+            if options_str:
+                options_str = f'\n{options_str}\n'
+            else:
+                print(options, params)
+            print(f'{method.__qualname__}({options_str})')
         return method(**options)
-
-    def isolate_useful_options(options: dict, method) -> dict:
-        return {k: options.get(k) for k in get_func_parameters(method) if k in options}
 
     def finalize_outputs(input_file: str, _output: str = None) -> List[str]:
         _curr_output_formats = curr_output_formats.copy()
@@ -1290,7 +1300,7 @@ def cli():
                     dq=dq,
                 )
                 update_options_with_args('model_option', model_options)
-                model = call_method_with_options(load_model, model_options, include_first=True)
+                model = call_method_with_options(load_model, model_options)
                 if model_loading_str:
                     print(f'Loaded {model_loading_str}  ')
             args['regroup'] = False
