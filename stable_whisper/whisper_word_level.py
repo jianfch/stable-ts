@@ -703,7 +703,7 @@ def transcribe_minimal(
         verbose=verbose
     )
     extra_options = isolate_useful_options(options, transcribe_any, True)
-    if demucs:
+    if demucs or only_voice_freq:
         if 'audio_type' not in extra_options:
             extra_options['audio_type'] = 'torch'
         if 'model_sr' not in extra_options:
@@ -757,7 +757,8 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
                 else:
                     del segment['words']
                 final_segments.append(segment)
-                tqdm_pbar.update(segment["end"] - segment["start"])
+                tqdm_pbar.update(segment["end"] - tqdm_pbar.n)
+            tqdm_pbar.update(tqdm_pbar.total - tqdm_pbar.n)
 
         if verbose is not None:
             print(f'Completed transcription with faster-whisper ({model_size_or_path}).')
@@ -784,13 +785,20 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             only_voice_freq: bool = False,
             only_ffmpeg: bool = False,
             check_sorted: bool = True,
-            **faster_whisper_options
+            **options
     ) -> WhisperResult:
         """
 
         Transcribe audio using faster-whisper (https://github.com/guillaumekln/faster-whisper).
 
         """
+        extra_options = isolate_useful_options(options, transcribe_any, pop=True)
+        if demucs or only_voice_freq:
+            if 'audio_type' not in extra_options:
+                extra_options['audio_type'] = 'numpy'
+            if 'model_sr' not in extra_options:
+                extra_options['model_sr'] = SAMPLE_RATE
+        faster_whisper_options = options
         faster_whisper_options['model'] = model
         faster_whisper_options['audio'] = audio
         faster_whisper_options['word_timestamps'] = word_timestamps
@@ -815,7 +823,8 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             only_voice_freq=only_voice_freq,
             only_ffmpeg=only_ffmpeg,
             force_order=True,
-            check_sorted=check_sorted
+            check_sorted=check_sorted,
+            **extra_options
         )
 
     faster_model.transcribe_stable = MethodType(faster_transcribe, faster_model)
@@ -870,8 +879,14 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     if device is None or dq:
         device = "cuda" if torch.cuda.is_available() and not dq else "cpu"
     if cpu_preload:
-        model = whisper.load_model(name, device='cpu', download_root=download_root, in_memory=in_memory).to(
-            device=device)
+        model = whisper.load_model(name, device='cpu', download_root=download_root, in_memory=in_memory)
+        cuda_index = None
+        if isinstance(device, str) and device.startswith('cuda'):
+            try:
+                cuda_index = [] if device == 'cuda' else [int(device.split(':')[-1])]
+            except ValueError:
+                pass
+        model = model.to(device=device) if cuda_index is None else model.cuda(*cuda_index)
     else:
         model = whisper.load_model(name, device=device, download_root=download_root, in_memory=in_memory)
     modify_model(model)
