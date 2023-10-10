@@ -160,6 +160,16 @@ When the text is correct but the timestamps need more work,
 ```python
 new_result = model.align('audio.mp3', result)
 ```
+<details>
+<summary>CLI</summary>
+
+```commandline
+stable-ts audio.mp3 --align text.txt --language en
+```
+`--align` can also a JSON file of a result 
+
+</details>
+
 Parameters:
 [align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L27-L71)
 

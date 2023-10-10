@@ -1137,6 +1137,9 @@ def cli():
     parser.add_argument('--transcribe_method', '-tm', type=str, default='transcribe',
                         choices=('transcribe', 'transcribe_minimal'))
 
+    parser.add_argument('--align', '-a', nargs='+', type=str,
+                        help='path(s) to TXT file(s) or JSON previous result(s)')
+
     parser.add_argument('--demucs_option', '-do', nargs='+', type=str,
                         help='Extra option(s) to use for demucs; Replace True/False with 1/0; '
                              'E.g. --demucs_option "shifts=3" --demucs_options "overlap=0.5"')
@@ -1144,7 +1147,7 @@ def cli():
                         help='Extra option(s) to use for loading model; Replace True/False with 1/0; '
                              'E.g. --model_option "download_root=./downloads"')
     parser.add_argument('--transcribe_option', '-to', nargs='+', type=str,
-                        help='Extra option(s) to use for transcribing; Replace True/False with 1/0; '
+                        help='Extra option(s) to use for transcribing/alignment; Replace True/False with 1/0; '
                              'E.g. --transcribe_option "ignore_compatibility=1"')
     parser.add_argument('--save_option', '-so', nargs='+', type=str,
                         help='Extra option(s) to use for text outputs; Replace True/False with 1/0; '
@@ -1229,7 +1232,20 @@ def cli():
             print(f'{method.__qualname__}({options_str})')
         return method(**options)
 
-    def finalize_outputs(input_file: str, _output: str = None) -> List[str]:
+    if alignments := args['align']:
+        if unsupported_align_fmts := \
+                [_ext for p in alignments if (_ext := splitext(p)[-1].lower()) not in ('.json', '.txt')]:
+            raise NotImplementedError(
+                f'Unsupported format(s) for alignment: {unsupported_align_fmts}'
+            )
+        if len(inputs) != len(alignments):
+            raise NotImplementedError(
+                f'Got {len(inputs)} audio file(s) but specified {len(alignments)} file(s) to align.'
+            )
+    else:
+        alignments = ['']*len(inputs)
+
+    def finalize_outputs(input_file: str, _output: str = None, _alignment: str = None) -> List[str]:
         _curr_output_formats = curr_output_formats.copy()
         basename, ext = splitext(_output or input_file)
         ext = ext[1:]
@@ -1239,7 +1255,7 @@ def cli():
             else:
                 basename = _output
         if not _curr_output_formats:
-            _curr_output_formats = ["srt" if is_json(input_file) else "json"]
+            _curr_output_formats = ["srt" if is_json(input_file) or is_json(_alignment) else "json"]
         _outputs = [f'{basename}.{ext}' for ext in set(_curr_output_formats)]
         if output_dir:
             _outputs = [join(output_dir, o) for o in _outputs]
@@ -1249,11 +1265,11 @@ def cli():
     if outputs:
         if len(outputs) != len(inputs):
             raise NotImplementedError(f'Got {len(inputs)} audio file(s) but specified {len(outputs)} output file(s).')
-        final_outputs = [finalize_outputs(i, o) for i, o in zip(inputs, outputs)]
+        final_outputs = [finalize_outputs(i, o, a) for i, o, a in zip(inputs, outputs, alignments)]
     else:
         if not output_dir:
             output_dir = '.'
-        final_outputs = [finalize_outputs(i) for i in inputs]
+        final_outputs = [finalize_outputs(i, _alignment=a) for i, a in zip(inputs, alignments)]
 
     if not overwrite:
 
@@ -1290,9 +1306,10 @@ def cli():
 
     if debug:
         print('Input(s)  ->  Outputs(s)')
-        for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
+        for i, (input_audio, output_paths, alignment) in enumerate(zip(inputs, final_outputs, alignments)):
             dm_output = f' {demucs_outputs[i]} ->' if demucs_outputs else ''
-            print(f'{input_audio}  ->{dm_output}  {output_paths}')
+            alignment = f' + "{alignment}"' if alignment else ''
+            print(f'"{input_audio}"{alignment}  ->{dm_output}  {output_paths}')
         print('')
 
     if show_curr_task:
@@ -1302,6 +1319,7 @@ def cli():
     else:
         model_loading_str = ''
 
+    alignments = args['align']
     model = None
     for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
         if isinstance(input_audio, str) and is_json(input_audio):
@@ -1320,9 +1338,18 @@ def cli():
                     print(f'Loaded {model_loading_str}  ')
             args['regroup'] = False
             args['audio'] = input_audio
-            transcribe_method = getattr(model, args.get('transcribe_method'))
             if has_demucs_output:
                 args['demucs_output'] = demucs_outputs[i]
+            transcribe_method = args.get('transcribe_method')
+            if alignments and (text := alignments[i]):
+                if text.endswith('.json'):
+                    text = WhisperResult(text)
+                else:
+                    with open(text, 'r', encoding='utf-8') as f:
+                        text = f.read()
+                args['text'] = text
+                transcribe_method = 'align'
+            transcribe_method = getattr(model, transcribe_method)
             transcribe_options = isolate_useful_options(args, transcribe_method)
             update_options_with_args('transcribe_option', transcribe_options)
             result: WhisperResult = call_method_with_options(transcribe_method, transcribe_options)
