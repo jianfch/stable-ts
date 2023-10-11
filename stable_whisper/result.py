@@ -2,7 +2,7 @@ import warnings
 import re
 import torch
 import numpy as np
-from typing import Union, List, Tuple
+from typing import Union, List, Tuple, Optional
 from dataclasses import dataclass
 from copy import deepcopy
 from itertools import chain
@@ -42,6 +42,8 @@ class WordTiming:
     tokens: List[int] = None
     left_locked: bool = False
     right_locked: bool = False
+    segment_id: Optional[int] = None
+    id: Optional[int] = None
 
     def __len__(self):
         return len(self.word)
@@ -63,15 +65,15 @@ class WordTiming:
 
     @property
     def duration(self):
-        return self.end - self.start
+        return round(self.end - self.start, 3)
 
     def round_all_timestamps(self):
         self.start = round(self.start, 3)
         self.end = round(self.end, 3)
 
     def offset_time(self, offset_seconds: float):
-        self.start = self.start + offset_seconds
-        self.end = self.end + offset_seconds
+        self.start = round(self.start + offset_seconds, 3)
+        self.end = round(self.end + offset_seconds, 3)
 
     def to_dict(self):
         dict_ = deepcopy(self.__dict__)
@@ -362,6 +364,12 @@ class Segment:
 
     def unlock_all_words(self):
         self._word_operations('unlock_both')
+
+    def reassign_ids(self):
+        if self.has_words:
+            for i, w in enumerate(self.words):
+                w.segment_id = self.id
+                w.id = i
 
     def update_seg_with_words(self):
         if self.has_words:
@@ -738,6 +746,7 @@ class WhisperResult:
     def reassign_ids(self):
         for i, s in enumerate(self.segments):
             s.id = i
+            s.reassign_ids()
 
     def remove_no_word_segments(self, ignore_ori=False):
         for i in reversed(range(len(self.segments))):

@@ -10,6 +10,7 @@ https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-
   * [Output](#output)
   * [Alignment](#alignment)
     * [Adjustments](#adjustments)
+  * [Refinement](#refinement)
   * [Regrouping Words](#regrouping-words)
   * [Locating Words](#locating-words)
   * [Tips](#tips)
@@ -48,9 +49,9 @@ stable-ts audio.mp3 -o audio.srt
 </details>
 
 Parameters: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L853-L878), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L75-L228),
-[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L676-L698)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L858-L883), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L74-L227),
+[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L677-L699)
 
 <details>
 <summary>faster-whisper</summary>
@@ -61,7 +62,7 @@ model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
 ```
 Parameters: 
-[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L770-L794), 
+[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L772-L796), 
 
 </details>
 
@@ -184,7 +185,34 @@ Note: both results are required to have word timestamps and matching words.
 result.adjust_by_result(new_result)
 ```
 Parameters:
-[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L657-L670)
+[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L710-L723)
+
+### Refinement
+Timestamps can be further improved with `refine()`.
+This method iteratively mutes portions of the audio based on current timestamps 
+then compute the probabilities of the tokens. 
+Then by monitoring the fluctuation of the probabilities, it tries to find the most precise timestamps. 
+"Most precise" in this case means the latest start and earliest end for the word 
+such that it still meets the specified conditions.
+```python
+model.refine('audio.mp3', result)
+```
+<details>
+<summary>CLI</summary>
+
+```commandline
+stable-ts audio.mp3 --refine -o audio.srt
+```
+Input can also be JSON file of a result. 
+```commandline
+stable-ts result.json --refine -o audio.srt
+```
+
+</details>
+
+Parameters:
+[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L242-L296)
+
 
 ### Regrouping Words
 Stable-ts has a preset for regrouping words into different segments with more natural boundaries. 
@@ -213,15 +241,15 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1136-L1186)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L872-L884)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L925-L936)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L988-L1009)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L896-L914)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L948-L966)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L973-L975)
-- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1029-L1046)
-- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1087-L1105)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1145-L1195)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L881-L893)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L934-L945)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L997-L1018)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L905-L923)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L957-L975)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L982-L984)
+- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1038-L1055)
+- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1096-L1114)
 
 ### Locating Words
 You can locate words with regular expression.
@@ -244,7 +272,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1223-L1239)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1232-L1248)
 
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
@@ -255,6 +283,7 @@ Parameters:
 - use `encode_video_comparison()` to encode multiple transcripts into one video for synced comparison; see [Encode Comparison](#encode-comparison) 
 - use `visualize_suppression()` to visualize the differences between non-VAD and VAD options; see [Visualizing Suppression](#visualizing-suppression)
 - if the non-speech/silence seems to be detected but the starting timestamps do not reflect that, then try `min_word_dur=0`
+- [refinement](#refinement) is a great alternative to silence suppression (e.g. if VAD isn't effective)
 
 ### Visualizing Suppression
 You can visualize which parts of the audio will likely be suppressed (i.e. marked as silent). 

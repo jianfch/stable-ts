@@ -21,7 +21,6 @@ from .timing import add_word_timestamps_stable
 from .stabilization import get_vad_silence_func, wav2mask, mask2timing, timing2mask
 from .non_whisper import transcribe_any
 from .utils import warn_compatibility_issues, isolate_useful_options
-from .alignment import align
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
@@ -301,10 +300,12 @@ def transcribe_stable(
                     if verbose:
                         print("Detecting language using up to 30 seconds following first non-silent sample. "
                               "Use `--language` to specify the language")
-                    timing_mask = np.logical_and(
-                        segment_silence_timing[0] <= time_offset,
-                        segment_silence_timing[1] >= time_offset
-                    )
+                    timing_mask = None
+                    if segment_silence_timing is not None:
+                        timing_mask = np.logical_and(
+                            segment_silence_timing[0] <= time_offset,
+                            segment_silence_timing[1] >= time_offset
+                        )
                     start_sample = (
                         None
                         if segment_silence_timing is None or not timing_mask.any() else
@@ -430,7 +431,7 @@ def transcribe_stable(
     if suppress_silence and vad:
         silence_timing = get_vad_silence_func(onnx=vad_onnx, verbose=verbose)(audio, speech_threshold=vad_threshold)
 
-    with tqdm(total=total_duration, unit='sec', disable=verbose is not False) as tqdm_pbar:
+    with tqdm(total=total_duration, unit='sec', disable=verbose is not False, desc=task.title()) as tqdm_pbar:
 
         def update_pbar():
             nonlocal audio_features
@@ -748,8 +749,9 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             print(f'Transcribing with faster-whisper ({model_size_or_path})...\r', end='')
 
         final_segments = []
+        task = faster_transcribe_options.get('task', 'transcribe').title()
 
-        with tqdm(total=round(info.duration), unit='sec', disable=verbose is not False) as tqdm_pbar:
+        with tqdm(total=round(info.duration, 2), unit='sec', disable=verbose is not False, desc=task) as tqdm_pbar:
             for segment in segments:
                 segment = segment._asdict()
                 if (words := segment.get('words')) is not None:
@@ -838,12 +840,15 @@ def modify_model(model: "Whisper"):
         -replacing model.transcribe() with transcribe_word_level()
         -assigning model.transcribe_minimal() to transcribe_minimal()
         -assigning model.transcribe_original() to whisper.transcribe()
-        -assigning model.transcribe_original() to alignment.align()
+        -assigning model.align() to alignment.align()
+        -assigning model.refine() to alignment.refine()
     """
     model.transcribe = MethodType(transcribe_stable, model)
     model.transcribe_minimal = MethodType(transcribe_minimal, model)
     model.transcribe_original = MethodType(whisper.transcribe, model)
+    from .alignment import align, refine
     model.align = MethodType(align, model)
+    model.refine = MethodType(refine, model)
 
 
 # modified version of whisper.load_model
@@ -1140,6 +1145,12 @@ def cli():
     parser.add_argument('--align', '-a', nargs='+', type=str,
                         help='path(s) to TXT file(s) or JSON previous result(s)')
 
+    parser.add_argument('--refine', '-r', action='store_true',
+                        help='Refine timestamps to increase precision of timestamps')
+
+    parser.add_argument('--refine_option', '-ro', nargs='+', type=str,
+                        help='Extra option(s) to use for refining timestamps; Replace True/False with 1/0; '
+                             'E.g. --refine_option "steps=sese" --refine_options "rel_prob_decrease=0.05"')
     parser.add_argument('--demucs_option', '-do', nargs='+', type=str,
                         help='Extra option(s) to use for demucs; Replace True/False with 1/0; '
                              'E.g. --demucs_option "shifts=3" --demucs_options "overlap=0.5"')
@@ -1321,21 +1332,27 @@ def cli():
 
     alignments = args['align']
     model = None
+
+    def _load_model():
+        nonlocal model
+        if model is None:
+            model_options = dict(
+                name=model_name,
+                device=args.get('device'),
+                download_root=model_dir,
+                dq=dq,
+            )
+            update_options_with_args('model_option', model_options)
+            model = call_method_with_options(load_model, model_options)
+            if model_loading_str:
+                print(f'Loaded {model_loading_str}  ')
+        return model
+
     for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
         if isinstance(input_audio, str) and is_json(input_audio):
             result = WhisperResult(input_audio)
         else:
-            if model is None:
-                model_options = dict(
-                    name=model_name,
-                    device=args.get('device'),
-                    download_root=model_dir,
-                    dq=dq,
-                )
-                update_options_with_args('model_option', model_options)
-                model = call_method_with_options(load_model, model_options)
-                if model_loading_str:
-                    print(f'Loaded {model_loading_str}  ')
+            model = _load_model()
             args['regroup'] = False
             args['audio'] = input_audio
             if has_demucs_output:
@@ -1353,6 +1370,13 @@ def cli():
             transcribe_options = isolate_useful_options(args, transcribe_method)
             update_options_with_args('transcribe_option', transcribe_options)
             result: WhisperResult = call_method_with_options(transcribe_method, transcribe_options)
+
+        if args['refine']:
+            model = _load_model()
+            refine_options = isolate_useful_options(args, model.refine)
+            refine_options['result'] = result
+            update_options_with_args('refine_option', refine_options)
+            call_method_with_options(model.refine, refine_options)
 
         if args.get('word_timestamps'):
             if regroup:
