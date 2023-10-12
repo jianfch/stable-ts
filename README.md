@@ -205,7 +205,7 @@ stable-ts audio.mp3 --refine -o audio.srt
 ```
 Input can also be JSON file of a result. 
 ```commandline
-stable-ts result.json --refine -o audio.srt --refine_options "audio=audio.mp3"
+stable-ts result.json --refine -o audio.srt --refine_option "audio=audio.mp3"
 ```
 
 </details>
