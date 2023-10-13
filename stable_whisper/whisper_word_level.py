@@ -1368,6 +1368,7 @@ def cli():
                 transcribe_method = 'align'
             transcribe_method = getattr(model, transcribe_method)
             transcribe_options = isolate_useful_options(args, transcribe_method)
+            transcribe_options.update(isolate_useful_options(args, DecodingOptions))
             update_options_with_args('transcribe_option', transcribe_options)
             result: WhisperResult = call_method_with_options(transcribe_method, transcribe_options)
 
