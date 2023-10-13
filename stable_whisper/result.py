@@ -698,7 +698,8 @@ class WhisperResult:
             silent_timings = mask2timing(
                 wav2mask(audio, q_levels=q_levels, k_size=k_size, sr=sample_rate)
             )
-
+        if silent_timings is None:
+            return self
         return self.suppress_silence(*silent_timings, min_word_dur=min_word_dur, word_level=word_level)
 
     def adjust_by_result(
