@@ -227,12 +227,12 @@ def refine(
         result: WhisperResult,
         *,
         steps: str = None,
-        rel_prob_decrease: float = .07,
-        abs_prob_decrease: float = .07,
-        rel_rel_prob_decrease: float = .07,
+        rel_prob_decrease: float = .03,
+        abs_prob_decrease: float = .05,
+        rel_rel_prob_decrease: Optional[float] = None,
         prob_threshold: float = .5,
         rel_dur_change: Optional[float] = .5,
-        abs_dur_change: Optional[float] = .0,
+        abs_dur_change: Optional[float] = None,
         word_level: bool = True,
         precision: float = None,
         single_batch: bool = False,
@@ -254,14 +254,14 @@ def refine(
             E.g. 'sese' means refine start-timestamps then end-timestamps then repeat both once
 
     rel_prob_decrease: float
-        Maximum percent decrease in probability relative to original probability. (Default: 0.07)
-        Note: "original probability" is the probability before any muting.
+        Maximum percent decrease in probability relative to original probability. (Default: 0.03)
+        Note: "original probability" is the probability from muting according initial timestamps.
 
     abs_prob_decrease: float
-        Maximum decrease in probability from original probability. (Default: 0.07)
+        Maximum decrease in probability from original probability. (Default: 0.05)
 
-    rel_rel_prob_decrease: float
-        Maximum percent decrease in probability relative to previous probability. (Default: 0.07)
+    rel_rel_prob_decrease: Optional[float]
+        Maximum percent decrease in probability relative to previous probability. (Default: None)
         Note: "previous probability" is the probability from previous iteration of muting.
 
     prob_threshold: float
@@ -467,25 +467,26 @@ def refine(
             is_finish = np.logical_or(is_finish, [w.duration == 0 for w in words])
             if not word_level:
                 is_finish[edge_mask != (2 if is_end_ts else 1)] = True
-
-            orig_probs, orig_tk_poss = get_prob()
-            changes = np.zeros((orig_probs.shape[-1], 3), dtype=int)
-            changes[:, -1] = -1
-
-            frame_indices = (mid_ends, max_ends) if is_end_ts else (min_starts, mid_starts)
-            for idx, (_s, _e) in enumerate(zip(*frame_indices)):
+            for idx, _i in enumerate(max_starts if is_end_ts else min_ends):
                 row = idx % 2
                 prob_indices.extend([row] * len(words[idx].tokens))
                 if is_finish[idx]:
                     continue
-
-                half_dur = words[idx].duration / 2
                 if is_end_ts:
-                    _p = mel_segment.shape[-1] if idx == len(words)-1 else round(_e+half_dur)
-                    mel_segment[row, :, _s:_p] = 0
+                    _p = mel_segment.shape[-1] if idx == len(words)-1 else mid_ends[idx+1]
+                    mel_segment[row, :, _i:_p] = 0
                 else:
-                    _p = 0 if idx == 0 else max(round(_s-half_dur), 0)
-                    mel_segment[row, :, _p:_e] = 0
+                    _p = 0 if idx == 0 else mid_starts[idx-1]
+                    mel_segment[row, :, _p:_i] = 0
+            orig_probs, orig_tk_poss = get_prob()
+            changes = np.zeros((orig_probs.shape[-1], 3), dtype=int)
+            changes[:, -1] = -1
+            frame_indices = (mid_ends, max_starts) if is_end_ts else (min_ends, mid_starts)
+            for idx, (_s, _e) in enumerate(zip(*frame_indices)):
+                row = idx % 2
+                if is_finish[idx]:
+                    continue
+                mel_segment[row, :, _s:_e] = 0
 
             new_probs = prev_probs = orig_probs
             while not np.all(is_finish):
@@ -508,7 +509,7 @@ def refine(
                     failed_requirements = (
                             abs_diff > abs_prob_decrease or
                             rel_diff > rel_prob_decrease or
-                            rel_change_diff > rel_rel_prob_decrease or
+                            (rel_rel_prob_decrease is not None and rel_change_diff > rel_rel_prob_decrease) or
                             prob < prob_threshold or
                             best_tks_changed
                     )
@@ -548,7 +549,7 @@ def refine(
                         min_ends[idx], max_ends[idx], mid_ends[idx] = curr_min, curr_max, new_mid
                     else:
                         min_starts[idx], max_starts[idx], mid_starts[idx] = curr_min, curr_max, new_mid
-                    if not failed_requirements:
+                    if not best_tks_changed:
                         changes[idx][-1] = new_mid
                     new_probs[idx] = prob
 
