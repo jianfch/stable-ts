@@ -47,6 +47,7 @@ def align(
         ignore_compatibility: bool = False,
         remove_instant_words: bool = False,
         token_step: int = 100,
+        original_spit: bool = False
 ) -> WhisperResult:
     """
     Align plain text with audio at word-level.
@@ -65,6 +66,12 @@ def align(
         Use higher values to reduce chance of misalignment.
         Note: maximum value is 442 (model.dims.n_text_ctx - 6).
 
+    original_spit: bool
+        Whether to preserve the original segment groupings. (Default: False)
+        If [text] is plain-text the segments are spit by line break.
+        If line break is found in middle of word, it will split after that word.
+        Note: If True, [regroup] is ignored.
+
     Returns
     -------
     An instance of WhisperResult.
@@ -76,15 +83,24 @@ def align(
         raise ValueError(f'The max value for [token_step] is {max_token_step} but got {token_step}.')
 
     warn_compatibility_issues(ignore_compatibility)
-
+    split_indices_by_char = []
     if isinstance(text, WhisperResult):
         if language is None:
             language = text.language
+        if original_spit and len(text.segments) > 1 and text.has_words:
+            split_indices_by_char = np.cumsum([sum(len(w.word) for w in seg.words) for seg in text.segments])
         text = text.all_tokens() if text.has_words else text.text
     elif isinstance(text, str):
-        text = re.sub(r'\s', ' ', text)
+        if original_spit and '\n' in text:
+            text_split = text.splitlines()
+            split_indices_by_char = np.cumsum([len(seg) for seg in text_split])
+            text = ''.join(re.sub(r'\s', ' ', seg) for seg in text_split)
+        else:
+            text = re.sub(r'\s', ' ', text)
         if not text.startswith(' '):
             text = ' ' + text
+            if len(split_indices_by_char):
+                split_indices_by_char += 1
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task='transcribe')
     tokens = tokenizer.encode(text) if isinstance(text, str) else text
     tokens = [t for t in tokens if t < tokenizer.eot]
@@ -205,8 +221,11 @@ def align(
             )
 
         update_pbar(True)
-
     result = WhisperResult([result])
+    if len(split_indices_by_char):
+        word_lens = np.cumsum([[len(w.word) for w in result.segments[0].words]])
+        split_indices = [(word_lens >= i).nonzero()[0][0] for i in split_indices_by_char]
+        result._split_segments(lambda *_: split_indices)
 
     if suppress_silence:
         result.adjust_by_silence(
@@ -216,7 +235,8 @@ def align(
             sample_rate=SAMPLE_RATE, min_word_dur=min_word_dur,
             word_level=suppress_word_ts, verbose=verbose
         )
-    result.regroup(regroup)
+    if not original_spit:
+        result.regroup(regroup)
 
     return result
 

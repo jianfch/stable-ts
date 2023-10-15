@@ -172,7 +172,7 @@ stable-ts audio.mp3 --align text.txt --language en
 </details>
 
 Parameters:
-[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L27-L71)
+[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L27-L78)
 
 #### Adjustments
 Timestamps are adjusted after the model predicts them. 
@@ -211,7 +211,7 @@ stable-ts result.json --refine -o audio.srt --refine_option "audio=audio.mp3"
 </details>
 
 Parameters:
-[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L242-L296)
+[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L246-L316)
 
 
 ### Regrouping Words
