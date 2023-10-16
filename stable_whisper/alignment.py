@@ -1,5 +1,7 @@
 import copy
 import re
+import warnings
+
 import torch
 import numpy as np
 from tqdm import tqdm
@@ -26,8 +28,8 @@ def align(
         model: "Whisper",
         audio: Union[str, np.ndarray, torch.Tensor, bytes],
         text: Union[str, List[int], WhisperResult],
-        *,
         language: str = None,
+        *,
         verbose: str = False,
         regroup: bool = True,
         suppress_silence: bool = True,
@@ -48,7 +50,7 @@ def align(
         remove_instant_words: bool = False,
         token_step: int = 100,
         original_spit: bool = False
-) -> WhisperResult:
+) -> Union[WhisperResult, None]:
     """
     Align plain text with audio at word-level.
 
@@ -56,6 +58,9 @@ def align(
     ----------
     text: Union[str, List[int], WhisperResult]
         string of plain-text, list of tokens, or instance of WhisperResult containing words/text
+
+    language: str
+        Language of [text]. Required if [text] is not an instance of WhisperResult with a specified language
 
     remove_instant_words: bool
         Whether to truncate any words with zero duration. (Default: False)
@@ -74,7 +79,7 @@ def align(
 
     Returns
     -------
-    An instance of WhisperResult.
+    An instance of WhisperResult, or None if alignment fails and [remove_instant_words]=True.
     """
     max_token_step = model.dims.n_text_ctx - 6
     if token_step < 1:
@@ -101,6 +106,8 @@ def align(
             text = ' ' + text
             if len(split_indices_by_char):
                 split_indices_by_char += 1
+    if language is None:
+        raise TypeError('expected argument for language')
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task='transcribe')
     tokens = tokenizer.encode(text) if isinstance(text, str) else text
     tokens = [t for t in tokens if t < tokenizer.eot]
@@ -195,8 +202,8 @@ def align(
             finished_tokens += sum(len(w['tokens']) for w in segment['words'])
             if segment['words']:
                 seek_sample = round(segment['words'][-1]['end'] * SAMPLE_RATE)
-            elif seek_sample_end >= total_samples:
-                seek_sample = total_samples
+            else:
+                seek_sample += audio_segment.shape[-1]
 
             update_pbar()
 
@@ -211,6 +218,9 @@ def align(
                 if line:
                     print(make_safe(line))
 
+        if not result:
+            warnings.warn('Failed to align text.')
+
         if words and not remove_instant_words:
             total_duration = round(total_samples / SAMPLE_RATE, 3)
             result.extend(
@@ -221,6 +231,8 @@ def align(
             )
 
         update_pbar(True)
+    if not result:
+        return
     result = WhisperResult([result])
     if len(split_indices_by_char):
         word_lens = np.cumsum([[len(w.word) for w in result.segments[0].words]])

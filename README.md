@@ -172,7 +172,7 @@ stable-ts audio.mp3 --align text.txt --language en
 </details>
 
 Parameters:
-[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L27-L78)
+[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L27-L84)
 
 #### Adjustments
 Timestamps are adjusted after the model predicts them. 
