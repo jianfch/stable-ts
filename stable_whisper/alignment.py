@@ -97,15 +97,13 @@ def align(
         text = text.all_tokens() if text.has_words else text.text
     elif isinstance(text, str):
         if original_spit and '\n' in text:
-            text_split = text.splitlines()
+            text_split = [line if line.startswith(' ') else ' '+line for line in text.splitlines()]
             split_indices_by_char = np.cumsum([len(seg) for seg in text_split])
             text = ''.join(re.sub(r'\s', ' ', seg) for seg in text_split)
         else:
             text = re.sub(r'\s', ' ', text)
-        if not text.startswith(' '):
-            text = ' ' + text
-            if len(split_indices_by_char):
-                split_indices_by_char += 1
+            if not text.startswith(' '):
+                text = ' ' + text
     if language is None:
         raise TypeError('expected argument for language')
     tokenizer = get_tokenizer(model.is_multilingual, language=language, task='transcribe')
