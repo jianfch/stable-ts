@@ -382,7 +382,7 @@ def result_to_ass(result: (dict, list),
                   segment_level=True,
                   word_level=True,
                   min_dur: float = 0.02,
-                  tag: Tuple[str, str] = None,
+                  tag: Union[Tuple[str, str], int] = None,
                   font: str = None,
                   font_size: int = 24,
                   strip=True,
@@ -410,7 +410,7 @@ def result_to_ass(result: (dict, list),
         minimum duration any word/segment is allowed to have. (default: 0.02)
         if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
     tag: Tuple[str, str]
-        tag used to change the properties a word at its timestamp (default: None)
+        tag used to change the properties a word at its timestamp. -1 for individual word highlight tag (default: None)
     font: str
         word font (default: Arial)
     font_size: int
@@ -418,7 +418,7 @@ def result_to_ass(result: (dict, list),
     strip: bool
         whether to remove spaces before and after text on each segment for output (default: True)
     highlight_color: str
-        hexadecimal of highlight color, or [PrimaryColour], as '<bb><gg><rr>' (default: '00ff00' if highlight is needed)
+        hexadecimal of the color use for default highlights as '<bb><gg><rr>' (default: '00ff00')
     karaoke: bool
         whether to use progressive filling highlights (for karaoke effect) (default: False)
     reverse_text: Union[bool, tuple]
@@ -438,7 +438,7 @@ def result_to_ass(result: (dict, list),
     string of content if no [filepath] is provided, else None
 
     """
-    if highlight_color is None and (karaoke or (word_level and segment_level)):
+    if highlight_color is None:
         highlight_color = '00ff00'
 
     def segments2blocks(segments):
@@ -453,7 +453,7 @@ def result_to_ass(result: (dict, list),
 
         fmt_style_dict.update((k, v) for k, v in kwargs.items() if k in fmt_style_dict)
 
-        if highlight_color:
+        if tag is None and 'PrimaryColour' not in kwargs:
             fmt_style_dict['PrimaryColour'] = \
                 highlight_color if highlight_color.startswith('&H') else f'&H{highlight_color}'
 
@@ -485,7 +485,7 @@ def result_to_ass(result: (dict, list),
         segment_level=segment_level,
         word_level=word_level,
         min_dur=min_dur,
-        tag=tag,
+        tag=None if tag == -1 else tag,
         default_tag=(r'{\1c' + f'{highlight_color}&' + '}', r'{\r}'),
         strip=strip,
         reverse_text=reverse_text,
