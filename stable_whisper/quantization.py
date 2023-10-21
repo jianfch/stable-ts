@@ -5,7 +5,8 @@ from whisper.model import Linear, Conv1d, LayerNorm, Whisper
 
 def replace_modules(model: nn.Module, only_linear: bool = False):
     """
-    replace Linear/Conv1d/LayerNorm from `whisper.model` with equivalent module in `torch.nn`
+    Replace ``Linear``/``Conv1d``/``LayerNorm`` from :class:`whisper.model` with equivalent module in
+        :class:`torch.nn`.
     """
     for m in model.__dict__.get('_modules', []):
         module = model.__getattr__(m)
@@ -31,7 +32,7 @@ def replace_modules(model: nn.Module, only_linear: bool = False):
 
 def ptdq_linear(model: "Whisper"):
     """
-    apply Dynamic Quantization to Whisper model instance
+    Apply Dynamic Quantization to instance of :class:`whisper.model.Whisper`.
     """
     model.cpu()
     replace_modules(model, only_linear=True)

@@ -27,67 +27,49 @@ def encode_video_comparison(
         verbose=True
 ) -> (str, None):
     """
-
-    Encode multiple subtitle files into one video. The subtitles are vertically stacked.
+    Encode multiple subtitle files into one video with the subtitles vertically stacked.
 
     Parameters
     ----------
-    audiofile: str
-        path of audio file
-
-    subtitle_files: List[str]
-        list of paths for subtitle file
-
-    output_videopath: str
-        output video path
-
-    labels: List[str]
-        list of labels for [subtitle_files]
-        the path are the default labeels
-
-    height: int
-        height for each subtitle section
-
-    width: int
-        width for each subtitle section
-
-    color: str
-        background color of the video
-
-    fontsize: int
-        font size for subtitles
-
-    border_color: str
-        border color for separating the sections of subtitle
-
-    label_color: str
-        color of labels
-
-    label_size: int
-        font size of labels
-
-    fps: int
-        frame-rate of the video
-
-    video_codec: str
-        video codec opf the video
-
-    audio_codec: str
-        audio codec opf the video
-
-    overwrite: bool
-        whether to overwrite existing video files with the same path as the output video
-
-    only_cmd: bool
-        whether to skip encoding and only return the full command generate from the specified options
-
-    verbose: bool
-        whether to display ffmpeg processing info
+    audiofile : str
+        Path of audio file.
+    subtitle_files : list of str
+        List of paths for subtitle file.
+    output_videopath : str, optional
+        Output video path.
+    labels : list of str, default, None, meaning use ``subtitle_files`` as labels
+        List of labels for ``subtitle_files``.
+    height : int, default 90
+        Height for each subtitle section.
+    width : int, default 720
+        Width for each subtitle section.
+    color : str, default 'black'
+        Background color of the video.
+    fontsize: int, default 70
+        Font size for subtitles.
+    border_color : str, default 'white'
+        Border color for separating the sections of subtitle.
+    label_color : str, default 'white'
+        Color of labels.
+    label_size : int, default 14
+        Font size of labels.
+    fps : int, default 25
+        Frame-rate of the video.
+    video_codec : str, optional
+        Video codec opf the video.
+    audio_codec : str, optional
+        Audio codec opf the video.
+    overwrite : bool, default False
+        Whether to overwrite existing video files with the same path as the output video.
+    only_cmd : bool, default False
+        Whether to skip encoding and only return the full command generate from the specified options.
+    verbose : bool, default True
+        Whether to display ffmpeg processing info.
 
     Returns
     -------
-        -string of command if [only_cmd]=True
-
+    str or None
+        Encoding command as a string if ``only_cmd = True``.
     """
     vc = '' if video_codec is None else f' -c:v {video_codec}'
     ac = '' if audio_codec is None else f' -c:a {audio_codec}'

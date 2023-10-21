@@ -4,7 +4,7 @@ import ffmpeg
 import torch
 import torchaudio
 import numpy as np
-from typing import Union
+from typing import Union, Optional
 
 from whisper.audio import SAMPLE_RATE
 
@@ -50,25 +50,23 @@ def _load_file(file: Union[str, bytes], verbose: bool = False, only_ffmpeg: bool
 # modified version of whisper.audio.load_audio
 def load_audio(file: Union[str, bytes], sr: int = SAMPLE_RATE, verbose: bool = True, only_ffmpeg: bool = False):
     """
-    Open an audio file and read as mono waveform, resampling as necessary
+    Open an audio file and read as mono waveform then resamples as necessary.
 
     Parameters
     ----------
-    file: str
-        The audio file to open, bytes of file, or URL to audio/video
-
-    sr: int
-        The sample rate to resample the audio if necessary
-
-    verbose: bool
-        whether to print yt-dlp log
-
-    only_ffmpeg: bool
-        Whether to use only FFmpeg (and not yt-dlp) for URls. (Default: False)
+    file : str or bytes
+        The audio file to open, bytes of file, or URL to audio/video.
+    sr : int, default ``whisper.model.SAMPLE_RATE``
+        The sample rate to resample the audio if necessary.
+    verbose : bool, default True
+        Whether to print yt-dlp log.
+    only_ffmpeg : bool, default False
+        Whether to use only FFmpeg (instead of yt-dlp) for URls.
 
     Returns
     -------
-    A NumPy array containing the audio waveform, in float32 dtype.
+    np.ndarray
+        A array containing the audio waveform in float32.
     """
     file = _load_file(file, verbose=verbose, only_ffmpeg=only_ffmpeg)
     if isinstance(file, bytes):
@@ -129,7 +127,9 @@ def demucs_audio(audio: (torch.Tensor, str),
                  save_path: str = None,
                  **demucs_options) -> torch.Tensor:
     """
-    Load audio waveform and process to isolate vocals with Demucs
+    Isolates vocals / remove noise from ``audio`` with Demucs.
+
+    Official repo, https://github.com/facebookresearch/demucs.
     """
     if model is None:
         model = load_demucs_model()
@@ -219,3 +219,72 @@ def get_samplerate(audiofile: (str, bytes)) -> (int, None):
     sr = re.findall(r'\n.+Stream.+Audio.+\D+(\d+) Hz', metadata)
     if sr:
         return int(sr[0])
+
+
+def prep_audio(
+        audio: Union[str, np.ndarray, torch.Tensor, bytes],
+        demucs: Union[bool, torch.nn.Module] = False,
+        demucs_options: dict = None,
+        only_voice_freq: bool = False,
+        only_ffmpeg: bool = False,
+        verbose: Optional[bool] = False,
+        sr: int = None
+) -> torch.Tensor:
+    """
+    Converts input audio of many types into a mono waveform as a torch.Tensor.
+
+    Parameters
+    ----------
+    audio : str or np.ndarray or torch.Tensor or bytes
+        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+        If audio is :class:`np.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+    demucs : bool or torch.nn.Module, default False
+        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
+        a Demucs model to avoid reloading the model for each run.
+        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
+    demucs_options : dict, optional
+        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    only_voice_freq : bool, default False
+        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
+    sr : int, default None, meaning ``whisper.audio.SAMPLE_RATE``, 16kHZ
+        The sample rate of ``audio``.
+    verbose : bool, default False
+        Whether to print yt-dlp log.
+    only_ffmpeg: bool, default False
+        Whether to use only FFmpeg (and not yt-dlp) for URls.
+
+    Returns
+    -------
+    torch.Tensor
+        A mono waveform.
+    """
+    if not sr:
+        sr = SAMPLE_RATE
+    if isinstance(audio, (str, bytes)):
+        if demucs:
+            demucs_kwargs = dict(
+                audio=audio,
+                output_sr=sr,
+                verbose=verbose,
+            )
+            demucs_kwargs.update(demucs_options or {})
+            audio = demucs_audio(**demucs_kwargs)
+        else:
+            audio = torch.from_numpy(load_audio(audio, sr=sr, verbose=verbose, only_ffmpeg=only_ffmpeg))
+    else:
+        if isinstance(audio, np.ndarray):
+            audio = torch.from_numpy(audio)
+        if demucs:
+            demucs_kwargs = dict(
+                audio=audio,
+                input_sr=sr,
+                output_sr=sr,
+                verbose=verbose,
+            )
+            demucs_kwargs.update(demucs_options or {})
+            audio = demucs_audio(**demucs_kwargs)
+    if only_voice_freq:
+        audio = voice_freq_filter(audio, sr)
+
+    return audio
+

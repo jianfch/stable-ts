@@ -40,128 +40,112 @@ def transcribe_any(
         check_sorted: bool = True
 ) -> WhisperResult:
     """
-    Transcribe an audio file using any ASR system.
+    Transcribe ``audio`` using any ASR system.
 
     Parameters
     ----------
-    inference_func: Callable
+    inference_func : Callable
         Function that runs ASR when provided the [audio] and return data in the appropriate format.
-        For format examples: https://github.com/jianfch/stable-ts/blob/main/examples/non-whisper.ipynb
-
-    audio: Union[str, np.ndarray, torch.Tensor, bytes]
-        The path/URL to the audio file, the audio waveform, or bytes of audio file.
-
-    audio_type: str
-        The type that [audio] needs to be for [inference_func]. (Default: Same type as [audio])
-
-        Types:
-            None (default)
-                same type as [audio]
-
-            'str'
-                a path to the file
-                -if [audio] is a file and not audio preprocessing is done,
-                    [audio] will be directly passed into [inference_func]
-                -if audio preprocessing is performed (from [demucs] and/or [only_voice_freq]),
-                    the processed audio will be encoded into [temp_file] and then passed into [inference_func]
-
-            'byte'
-                bytes (used for APIs or to avoid writing any data to hard drive)
-                -if [audio] is file, the bytes of file is used
-                -if [audio] PyTorch tensor or NumPy array, the bytes of the [audio] encoded into WAV format is used
-
-            'torch'
-                a PyTorch tensor containing the audio waveform, in float32 dtype, on CPU
-
-            'numpy'
-                a NumPy array containing the audio waveform, in float32 dtype
-
-    input_sr: int
-        The sample rate of [audio]. (Default: Auto-detected if [audio] is str/bytes)
-
-    model_sr: int
-        The sample rate to resample the audio into for [inference_func]. (Default: Same as [input_sr])
-        Resampling is only performed when [model_sr] do not match the sample rate of the final audio due to:
-         -[input_sr] not matching
-         -sample rate changed due to audio preprocessing from [demucs]=True
-
-    inference_kwargs: dict
-        Dictionary of arguments provided to [inference_func]. (Default: None)
-
-    temp_file: str
-        Temporary path for the preprocessed audio when [audio_type]='str'. (Default: './_temp_stable-ts_audio_.wav')
-
-    verbose: Optional[bool]
-        Whether to display the text being decoded to the console. If True, displays all the details,
-        If False, displays progressbar. If None, does not display anything (Default: False)
-
-    regroup: Union[bool, str]
-        Whether to regroup all words into segments with more natural boundaries. (Default: True)
-        Specify string for customizing the regrouping algorithm.
-        Ignored if [word_timestamps]=False.
-
-    suppress_silence: bool
-        Whether to suppress timestamp where audio is silent at segment-level
-        and word-level if [suppress_word_ts]=True. (Default: True)
-
-    suppress_word_ts: bool
-        Whether to suppress timestamps, if [suppress_silence]=True, where audio is silent at word-level. (Default: True)
-
-    q_levels: int
-        Quantization levels for generating timestamp suppression mask; ignored if [vad]=true. (Default: 20)
+        For format examples see, https://github.com/jianfch/stable-ts/blob/main/examples/non-whisper.ipynb.
+    audio : str or np.ndarray or torch.Tensor or bytes
+        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+    audio_type : {'str', 'byte', 'torch', 'numpy', None}, default None, meaning same type as ``audio``
+        The type that ``audio`` needs to be for ``inference_func``.
+        'str' is a path to the file.
+        'byte' is bytes (used for APIs or to avoid writing any data to hard drive).
+        'torch' is an instance of :class:`torch.Tensor` containing the audio waveform, in float32 dtype, on CPU.
+        'numpy' is an instance of :class:`numpy.ndarray` containing the audio waveform, in float32 dtype.
+    input_sr : int, default None, meaning auto-detected if ``audio`` is ``str`` or ``bytes``
+        The sample rate of ``audio``.
+    model_sr : int, default None, meaning same sample rate as ``input_sr``
+        The sample rate to resample the audio into for ``inference_func``.
+    inference_kwargs : dict, optional
+        Dictionary of arguments to pass into ``inference_func``.
+    temp_file : str, default './_temp_stable-ts_audio_.wav'
+        Temporary path for the preprocessed audio when ``audio_type = 'str'``.
+    verbose: bool, False
+        Whether to displays all the details during transcription, If ``False``, displays progressbar. If ``None``, does
+        not display anything.
+    regroup: str or bool, default True
+         String representation of a custom regrouping algorithm or ``True`` use to the default algorithm 'da'. Only
+         applies if ``word_timestamps = False``.
+    suppress_silence : bool, default True
+        Whether to enable timestamps adjustments base the detected silence.
+    suppress_word_ts : bool, default True
+        Whether to adjust word timestamps base the detected silence. Only enabled if ``suppress_silence = True``.
+    q_levels : int, default 20
+        Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
         Fewer levels will increase the threshold of volume at which to mark a sound as silent.
-
-    k_size: int
-        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if [vad]=true. (Default: 5)
+    k_size : int, default 5
+        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-
-    demucs: bool
-        Whether to preprocess the audio track with Demucs to isolate vocals/remove noise. (Default: False)
-        Demucs must be installed to use. Official repo: https://github.com/facebookresearch/demucs
-
-    demucs_device: str
-        Device to use for demucs: 'cuda' or 'cpu'. (Default. 'cuda' if torch.cuda.is_available() else 'cpu')
-
-    demucs_output: str
-        Path to save the vocals isolated by Demucs as WAV file. Ignored if [demucs]=False.
-        Demucs must be installed to use. Official repo: https://github.com/facebookresearch/demucs
-
-    demucs_options: dict
-        Args to use for Demucs.
-        See available parameters: https://github.com/facebookresearch/demucs/blob/main/demucs/apply.py#L132
-
-    vad: bool
-        Whether to use Silero VAD to generate timestamp suppression mask. (Default: False)
-        Silero VAD requires PyTorch 1.12.0+. Official repo: https://github.com/snakers4/silero-vad
-
-    vad_threshold: float
-        Threshold for detecting speech with Silero VAD. (Default: 0.35)
-        Low threshold reduces false positives for silence detection.
-
-    vad_onnx: bool
-        Whether to use ONNX for Silero VAD. (Default: False)
-
-    min_word_dur: float
-        Only allow suppressing timestamps that result in word durations greater than this value. (default: 0.1)
-
-    only_voice_freq: bool
-        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are. (Default: False)
-
-    only_ffmpeg: bool
-        Whether to use only FFmpeg (and not yt-dlp) for URls. (Default: False)
-
-    force_order: bool
-        Whether to use adjacent timestamps if to replace timestamps that are out of order. (Default: False)
-        Note: Use only if the words/segments returned by [inference_func] are order.
-
-    check_sorted: bool
-        Whether to raise exception if the timestamps are not in ascending order. (Default: True)
+    demucs : bool or torch.nn.Module, default False
+        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
+        a Demucs model to avoid reloading the model for each run.
+        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
+    demucs_output : str, optional
+        Path to save the vocals isolated by Demucs as WAV file. Ignored if ``demucs = False``.
+        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
+    demucs_options : dict, optional
+        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    demucs_device : str, default None, meaning 'cuda' if cuda is available with ``torch`` else 'cpu'
+        Device to use for demucs.
+    vad : bool, default False
+        Whether to use Silero VAD to generate timestamp suppression mask.
+        Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
+    vad_threshold : float, default 0.35
+        Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
+    vad_onnx : bool, default False
+        Whether to use ONNX for Silero VAD.
+    min_word_dur : float, default 0.1
+        Only allow suppressing timestamps that result in word durations greater than this value.
+    only_voice_freq : bool, default False
+        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
+    only_ffmpeg : bool, default False
+        Whether to use only FFmpeg (instead of not yt-dlp) for URls
+    force_order : bool, default False
+        Whether to use adjacent timestamps if to replace timestamps that are out of order. Use this parameter only if
+        the words/segments returned by ``inference_func`` are expected to be in chronological order.
+    check_sorted : bool, default True
+        Whether to raise an error when timestamps returned by ``inference_func`` are not in ascending order.
 
     Returns
     -------
-    An instance of WhisperResult.
+    stable_whisper.result.WhisperResult
+        All timestamps, words, probabilities, and other data from the transcription of ``audio``.
+
+    Notes
+    -----
+    For ``audio_type = 'str'``:
+        If ``audio`` is a file and no audio preprocessing is set, ``audio`` will be directly passed into
+            ``inference_func``.
+        If audio preprocessing is ``demucs`` or ``only_voice_freq``, the processed audio will be encoded into
+            ``temp_file`` and then passed into ``inference_func``.
+
+    For ``audio_type = 'byte'``:
+        If ``audio`` is file, the bytes of file will be passed into ``inference_func``.
+        If ``audio`` is :class:`torch.Tensor` or :class:`numpy.ndarray`, the bytes of the ``audio`` will be encoded
+            into WAV format then passed into ``inference_func``.
+
+    Resampling is only performed on ``audio`` when ``model_sr`` does not match the sample rate of the ``audio`` before
+        passing into ``inference_func`` due to ``input_sr`` not matching ``model_sr``, or sample rate changes due to
+        audio preprocessing from ``demucs = True``.
     """
+    if demucs_options is None:
+        demucs_options = {}
+    if demucs_output:
+        if 'save_path' not in demucs_options:
+            demucs_options['save_path'] = demucs_output
+        warnings.warn('``demucs_output`` is deprecated. Use ``demucs_options`` with ``save_path`` instead. '
+                      'E.g. demucs_options=dict(save_path="demucs_output.mp3")',
+                      DeprecationWarning, stacklevel=2)
+    if demucs_device:
+        if 'device' not in demucs_options:
+            demucs_options['device'] = demucs_device
+        warnings.warn('``demucs_device`` is deprecated. Use ``demucs_options`` with ``device`` instead. '
+                      'E.g. demucs_options=dict(device="cpu")',
+                      DeprecationWarning, stacklevel=2)
 
     if audio_type is not None and (audio_type := audio_type.lower()) not in AUDIO_TYPES:
         raise NotImplementedError(f'[audio_type]={audio_type} is not supported. Types: {AUDIO_TYPES}')
@@ -205,8 +189,12 @@ def transcribe_any(
     curr_sr = input_sr
 
     if demucs:
-        from .audio import load_demucs_model
-        demucs_model = load_demucs_model()
+        if demucs is True:
+            from .audio import load_demucs_model
+            demucs_model = load_demucs_model()
+        else:
+            demucs_model = demucs
+            demucs = True
     else:
         demucs_model = None
 

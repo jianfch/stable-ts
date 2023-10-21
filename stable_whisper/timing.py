@@ -1,7 +1,7 @@
 import string
 import torch
 import numpy as np
-from typing import TYPE_CHECKING, List, Callable
+from typing import TYPE_CHECKING, List, Callable, Optional
 from itertools import chain
 from whisper.audio import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN
 from whisper.timing import WordTiming, median_filter, dtw, merge_punctuations
@@ -200,7 +200,7 @@ def add_word_timestamps_stable(
         ts_noise: float = 0.1,
         min_word_dur: float = 0.1,
         split_callback: Callable = None,
-        gap_padding: str = ' ...',
+        gap_padding: Optional[str] = ' ...',
         **kwargs,
 ):
     if len(segments) == 0:

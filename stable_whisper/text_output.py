@@ -204,13 +204,12 @@ def result_to_any(result: (dict, list),
                   reverse_text: Union[bool, tuple] = False,
                   to_word_level_string_callback: Callable = None):
     """
-
-    Generate file from result to display segment-level and/or word-level timestamp.
+    Generate file from ``result`` to display segment-level and/or word-level timestamp.
 
     Returns
     -------
-    string of content if no [filepath] is provided, else None
-
+    str
+        String of the content if ``filepath`` is ``None``.
     """
     segments, segment_level, word_level = _preprocess_args(
         result, segment_level, word_level, min_dur, reverse_text=reverse_text
@@ -259,41 +258,47 @@ def result_to_srt_vtt(result: (dict, list),
                       strip=True,
                       reverse_text: Union[bool, tuple] = False):
     """
-
     Generate SRT/VTT from result to display segment-level and/or word-level timestamp.
 
     Parameters
     ----------
-    result: (dict, list)
-        result from modified model
-    filepath: str:
-        path to save file. if no path is specified, the content will be returned as a str instead
-    segment_level: bool:
-        whether to use segment-level timestamps in output (default: True)
-    word_level: bool
-        whether to use word-level timestamps in output (default: True)
-    min_dur: float
-        minimum duration any word/segment is allowed to have. (default: 0.02)
-        if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
-    tag: Tuple[str, str]
-        tag used to change the properties a word at its timestamp
-        SRT Default: '<font color="#00ff00">', '</font>'
-        VTT Default: '<u>', '</u>'
-    vtt: bool
-        whether to output VTT (default: False if no [filepath] is specified, else determined by [filepath] extension)
-    strip: bool
-        whether to remove spaces before and after text on each segment for output (default: True)
-    reverse_text: Union[bool, tuple]
-        whether to reverse the order of words for each segment (default: False)
-        or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
-        to match transcription settings (if True, the default punctuations will be used)
-        Note: This will not fix RTL text not displaying tags properly which is an issue with video player.
-                VLC seems to not suffer from this issue.
+    result : dict or list or stable_whisper.result.WhisperResult
+        Result of transcription.
+    filepath : str, default None, meaning content will be returned as a ``str``
+        Path to save file.
+    segment_level : bool, default True
+        Whether to use segment-level timestamps in output.
+    word_level : bool, default True
+        Whether to use word-level timestamps in output.
+    min_dur : float, default 0.2
+        Minimum duration allowed for any word/segment before the word/segments are merged with adjacent word/segments.
+    tag: tuple of (str, str), default None, meaning ('<font color="#00ff00">', '</font>') if SRT else ('<u>', '</u>')
+        Tag used to change the properties a word at its timestamp.
+    vtt : bool, default None, meaning determined by extension of ``filepath`` or ``False`` if no valid extension.
+        Whether to output VTT.
+    strip : bool, default True
+        Whether to remove spaces before and after text on each segment for output.
+    reverse_text: bool or tuple, default False
+        Whether to reverse the order of words for each segment or provide the ``prepend_punctuations`` and
+        ``append_punctuations`` as tuple pair instead of ``True`` which is for the default punctuations.
 
     Returns
     -------
-    string of content if no [filepath] is provided, else None
+    str
+        String of the content if ``filepath`` is ``None``.
 
+    Notes
+    -----
+    ``reverse_text`` will not fix RTL text not displaying tags properly which is an issue with some video player. VLC
+    seems to not suffer from this issue.
+
+    Examples
+    --------
+    >>> import stable_whisper
+    >>> model = stable_whisper.load_model('base')
+    >>> result = model.transcribe('audio.mp3')
+    >>> result.to_srt_vtt('audio.srt')
+    Saved: audio.srt
     """
     is_srt = (filepath is None or not filepath.lower().endswith('.vtt')) if vtt is None else not vtt
     if is_srt:
@@ -327,35 +332,43 @@ def result_to_tsv(result: (dict, list),
                   strip=True,
                   reverse_text: Union[bool, tuple] = False):
     """
-
     Generate TSV from result to display segment-level and/or word-level timestamp.
 
     Parameters
     ----------
-    result: (dict, list)
-        result from modified model
-    filepath: str:
-        path to save file. if no path is specified, the content will be returned as a str instead
-    segment_level: bool:
-        whether to use segment-level timestamps in output (default: True)
-    word_level: bool
-        whether to use word-level timestamps in output (default: False)
-    min_dur: float
-        minimum duration any word/segment is allowed to have. (default: 0.02)
-        if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
-    strip: bool
-        whether to remove spaces before and after text on each segment for output (default: True)
-    reverse_text: Union[bool, tuple]
-        whether to reverse the order of words for each segment (default: False)
-        or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
-        to match transcription settings (if True, the default punctuations will be used)
-        Note: This will not fix RTL text not displaying tags properly which is an issue with video player.
-                VLC seems to not suffer from this issue.
+    result : dict or list or stable_whisper.result.WhisperResult
+        Result of transcription.
+    filepath : str, default None, meaning content will be returned as a ``str``
+        Path to save file.
+    segment_level : bool, default True
+        Whether to use segment-level timestamps in output.
+    word_level : bool, default True
+        Whether to use word-level timestamps in output.
+    min_dur : float, default 0.2
+        Minimum duration allowed for any word/segment before the word/segments are merged with adjacent word/segments.
+    strip : bool, default True
+        Whether to remove spaces before and after text on each segment for output.
+    reverse_text: bool or tuple, default False
+        Whether to reverse the order of words for each segment or provide the ``prepend_punctuations`` and
+        ``append_punctuations`` as tuple pair instead of ``True`` which is for the default punctuations.
 
     Returns
     -------
-    string of content if no [filepath] is provided, else None
+    str
+        String of the content if ``filepath`` is ``None``.
 
+    Notes
+    -----
+    ``reverse_text`` will not fix RTL text not displaying tags properly which is an issue with some video player. VLC
+    seems to not suffer from this issue.
+
+    Examples
+    --------
+    >>> import stable_whisper
+    >>> model = stable_whisper.load_model('base')
+    >>> result = model.transcribe('audio.mp3')
+    >>> result.to_tsv('audio.tsv')
+    Saved: audio.tsv
     """
     if segment_level is None and word_level is None:
         segment_level = True
@@ -391,53 +404,61 @@ def result_to_ass(result: (dict, list),
                   reverse_text: Union[bool, tuple] = False,
                   **kwargs):
     """
-
-    Generate Advanced SubStation Alpha (ASS) file from result to display segment-level and/or word-level timestamp.
-
-    Note: ass file is used in the same way as srt, vtt, etc.
+    Generate Advanced SubStation Alpha (ASS) file from ``result`` to display segment-level and/or word-level timestamp.
 
     Parameters
     ----------
-    result: (dict, list)
-        result from modified model
-    filepath: str:
-        path to save file. if no path is specified, the content will be returned as a str instead
-    segment_level: bool:
-        whether to use segment-level timestamps in output (default: True)
-    word_level: bool
-        whether to use word-level timestamps in output (default: True)
-    min_dur: float
-        minimum duration any word/segment is allowed to have. (default: 0.02)
-        if the duration is less than this threshold, the word/segments will be merged with adjacent word/segments.
-    tag: Tuple[str, str]
-        tag used to change the properties a word at its timestamp. -1 for individual word highlight tag (default: None)
-    font: str
-        word font (default: Arial)
-    font_size: int
-        word font size (default: 48)
-    strip: bool
-        whether to remove spaces before and after text on each segment for output (default: True)
-    highlight_color: str
-        hexadecimal of the color use for default highlights as '<bb><gg><rr>' (default: '00ff00')
-    karaoke: bool
-        whether to use progressive filling highlights (for karaoke effect) (default: False)
-    reverse_text: Union[bool, tuple]
-        whether to reverse the order of words for each segment (default: False)
-        or provide the [prepend_punctuations] and [append_punctuations] as tuple pair instead of True
-        to match transcription settings (if True, the default punctuations will be used)
-        Note: This will not fix RTL text not displaying tags properly which is an issue with video player.
-                VLC seems to not suffer from this issue.
+    result : dict or list or stable_whisper.result.WhisperResult
+        Result of transcription.
+    filepath : str, default None, meaning content will be returned as a ``str``
+        Path to save file.
+    segment_level : bool, default True
+        Whether to use segment-level timestamps in output.
+    word_level : bool, default True
+        Whether to use word-level timestamps in output.
+    min_dur : float, default 0.2
+        Minimum duration allowed for any word/segment before the word/segments are merged with adjacent word/segments.
+    tag: tuple of (str, str) or int, default None, meaning use default highlighting
+        Tag used to change the properties a word at its timestamp. -1 for individual word highlight tag.
+    font : str, default `Arial`
+        Word font.
+    font_size : int, default 48
+        Word font size.
+    strip : bool, default True
+        Whether to remove spaces before and after text on each segment for output.
+    highlight_color : str, default '00ff00'
+        Hexadecimal of the color use for default highlights as '<bb><gg><rr>'.
+    karaoke : bool, default False
+        Whether to use progressive filling highlights (for karaoke effect).
+    reverse_text: bool or tuple, default False
+        Whether to reverse the order of words for each segment or provide the ``prepend_punctuations`` and
+        ``append_punctuations`` as tuple pair instead of ``True`` which is for the default punctuations.
     kwargs:
-        used for format styles:
+        Format styles:
         'Name', 'Fontname', 'Fontsize', 'PrimaryColour', 'SecondaryColour', 'OutlineColour', 'BackColour', 'Bold',
         'Italic', 'Underline', 'StrikeOut', 'ScaleX', 'ScaleY', 'Spacing', 'Angle', 'BorderStyle', 'Outline',
         'Shadow', 'Alignment', 'MarginL', 'MarginR', 'MarginV', 'Encoding'
 
     Returns
     -------
-    string of content if no [filepath] is provided, else None
+    str
+        String of the content if ``filepath`` is ``None``.
 
+    Notes
+    -----
+    ``reverse_text`` will not fix RTL text not displaying tags properly which is an issue with some video player. VLC
+    seems to not suffer from this issue.
+
+    Examples
+    --------
+    >>> import stable_whisper
+    >>> model = stable_whisper.load_model('base')
+    >>> result = model.transcribe('audio.mp3')
+    >>> result.to_ass('audio.ass')
+    Saved: audio.ass
     """
+    if tag == ['-1']:  # CLI
+        tag = -1
     if highlight_color is None:
         highlight_color = '00ff00'
 
@@ -499,7 +520,15 @@ def result_to_ass(result: (dict, list),
 
 def save_as_json(result: dict, path: str):
     """
-    Save result as json.
+    Save ``result`` as JSON file to ``path``.
+
+    Examples
+    --------
+    >>> import stable_whisper
+    >>> model = stable_whisper.load_model('base')
+    >>> result = model.transcribe('audio.mp3')
+    >>> result.save_as_json('audio.json')
+    Saved: audio.json
     """
     if not isinstance(result, dict) and callable(getattr(result, 'to_dict')):
         result = result.to_dict()
@@ -509,9 +538,9 @@ def save_as_json(result: dict, path: str):
     _save_as_file(result, path)
 
 
-def load_result(json_path: str):
+def load_result(json_path: str) -> dict:
     """
-    Load result saved as json.
+    Return a ``dict`` of the contents in ``json_path``.
     """
     with open(json_path, 'r', encoding='utf-8') as f:
         return json.load(f)

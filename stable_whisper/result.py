@@ -9,7 +9,7 @@ from itertools import chain
 
 from .stabilization import suppress_silence, get_vad_silence_func, mask2timing, wav2mask
 from .text_output import *
-from .utils import str_to_valid_type
+from .utils import str_to_valid_type, format_timestamp
 
 
 __all__ = ['WhisperResult', 'Segment']
@@ -123,7 +123,7 @@ class WordTiming:
 
 def _words_by_lock(words: List[WordTiming], only_text: bool = False, include_single: bool = False):
     """
-    Returns a nested list of words such that each sublist contains words that are locked together.
+    Return a nested list of words such that each sublist contains words that are locked together.
     """
     all_words = []
     for word in words:
@@ -152,6 +152,14 @@ class Segment:
     words: Union[List[WordTiming], List[dict]] = None
     ori_has_words: bool = None
     id: int = None
+
+    def to_display_str(self):
+        line = f"[{format_timestamp(self.start)} --> {format_timestamp(self.end)}] {self.text}"
+        if self.has_words:
+            line += '\n' + '\n'.join(
+                f"-[{format_timestamp(w.start)}] -> [{format_timestamp(w.end)}] \"{w.word}\"" for w in self.words
+            ) + '\n'
+        return line
 
     @property
     def has_words(self):
@@ -214,8 +222,8 @@ class Segment:
                 word.round_all_timestamps()
 
     def offset_time(self, offset_seconds: float):
-        self.start = self.start + offset_seconds
-        self.end = self.end + offset_seconds
+        self.start = round(self.start + offset_seconds, 3)
+        self.end = round(self.end + offset_seconds, 3)
         _increment_attr(self, 'seek', offset_seconds)
         self._word_operations('offset_time', offset_seconds)
 
@@ -238,7 +246,7 @@ class Segment:
 
     def apply_min_dur(self, min_dur: float, inplace: bool = False):
         """
-        Any duration is less than [min_dur] will be merged with adjacent word.
+        Merge any word with adjacent word if its duration is less than ``min_dur``.
         """
         segment = self if inplace else deepcopy(self)
         if not self.has_words:
@@ -268,11 +276,7 @@ class Segment:
             append_punctuations: str = None
     ):
         """
-
-        Returns
-        -------
-        A copy with words reversed order per segment
-
+        Return a copy with words reversed order per segment.
         """
         if prepend_punctuations is None:
             prepend_punctuations = "\"'“¿([{-"
@@ -608,7 +612,7 @@ class WhisperResult:
 
     def apply_min_dur(self, min_dur: float, inplace: bool = False):
         """
-        Any duration is less than [min_dur] will be merged with adjacent word/segments.
+        Merge any word/segment with adjacent word/segment if its duration is less than ``min_dur``.
         """
         result = self if inplace else deepcopy(self)
         max_i = len(result.segments) - 1
@@ -643,25 +647,25 @@ class WhisperResult:
             silent_ends: np.ndarray,
             min_word_dur: float = 0.1,
             word_level: bool = True
-    ):
+    ) -> "WhisperResult":
         """
-
-        Snap any start/end timestamps in silence parts of audio to the boundaries of the silence.
+        Move any start/end timestamps in silence parts of audio to the boundaries of the silence.
 
         Parameters
         ----------
-        silent_starts: np.ndarray
-            start timestamps of silent sections of audio
+        silent_starts : np.ndarray
+            An array starting timestamps of silent sections of audio.
+        silent_ends : np.ndarray
+            An array ending timestamps of silent sections of audio.
+        min_word_dur : float, default 0.1
+            Only allow changes on timestamps that results in word duration greater than this value.
+        word_level : bool, default False
+            Whether to settings to word level timestamps.
 
-        silent_ends: np.ndarray
-            start timestamps of silent sections of audio
-
-        min_word_dur: float
-            only allow changes on timestamps that results in word duration greater than this value. (default: 0.1)
-
-        word_level: bool
-            whether to settings to word level timestamps (default: False)
-
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         for s in self.segments:
             s.suppress_silence(silent_starts, silent_ends, min_word_dur, word_level=word_level)
@@ -682,12 +686,51 @@ class WhisperResult:
             min_word_dur: float = 0.1,
             word_level: bool = True
 
-    ):
+    ) -> "WhisperResult":
         """
+        Adjust timestamps base detected speech gaps.
 
-        Wrapper for suppress_silence() with auto silence detection.
-        Note: This is already performed by transcribe()/transcribe_minimal()/align() if [suppress_silence]=True
+        This is method combines :meth:`stable_whisper.result.WhisperResult.suppress_silence` with silence detection.
 
+        Parameters
+        ----------
+        audio : str or np.ndarray or torch.Tensor or bytes
+            Path/URL to the audio file, the audio waveform, or bytes of audio file.
+        vad : bool, default False
+            Whether to use Silero VAD to generate timestamp suppression mask.
+            Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
+        verbose : bool or None, default False
+            If ``False``, mute messages about hitting local caches. Note that the message about first download cannot be
+            muted. Only applies if ``vad = True``.
+        sample_rate : int, default None, meaning ``whisper.audio.SAMPLE_RATE``, 16kHZ
+            The sample rate of ``audio``.
+        vad_onnx : bool, default False
+            Whether to use ONNX for Silero VAD.
+        vad_threshold : float, default 0.35
+            Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
+        q_levels : int, default 20
+            Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
+            Acts as a threshold to marking sound as silent.
+            Fewer levels will increase the threshold of volume at which to mark a sound as silent.
+        k_size : int, default 5
+            Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
+            Recommend 5 or 3; higher sizes will reduce detection of silence.
+        min_word_dur : float, default 0.1
+            Only allow changes on timestamps that results in word duration greater than this value.
+        word_level : bool, default False
+            Whether to settings to word level timestamps.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        This operation is already performed by :func:`stable_whisper.whisper_word_level.transcribe_stable` /
+        :func:`stable_whisper.whisper_word_level.transcribe_minimal`/
+        :func:`stable_whisper.non_whisper.transcribe_any` / :func:`stable_whisper.alignment.align`
+        if ``suppress_silence = True``.
         """
         if vad:
             silent_timings = get_vad_silence_func(
@@ -709,18 +752,16 @@ class WhisperResult:
             verbose: bool = False
     ):
         """
-
         Minimize the duration of words using timestamps of another result.
 
         Parameters
         ----------
-        other_result: "WhisperResult"
+        other_result : "WhisperResult"
             Timing data of the same words in a WhisperResult instance.
-        min_word_dur: float
-            Prevent changes to timestamps if the resultant word duration is less than [min_word_dur]. (Default: 0.1)
-        verbose: bool
-            Whether to print out the timestamp changes. (Default: False)
-
+        min_word_dur : float, default 0.1
+            Prevent changes to timestamps if the resultant word duration is less than ``min_word_dur``.
+        verbose : bool, default False
+            Whether to print out the timestamp changes.
         """
         if not (self.has_words and other_result.has_words):
             raise NotImplementedError('This operation can only be performed on results with word timestamps')
@@ -878,19 +919,21 @@ class WhisperResult:
             self,
             max_gap: float = 0.1,
             lock: bool = False
-    ):
+    ) -> "WhisperResult":
         """
-
-        Split (in-place) any segment into multiple segments
-        where the duration in between two  words > [max_gap]
+        Split (in-place) any segment where the gap between two of its words is greater than ``max_gap``.
 
         Parameters
         ----------
-        max_gap: float
-            The point between any two words greater than this value (seconds) will be split. (Default: 0.1)
-        lock: bool
-            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
+        max_gap : float, default 0.1
+            Maximum second(s) allowed between two words if the same segment.
+        lock : bool, default False
+            Whether to prevent future splits/merges from altering changes made by this method.
 
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         self._split_segments(lambda x: x.get_gap_indices(max_gap), lock=lock)
         return self
@@ -902,25 +945,28 @@ class WhisperResult:
             max_chars: int = None,
             is_sum_max: bool = False,
             lock: bool = False
-    ):
+    ) -> "WhisperResult":
         """
-
-        Merge (in-place) any pair of adjacent segments if the duration in between the pair <= [min_gap]
+        Merge (in-place) any pair of adjacent segments if the gap between them <= ``min_gap``.
 
         Parameters
         ----------
-        min_gap: float
-            Any gaps below or equal to this value (seconds) will be merged. (Default: 0.1)
-        max_words: int
-            Maximum number of words allowed. (Default: None)
-        max_chars: int
-            Maximum number of characters allowed. (Default: None)
-        is_sum_max: bool
-            Whether [max_words] and [max_chars] is applied to the merged segment
-            instead of the individual segments to be merged. (Default: False)
-        lock: bool
-            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
+        min_gap : float, default 0.1
+            Minimum second(s) allow between two segment.
+        max_words : int, optional
+            Maximum number of words allowed in each segment.
+        max_chars : int, optional
+            Maximum number of characters allowed in each segment.
+        is_sum_max : bool, default False
+            Whether ``max_words`` and ``max_chars`` is applied to the merged segment instead of the individual segments
+            to be merged.
+        lock : bool, default False
+            Whether to prevent future splits/merges from altering changes made by this method.
 
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         indices = self.get_gap_indices(min_gap)
         self._merge_segments(indices,
@@ -931,18 +977,21 @@ class WhisperResult:
             self,
             punctuation: Union[List[str], List[Tuple[str, str]], str],
             lock: bool = False
-    ):
+    ) -> "WhisperResult":
         """
-
-        Split (in-place) any segment at words that starts/ends with specified punctuation(s)
+        Split (in-place) any segment at words that starts/ends with specific punctuations.
 
         Parameters
         ----------
-        punctuation: Union[List[str], List[Tuple[str, str]], str]
+        punctuation : list of str of list of tuple of (str, str) or str
             Punctuation(s) to split segments by.
-        lock: bool
-            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
+        lock : bool, default False
+            Whether to prevent future splits/merges from altering changes made by this method.
 
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         self._split_segments(lambda x: x.get_punctuation_indices(punctuation), lock=lock)
         return self
@@ -954,34 +1003,42 @@ class WhisperResult:
             max_chars: int = None,
             is_sum_max: bool = False,
             lock: bool = False
-    ):
+    ) -> "WhisperResult":
         """
-
-        Merge (in-place) any two segments that has specified punctuation(s) inbetween them
+        Merge (in-place) any two segments that has specific punctuations inbetween.
 
         Parameters
         ----------
-        punctuation: Union[List[str], str]
+        punctuation : list of str of list of tuple of (str, str) or str
             Punctuation(s) to merge segments by.
-        max_words: int
-            Maximum number of words allowed. (Default: None)
-        max_chars: int
-            Maximum number of characters allowed. (Default: None)
-        is_sum_max: bool
-            Whether [max_words] and [max_chars] is applied to the merged segment
-            instead of all the individual segments to be merged. (Default: False)
-        lock: bool
-            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
+        max_words : int, optional
+            Maximum number of words allowed in each segment.
+        max_chars : int, optional
+            Maximum number of characters allowed in each segment.
+        is_sum_max : bool, default False
+            Whether ``max_words`` and ``max_chars`` is applied to the merged segment instead of the individual segments
+            to be merged.
+        lock : bool, default False
+            Whether to prevent future splits/merges from altering changes made by this method.
 
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         indices = self.get_punctuation_indices(punctuation)
         self._merge_segments(indices,
                              max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
         return self
 
-    def merge_all_segments(self):
+    def merge_all_segments(self) -> "WhisperResult":
         """
         Merge all segments into one segment.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         self._merge_segments(list(range(len(self.segments) - 1)))
         return self
@@ -994,28 +1051,36 @@ class WhisperResult:
             force_len: bool = False,
             lock: bool = False,
             include_lock: bool = False
-    ):
+    ) -> "WhisperResult":
         """
-
-        Split (in-place) any segment in segments that do not exceed the specified length
+        Split (in-place) any segment that do not exceed the specified length
 
         Parameters
         ----------
-        max_chars: int
-            Maximum number of character allowed in each segment.
-        max_words: int
+        max_words : int, optional
             Maximum number of words allowed in each segment.
-        even_split: bool
-            Whether to evenly split a segment in length if it exceeds [max_chars] or [max_words]. (Default: True)
-            If True, segments can still exceed [max_chars] and locked words will be ignored to avoid uneven splits.
-        force_len: bool
-            Whether to force a constant length for each segment except the last segment. (Default: False)
-            This will ignore all previous non-locked segment boundaries (e.g. boundaries set by `regroup()`).
-        lock: bool
-            Whether to prevent future splits/merges from altering changes made by this method. (Default: False)
-        include_lock: bool
-            Whether to include previous lock before splitting based on max_words, if even_split=False.
-            Splitting will be done after the first word that is not locked > max_chars/max_words. (Default: False)
+        max_chars : int, optional
+            Maximum number of characters allowed in each segment.
+        even_split : bool, default True
+            Whether to evenly split a segment in length if it exceeds ``max_chars`` or ``max_words``.
+        force_len : bool, default False
+            Whether to force a constant length for each segment except the last segment.
+            This will ignore all previous non-locked segment boundaries.
+        lock : bool, default False
+            Whether to prevent future splits/merges from altering changes made by this method.
+        include_lock: bool, default False
+            Whether to include previous lock before splitting based on max_words, if ``even_split = False``.
+            Splitting will be done after the first word that is not locked > ``max_chars`` / ``max_words``.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        If ``even_split = True``, segments can still exceed ``max_chars`` and locked words will be ignored to avoid
+        uneven splitting.
         """
         if force_len:
             self.merge_all_segments()
@@ -1035,24 +1100,30 @@ class WhisperResult:
             medium_factor: float = 2.5,
             max_dur: float = None,
             clip_start: (bool, None) = True,
-            verbose: bool = False):
+            verbose: bool = False
+    ) -> "WhisperResult":
         """
+        Clamp all word durations above certain value.
 
-        Clamp all word durations above certain value. Note: most effective when applied before other regroup operations.
+        This is most effective when applied before and after other regroup operations.
 
         Parameters
         ----------
-        medium_factor: float
-            Clamp durations above ([medium_factor] * medium duration) per segment. (Default: 2.5)
-            If [medium_factor]=None/0 or segment has less than 3 words, it will be ignored and use only [max_dur].
-        max_dur: float
-            Clamp durations above [max_dur]. (Default: None)
-        clip_start: (bool, None)
-            Whether to clamp the start of a word. (Default: True)
-            If None, clamp the start of first word and end of last word per segment.
-        verbose: bool
-            Whether to print out the timestamp changes. (Default: False)
+        medium_factor : float, default 2.5
+            Clamp durations above (``medium_factor`` * medium duration) per segment.
+            If ``medium_factor = None/0`` or segment has less than 3 words, it will be ignored and use only ``max_dur``.
+        max_dur : float, optional
+            Clamp durations above ``max_dur``.
+        clip_start : bool, default True
+            Whether to clamp the start of a word. If ``None``, clamp the start of first word and end of last word per
+            segment.
+        verbose : bool, default False
+            Whether to print out the timestamp changes.
 
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         if not (medium_factor or max_dur):
             raise ValueError('At least one of following arguments requires non-zero value: medium_factor; max_dur')
@@ -1087,31 +1158,35 @@ class WhisperResult:
 
     def lock(
             self,
-            startswith: Union[str, bool] = None,
-            endswith: Union[str, bool] = None,
+            startswith: Union[str, List[str]] = None,
+            endswith: Union[str, List[str]] = None,
             right: bool = True,
             left: bool = False,
             case_sensitive: bool = False,
             strip: bool = True
-    ):
+    ) -> "WhisperResult":
         """
-        Prevent words/segments with matching prefix/suffix from splitting/merging.
+        Lock words/segments with matching prefix/suffix to prevent splitting/merging.
 
         Parameters
         ----------
-        startswith: Union[str, bool]
-            String or list of string(s) to check if word/segment ends with.
-        endswith: Union[str, bool]
-            String or list of string(s) to check if word/segment start with.
-        right: bool
-            Whether prevent splits/merges with the next word/segment. (Default: True)
-        left: bool
-            Whether prevent splits/merges with the previous word/segment. (Default: False)
-        case_sensitive: bool
-            Whether to match the case of the prefix/suffix with the words/segment. (Default: False)
-        strip: bool
-            Whether to ignore spaces before and after both words/segments and prefixes/suffixes. (Default: True)
+        startswith: str or list of str
+            Prefixes to lock.
+        endswith: str or list of str
+            Suffixes to lock.
+        right : bool, default True
+            Whether prevent splits/merges with the next word/segment.
+        left : bool, default False
+            Whether prevent splits/merges with the previous word/segment.
+        case_sensitive : bool, default False
+            Whether to match the case of the prefixes/suffixes with the words/segments.
+        strip : bool, default True
+            Whether to ignore spaces before and after both words/segments and prefixes/suffixes.
 
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
         """
         assert startswith or endswith, 'Must specify [startswith] or/and [endswith].'
         startswith = [] if startswith is None else ([startswith] if isinstance(startswith, str) else startswith)
@@ -1142,57 +1217,63 @@ class WhisperResult:
                         part.lock_left()
         return self
 
-    def regroup(self, regroup_algo: Union[str, bool] = None, verbose: bool = False, only_show: bool = False):
+    def regroup(
+            self,
+            regroup_algo: Union[str, bool] = None,
+            verbose: bool = False,
+            only_show: bool = False
+    ) -> "WhisperResult":
         """
-
-        Regroup (in-place) all words into segments with more natural boundaries without locking.
+        Regroup (in-place) words into segments.
 
         Parameters
         ----------
-        regroup_algo: Union[str, bool]
-            string for customizing the regrouping algorithm (default: 'da')
+        regroup_algo: str or bool, default 'da'
+             String representation of a custom regrouping algorithm or ``True`` use to the default algorithm 'da'.
+        verbose : bool, default False
+            Whether to show all the methods and arguments parsed from ``regroup_algo``.
+        only_show : bool, default False
+            Whether to show the all methods and arguments parsed from ``regroup_algo`` without running the methods
 
-                Method keys:
-                    sg: split_by_gap
-                    sp: split_by_punctuation
-                    sl: split_by_length
-                    mg: merge_by_gap
-                    mp: merge_by_punctuation
-                    ms: merge_all_segment
-                    cm: clamp_max
-                    l: lock
-                    us: unlock_all_segments
-                    da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
 
-                Metacharacters:
-                    = separates a method key and its arguments (not used if no argument)
-                    _ separates method keys (after arguments if there are any)
-                    + separates arguments for a method key
-                    / separates an argument into list of strings
-                    * separates an item in list of strings into a nested list of strings
-
-                -arguments are parsed positionally
-                -if no argument is provided, the default ones will be used
-                -use 1 or 0 to represent True or False
-
-                Example 1:
-                    merge_by_gap(.2, 10, lock=True)
-                    mg=.2+10+++1
-                    Note: [lock] is the 5th argument hence the 2 missing arguments inbetween the three + before 1
-
-                Example 2:
-                    split_by_punctuation([('.', ' '), '。', '?', '？'], True)
-                    sp=.* /。/?/？+1
-
-                Example 3:
-                    merge_all_segments().split_by_gap(.5).merge_by_gap(.15, 3)
-                    ms_sg=.5_mg=.15+3
-
-        verbose: bool
-            whether to show all the methods and arguments parsed from [regroup_algo]
-        only_show: bool
-            show the all methods and arguments parsed from [regroup_algo] without running the methods
-
+        Notes
+        -----
+        Syntax for string representation of custom regrouping algorithm.
+            Method keys:
+                sg: split_by_gap
+                sp: split_by_punctuation
+                sl: split_by_length
+                mg: merge_by_gap
+                mp: merge_by_punctuation
+                ms: merge_all_segment
+                cm: clamp_max
+                l: lock
+                us: unlock_all_segments
+                da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+            Metacharacters:
+                = separates a method key and its arguments (not used if no argument)
+                _ separates method keys (after arguments if there are any)
+                + separates arguments for a method key
+                / separates an argument into list of strings
+                * separates an item in list of strings into a nested list of strings
+            Notes:
+            -arguments are parsed positionally
+            -if no argument is provided, the default ones will be used
+            -use 1 or 0 to represent True or False
+            Example 1:
+                merge_by_gap(.2, 10, lock=True)
+                mg=.2+10+++1
+                Note: [lock] is the 5th argument hence the 2 missing arguments inbetween the three + before 1
+            Example 2:
+                split_by_punctuation([('.', ' '), '。', '?', '？'], True)
+                sp=.* /。/?/？+1
+            Example 3:
+                merge_all_segments().split_by_gap(.5).merge_by_gap(.15, 3)
+                ms_sg=.5_mg=.15+3
         """
         if regroup_algo is False:
             return self
@@ -1231,21 +1312,21 @@ class WhisperResult:
 
     def find(self, pattern: str, word_level=True, flags=None) -> "WhisperResultMatches":
         """
-
         Find segments/words and timestamps with regular expression.
 
         Parameters
         ----------
-        pattern: str
+        pattern : str
             RegEx pattern to search for.
-        word_level: bool
-            Whether to search at word-level
-        flags:
+        word_level : bool, default True
+            Whether to search at word-level.
+        flags : optional
             RegEx flags.
 
         Returns
         -------
-        An instance of WhisperResultMatches class to allow for continuous chaining of this method.
+        stable_whisper.result.WhisperResultMatches
+            An instance of :class:`stable_whisper.result.WhisperResultMatches` with word/segment that match ``pattern``.
         """
         return WhisperResultMatches(self).find(pattern, word_level=word_level, flags=flags)
 
@@ -1263,8 +1344,7 @@ class WhisperResult:
 
     def reset(self):
         """
-        Restore all values to that in `ori_dict` which is the state at initialization
-        or the state store in the `ori_dict` key of the dictionary that initialized this instance.
+        Restore all values to that at initialization.
         """
         self.language = self.ori_dict.get('language')
         segments = self.ori_dict.get('segments')
@@ -1333,7 +1413,7 @@ class SegmentMatch:
 
 class WhisperResultMatches:
     """
-    RegEx matches for WhisperResults
+    RegEx matches for WhisperResults.
     """
     # Use WhisperResult.find() instead of instantiating this class directly.
     def __init__(
@@ -1373,21 +1453,21 @@ class WhisperResultMatches:
 
     def find(self, pattern: str, word_level=True, flags=None) -> "WhisperResultMatches":
         """
-
         Find segments/words and timestamps with regular expression.
 
         Parameters
         ----------
-        pattern: str
+        pattern : str
             RegEx pattern to search for.
-        word_level: bool
-            Whether to search at word-level
-        flags:
+        word_level : bool, default True
+            Whether to search at word-level.
+        flags : optional
             RegEx flags.
 
         Returns
         -------
-        An instance of WhisperResultMatches class to allow for continuous chaining of this method.
+        stable_whisper.result.WhisperResultMatches
+            An instance of :class:`stable_whisper.result.WhisperResultMatches` with word/segment that match ``pattern``.
         """
 
         seg_groups = self._curr_seg_groups()

@@ -81,25 +81,21 @@ def decode_stable(model: "Whisper",
 
     Parameters
     ----------
-    model: Whisper
-        The Whisper model modified instance
-
-    mel: torch.Tensor, shape = (80, 3000) or (*, 80, 3000)
-        A tensor containing the Mel spectrogram(s)
-
-    options: DecodingOptions
+    model : whisper.model.Whisper
+        An instance of Whisper ASR model.
+    mel : torch.Tensor,
+        A tensor containing the Mel spectrogram(s). ``mel.shape`` must be (80, 3000) or (*, 80, 3000).
+    options : whisper.decode.DecodingOptions, default whisper.decode.DecodingOptions()
         A dataclass that contains all necessary options for decoding 30-second segments
-
-    ts_token_mask: torch.Tensor
-        Mask for suppressing to timestamp token(s) for decoding
-
-    audio_features: torch.Tensor
-        reused audio_feature from encoder for fallback
+    ts_token_mask : torch.Tensor, optional
+        Mask for suppressing to timestamp token(s) for decoding.
+    audio_features : torch.Tensor, optional
+        Reused ``audio_feature`` from encoder for fallback.
 
     Returns
     -------
-    result: Union[DecodingResult, List[DecodingResult]]
-        The result(s) of decoding contained in `DecodingResult` dataclass instance(s)
+    whisper.decode.DecodingResult or list whisper.decode.DecodingResult
+        The result(s) of decoding contained in ``whisper.decode.DecodingResult`` dataclass instance(s).
     """
     if single := mel.ndim == 2:
         mel = mel.unsqueeze(0)

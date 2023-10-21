@@ -342,34 +342,34 @@ def visualize_suppression(
         height: int = 200
 ):
     """
+    Visualize regions on the waveform of ``audio`` detected as silent.
 
-    Regions on the waveform colored red is where it will be likely be suppressed and marked to as silent.
+    Regions on the waveform colored red are detected as silent.
 
     Parameters
     ----------
-    audio: Union[torch.Tensor, np.ndarray, str, bytes]
-        Audio to visualize.
-    output: str
-        Path to save visualization. If none is provided, image will be shown directly via Pillow or opencv-python.
-    q_levels: int
-        Quantization levels for generating timestamp suppression mask; ignored if [vad]=true. (Default: 20)
+    audio : str or np.ndarray or torch.Tensor or bytes
+        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+        If audio is ``np.ndarray`` or ``torch.Tensor``, the audio must be already at sampled to 16kHz.
+    output : str, default None, meaning image will be shown directly via Pillow or opencv-python
+        Path to save visualization.
+    q_levels : int, default 20
+        Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
         Fewer levels will increase the threshold of volume at which to mark a sound as silent.
-    k_size: int
-        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if [vad]=true. (Default: 5)
+    k_size : int, default 5
+        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-    vad_threshold: float
-        Threshold for detecting speech with Silero VAD. (Default: 0.35)
-        Low threshold reduces false positives for silence detection.
-    vad: bool
-        Whether to use Silero VAD to generate timestamp suppression mask. (Default: False)
-        Silero VAD requires PyTorch 1.12.0+. Official repo: https://github.com/snakers4/silero-vad
-    max_width: int
-        Maximum width of visualization to avoid overly large image from long audio. (Default: 1500)
+    vad : bool, default False
+        Whether to use Silero VAD to generate timestamp suppression mask.
+        Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
+    vad_threshold : float, default 0.35
+        Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
+    max_width : int, default 1500
+        Maximum width of visualization to avoid overly large image from long audio.
         Each unit of pixel is equivalent  to 1 token.  Use -1 to visualize the entire audio track.
-    height: int
+    height : int, default 200
         Height of visualization.
-
     """
     max_n_samples = None if max_width == -1 else round(max_width * N_SAMPLES_PER_TOKEN)
 

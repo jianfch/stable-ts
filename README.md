@@ -49,9 +49,9 @@ stable-ts audio.mp3 -o audio.srt
 </details>
 
 Parameters: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L858-L883), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L74-L227),
-[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L677-L699)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L985-L1014), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L74-L211),
+[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L650-L723)
 
 <details>
 <summary>faster-whisper</summary>
@@ -62,7 +62,7 @@ model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
 ```
 Parameters: 
-[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L772-L796), 
+[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L835-L912), 
 
 </details>
 
@@ -75,9 +75,10 @@ result.to_ass('audio.ass') #ASS
 result.to_tsv('audio.tsv') #TSV
 ```
 Parameters: 
-[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L261-L297),
-[to_ass()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L393-L440),
-[to_tsv()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L329-L359)
+[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L260-L302),
+[to_ass()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L406-L459),
+[to_tsv()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L334-L372)
+[save_as_json()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L522-L531)
 <br /><br />
 There are word-level and segment-level timestamps. All output formats support them. 
 They also support will both levels simultaneously except TSV. 
@@ -172,7 +173,7 @@ stable-ts audio.mp3 --align text.txt --language en
 </details>
 
 Parameters:
-[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L27-L84)
+[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L56-L153)
 
 #### Adjustments
 Timestamps are adjusted after the model predicts them. 
@@ -185,7 +186,7 @@ Note: both results are required to have word timestamps and matching words.
 result.adjust_by_result(new_result)
 ```
 Parameters:
-[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L710-L723)
+[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L754-L765)
 
 ### Refinement
 Timestamps can be further improved with `refine()`.
@@ -211,7 +212,7 @@ stable-ts result.json --refine -o audio.srt --refine_option "audio=audio.mp3"
 </details>
 
 Parameters:
-[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L246-L316)
+[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L348-L419)
 
 
 ### Regrouping Words
@@ -241,19 +242,34 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1145-L1195)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L881-L893)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L934-L945)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L997-L1018)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L905-L923)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L957-L975)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L982-L984)
-- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1038-L1055)
-- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1096-L1114)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1226-L1277)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L923-L937)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L981-L995)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1055-L1084)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L948-L970)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1007-L1028)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1035-L1042)
+- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1105-L1127)
+- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1167-L1190)
 
 ### Locating Words
-You can locate words with regular expression.
+There are two ways to locate words. 
+The first way is by approximating time at which the words are spoken 
+then transcribing a few seconds around that approximating times as need.
+This also the faster way for locating words.
 ```python
+matches = model.locate('audio.mp3', 'are', 'English')
+for match in matches:
+    print(match.to_display_str())
+# verbose=True does the same thing as this for-loop.
+```
+Parameters:
+[locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L728-L824)
+
+The second way allows you to locate words with regular expression,
+but it requires the audio to be fully transcribed first. 
+```python
+result = model.transcribe('audio.mp3')
 # Find every sentence that contains "and"
 matches = result.find(r'[^.]+and[^.]+\.')
 # print the all matches if there are any
@@ -272,7 +288,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1232-L1248)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1314-L1330)
 
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
@@ -318,7 +334,7 @@ stable_whisper.encode_video_comparison(
 )
 ```
 Parameters: 
-[encode_video_comparison()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/video_output.py#L29-L91)
+[encode_video_comparison()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/video_output.py#L29-L73)
 
 #### Multiple Files with CLI 
 Transcribe multiple audio files then process the results directly into SRT files.
