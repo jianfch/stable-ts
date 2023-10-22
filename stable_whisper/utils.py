@@ -100,3 +100,15 @@ def format_timestamp(
     return (
         f"{hours_marker}{minutes:02d}:{seconds:02d}{decimal_marker}{milliseconds:03d}"
     )
+
+
+class UnsortedException(Exception):
+
+    def __init__(self, message: str = None, data: dict = None):
+        if not message:
+            message = 'Timestamps are not in ascending order. If data is produced by Stable-ts, please submit an issue.'
+        super().__init__(message)
+        self.data = data
+
+    def get_data(self):
+        return self.data

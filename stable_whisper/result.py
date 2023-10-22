@@ -9,7 +9,7 @@ from itertools import chain
 
 from .stabilization import suppress_silence, get_vad_silence_func, mask2timing, wav2mask
 from .text_output import *
-from .utils import str_to_valid_type, format_timestamp
+from .utils import str_to_valid_type, format_timestamp, UnsortedException
 
 
 __all__ = ['WhisperResult', 'Segment']
@@ -520,7 +520,7 @@ class Segment:
 
 class WhisperResult:
 
-    def __init__(self, result: Union[str, dict, list], force_order: bool = False, check_sorted: bool = True):
+    def __init__(self, result: Union[str, dict, list], force_order: bool = False, check_sorted: Union[bool, str] = True):
         result, self.path = self._standardize_result(result)
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
@@ -529,8 +529,7 @@ class WhisperResult:
         self._forced_order = force_order
         if self._forced_order:
             self.force_order()
-        if check_sorted:
-            self.raise_for_unsorted()
+        self.raise_for_unsorted(check_sorted)
         self.remove_no_word_segments()
         self.update_all_segs_with_words()
 
@@ -577,16 +576,17 @@ class WhisperResult:
         if self.has_words:
             self.update_all_segs_with_words()
 
-    def raise_for_unsorted(self):
-        parts = self.all_words() if self.has_words else self.segments
-        timestamps = np.array(list(chain.from_iterable((part.start, part.end) for part in parts)))
-        if len(timestamps) < 2:
+    def raise_for_unsorted(self, check_sorted: Union[bool, str] = True):
+        if check_sorted is False:
             return
-        if (timestamps[:-1] > timestamps[1:]).any():
-            raise NotImplementedError(f'Timestamps are not in ascending order. '
-                                      f'For transcribe_any() or data not produced by Stable-ts, '
-                                      f'sort segments/words by timestamps. '
-                                      f'Otherwise, please submit an issue.')
+        timestamps = np.array(list(chain.from_iterable((p.start, p.end) for p in self.all_words_or_segments())))
+        if len(timestamps) > 1 and (timestamps[:-1] > timestamps[1:]).any():
+            data = self.to_dict()
+            if check_sorted is True:
+                raise UnsortedException(data=data)
+            warnings.warn('Timestamps are not in ascending order. '
+                          'If data is produced by Stable-ts, please submit an issue with the saved data.')
+            save_as_json(data, check_sorted)
 
     def update_all_segs_with_words(self):
         for seg in self.segments:
