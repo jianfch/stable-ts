@@ -981,7 +981,7 @@ def modify_model(model: "Whisper"):
 # modified version of whisper.load_model
 def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
                download_root: str = None, in_memory: bool = False,
-               cpu_preload: bool = True, dq: bool = False) -> "Whisper":
+               cpu_preload: bool = False, dq: bool = False) -> "Whisper":
     """
     Load an instance if :class:`whisper.model.Whisper`.
 
