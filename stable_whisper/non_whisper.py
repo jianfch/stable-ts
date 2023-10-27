@@ -219,7 +219,7 @@ def transcribe_any(
     if demucs:
         from .audio import demucs_audio
         if demucs_device is None:
-            demucs_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            demucs_device = torch.device('cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu')
         demucs_kwargs = dict(
             audio=audio,
             input_sr=curr_sr,

@@ -166,7 +166,7 @@ def demucs_audio(audio: (torch.Tensor, str),
         audio = demucs_options.pop('mix')
 
     if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
     vocals_idx = model.sources.index('vocals')
     if verbose:
@@ -184,7 +184,7 @@ def demucs_audio(audio: (torch.Tensor, str),
         **apply_kwarg
     )[0, vocals_idx].mean(0)
 
-    if device != 'cpu':
+    if device != 'cpu' and device != "mps":
         torch.cuda.empty_cache()
 
     if output_sr is not None and model.samplerate != output_sr:

@@ -605,7 +605,7 @@ def transcribe_stable(
         # final update
         update_pbar()
 
-    if model.device != torch.device('cpu'):
+    if model.device != torch.device('cpu') and model.device != torch.device('mps'):
         torch.cuda.empty_cache()
 
     text = '' if tokenizer is None else tokenizer.decode(all_tokens[len(initial_prompt_tokens):])
@@ -1014,7 +1014,7 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     The overhead from ``dq = True`` might make inference slower for models smaller than 'large'.
     """
     if device is None or dq:
-        device = "cuda" if torch.cuda.is_available() and not dq else "cpu"
+        device = "cuda" if torch.cuda.is_available() and not dq else "mps" if torch.backends.mps.is_available() else "cpu"
     if cpu_preload:
         model = whisper.load_model(name, device='cpu', download_root=download_root, in_memory=in_memory)
         cuda_index = None
