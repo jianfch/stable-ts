@@ -255,10 +255,10 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 ### Locating Words
 There are two ways to locate words. 
 The first way is by approximating time at which the words are spoken 
-then transcribing a few seconds around that approximating times as need.
+then transcribing a few seconds around the approximated time.
 This also the faster way for locating words.
 ```python
-matches = model.locate('audio.mp3', 'are', 'English')
+matches = model.locate('audio.mp3', 'are', 'English', count=0)
 for match in matches:
     print(match.to_display_str())
 # verbose=True does the same thing as this for-loop.
