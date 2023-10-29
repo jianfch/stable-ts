@@ -1099,7 +1099,7 @@ class WhisperResult:
             self,
             medium_factor: float = 2.5,
             max_dur: float = None,
-            clip_start: (bool, None) = True,
+            clip_start: Optional[bool] = None,
             verbose: bool = False
     ) -> "WhisperResult":
         """
@@ -1114,7 +1114,7 @@ class WhisperResult:
             If ``medium_factor = None/0`` or segment has less than 3 words, it will be ignored and use only ``max_dur``.
         max_dur : float, optional
             Clamp durations above ``max_dur``.
-        clip_start : bool, default True
+        clip_start : bool or None, default None
             Whether to clamp the start of a word. If ``None``, clamp the start of first word and end of last word per
             segment.
         verbose : bool, default False

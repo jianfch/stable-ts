@@ -91,7 +91,7 @@ def find_alignment_stable(
     word_boundaries = np.pad(np.cumsum([len(t) for t in word_tokens[:-1]]), (1, 0))
 
     jumps = np.pad(np.diff(text_indices), (1, 0), constant_values=1).astype(bool)
-    jump_times = time_indices[jumps] / TOKENS_PER_SECOND
+    jump_times = time_indices[jumps].clip(min=0) / TOKENS_PER_SECOND
     start_times = jump_times[word_boundaries[:-1]]
     end_times = jump_times[word_boundaries[1:]]
     word_probabilities = [

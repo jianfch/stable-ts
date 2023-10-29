@@ -70,9 +70,9 @@ def transcribe_any(
          String representation of a custom regrouping algorithm or ``True`` use to the default algorithm 'da'. Only
          applies if ``word_timestamps = False``.
     suppress_silence : bool, default True
-        Whether to enable timestamps adjustments base the detected silence.
+        Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
-        Whether to adjust word timestamps base the detected silence. Only enabled if ``suppress_silence = True``.
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
     q_levels : int, default 20
         Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.

@@ -67,6 +67,7 @@ def transcribe_stable(
         gap_padding: str = ' ...',
         only_ffmpeg: bool = False,
         max_instant_words: float = 0.5,
+        avg_prob_threshold: Optional[float] = None,
         progress_callback: Callable = None,
         ignore_compatibility: bool = False,
         **decode_options) \
@@ -120,9 +121,9 @@ def transcribe_stable(
     ts_noise : float, default 0.1
         Percentage of noise to add to audio_features to perform inferences for ``ts_num``.
     suppress_silence : bool, default True
-        Whether to enable timestamps adjustments base the detected silence.
+        Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
-        Whether to adjust word timestamps base the detected silence. Only enabled if ``suppress_silence = True``.
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
     q_levels : int, default 20
         Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
@@ -177,6 +178,10 @@ def transcribe_stable(
         Whether to use only FFmpeg (instead of not yt-dlp) for URls
     max_instant_words : float, default 0.5
         If percentage of instantaneous words in a segment exceed this amount, the segment is removed.
+    avg_prob_threshold: float or None, default None
+        Transcribe the gap after the previous word and if the average word proababiliy of a segment falls below this
+        value, discard the segment. If ``None``, skip transcribing the gap to reduce chance of timestamps starting
+        before the next utterance.
     progress_callback : Callable, optional
         A function that will be called when transcription progress is updated.
         The callback need two parameters.
@@ -424,7 +429,7 @@ def transcribe_stable(
             seek_sample_end = seek_sample + N_SAMPLES
             audio_segment = audio[seek_sample:seek_sample_end]
             time_offset = seek_sample / SAMPLE_RATE
-            segment_samples = min(N_SAMPLES, total_samples - seek_sample)
+            segment_samples = audio_segment.shape[-1]
             segment_duration = segment_samples / SAMPLE_RATE
 
             mel_segment = (
@@ -537,11 +542,13 @@ def transcribe_stable(
                 if seg["start"] == seg["end"] or seg["text"].strip() in punctuations:
                     del current_segments[i]
 
-            num_samples = segment_samples
+            num_samples = (
+                min(round(end_timestamp_pos * N_SAMPLES_PER_TOKEN), segment_samples)
+                if end_timestamp_pos > 0 else
+                segment_samples
+            )
 
             if word_timestamps:
-                if end_timestamp_pos > 0:
-                    num_samples = min(round(end_timestamp_pos * N_SAMPLES_PER_TOKEN), num_samples)
                 add_word_timestamps_stable(
                     segments=current_segments,
                     model=model,
@@ -569,6 +576,17 @@ def transcribe_stable(
                     if zero_duration_percent > max_instant_words:
                         del current_segments[i]
 
+                if avg_prob_threshold and current_segments:
+                    if (
+                            single_timestamp_ending and
+                            (np.mean([w['probability'] for s in current_segments for w in s['words']]) <
+                             avg_prob_threshold)
+                    ):
+                        num_samples = segment_samples
+                        current_segments = []
+                    else:
+                        num_samples = round((current_segments[-1]['words'][-1]['end']-time_offset) * SAMPLE_RATE)
+
             if len(current_segments) == 0:
                 fast_forward()
                 continue
@@ -593,7 +611,7 @@ def transcribe_stable(
             all_tokens.extend(
                 [token for segment in current_segments for token in segment["tokens"]]
             )
-            if not single_timestamp_ending:
+            if not single_timestamp_ending or avg_prob_threshold:
                 segment_samples = num_samples
 
             if not condition_on_previous_text or result.temperature > 0.5:
@@ -673,9 +691,9 @@ def transcribe_minimal(
         String for customizing the regrouping algorithm. False disables regrouping.
         Ignored if ``word_timestamps = False``.
     suppress_silence : bool, default True
-        Whether to enable timestamps adjustments base the detected silence.
+        Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
-        Whether to adjust word timestamps base the detected silence. Only enabled if ``suppress_silence = True``.
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
     q_levels : int, default 20
         Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
@@ -859,9 +877,9 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             String for customizing the regrouping algorithm. False disables regrouping.
             Ignored if ``word_timestamps = False``.
         suppress_silence : bool, default True
-            Whether to enable timestamps adjustments base the detected silence.
+            Whether to enable timestamps adjustments based on the detected silence.
         suppress_word_ts : bool, default True
-            Whether to adjust word timestamps base the detected silence. Only enabled if ``suppress_silence = True``.
+            Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
         q_levels : int, default 20
             Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
             Acts as a threshold to marking sound as silent.

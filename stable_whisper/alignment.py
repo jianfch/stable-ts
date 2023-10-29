@@ -51,6 +51,9 @@ def align(
         remove_instant_words: bool = False,
         token_step: int = 100,
         original_split: bool = False,
+        word_dur_factor: Optional[float] = 2.0,
+        max_word_dur: Optional[float] = 3.0,
+        fast_mode: bool = False,
         tokenizer: "Tokenizer" = None
 ) -> Union[WhisperResult, None]:
     """
@@ -76,6 +79,14 @@ def align(
         Max number of tokens to align each pass. Use higher values to reduce chance of misalignment.
     original_split : bool, default False
         Whether to preserve the original segment groupings. Segments are spit by line break if ``text`` is plain-text.
+    max_word_dur : float or None, default 3.0
+        Global maximum word duration in seconds. Re-align words that exceed the global maximum word duration.
+    word_dur_factor : float or None, default 2.0
+        Factor to compute the Local maximum word duration, which is ``word_dur_factor`` * local medium word duration.
+        Words that need re-alignment, are re-algined with duration <= local/global maximum word duration.
+    fast_mode : bool, default False
+        Whether to speed up alignment by re-alignment with local/global maximum word duration.
+        ``True`` tends produce better timestamps when ``text`` is accurate and there are no large speechless gaps.
     tokenizer : "Tokenizer", default None, meaning a new tokenizer is created according ``language`` and ``model``
         A tokenizer to used tokenizer text and detokenize tokens.
     verbose : bool or None, default False
@@ -85,9 +96,9 @@ def align(
         String for customizing the regrouping algorithm. False disables regrouping.
         Ignored if ``word_timestamps = False``.
     suppress_silence : bool, default True
-        Whether to enable timestamps adjustments base the detected silence.
+        Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
-        Whether to adjust word timestamps base the detected silence. Only enabled if ``suppress_silence = True``.
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
     q_levels : int, default 20
         Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
@@ -201,8 +212,8 @@ def align(
     sample_padding = int(N_FFT // 2) + 1
     seek_sample = 0
     total_samples = audio.shape[-1]
-    total_tokens = sum(len(wt) for wt in word_tokens)
-    finished_tokens = 0
+    total_duration = round(total_samples / SAMPLE_RATE, 2)
+    total_words = len(words)
 
     def get_curr_words():
         nonlocal words, word_tokens
@@ -218,15 +229,23 @@ def align(
         return w, wt
     result = []
 
-    with tqdm(total=total_tokens, unit='token', disable=verbose is not False, desc='Align') as tqdm_pbar:
+    with tqdm(total=total_duration, unit='sec', disable=verbose is not False, desc='Align') as tqdm_pbar:
 
         def update_pbar(finish: bool = False):
-            nonlocal finished_tokens
-            if finish:
-                finished_tokens = tqdm_pbar.total
-            tqdm_pbar.update(finished_tokens - tqdm_pbar.n)
+            tqdm_pbar.update((total_duration if finish else min(round(last_ts, 2), total_duration)) - tqdm_pbar.n)
             if progress_callback is not None:
-                progress_callback(seek=finished_tokens, total=total_tokens)
+                progress_callback(seek=tqdm_pbar.n, total=tqdm_pbar.total)
+
+        def redo_words(_idx: int = None):
+            nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words
+            if _idx is None:
+                words = seg_words + words
+                word_tokens = seg_tokens + word_tokens
+                curr_words = []
+            elif _idx != len(seg_words):
+                words = seg_words[_idx:] + words
+                word_tokens = seg_tokens[_idx:] + word_tokens
+                curr_words = curr_words[:_idx]
 
         while words and seek_sample < total_samples:
             curr_words, curr_word_tokens = get_curr_words()
@@ -252,54 +271,95 @@ def align(
                 num_samples=segment_samples,
                 split_callback=(lambda x, _: x),
                 prepend_punctuations=prepend_punctuations,
-                append_punctuations=append_punctuations
+                append_punctuations=append_punctuations,
+                gap_padding=None
             )
+            curr_words = segment['words']
+            seg_words = [w['word'] for w in curr_words]
+            seg_tokens = [w['tokens'] for w in curr_words]
+            durations = np.array([w['end'] - w['start'] for w in curr_words]).round(3)
+            nonzero_mask = durations > 0
+            nonzero_indices = np.flatnonzero(nonzero_mask)
+            if len(nonzero_indices):
+                redo_index = nonzero_indices[-1] + 1
+                if (
+                        words and
+                        redo_index > 1 and
+                        curr_words[nonzero_indices[-1]]['end'] >= np.floor(time_offset + segment_samples / SAMPLE_RATE)
+                ):
+                    nonzero_mask[nonzero_indices[-1]] = False
+                    nonzero_indices = nonzero_indices[:-1]
+                    redo_index = nonzero_indices[-1] + 1
+                med_dur = np.median(durations[:redo_index])
 
-            break_next = False
-            while segment['words']:
-                word = segment['words'][-1]
-                if break_next or word['end'] - word['start'] == 0:
-                    words.insert(0, word['word'])
-                    word_tokens.insert(0, word['tokens'])
-                    del segment['words'][-1]
-                    if break_next:
-                        break
-                elif words:
-                    break_next = True
+                if fast_mode:
+                    new_start = None
+                    global_max_dur = None
                 else:
-                    break
-
-            finished_tokens += sum(len(w['tokens']) for w in segment['words'])
-            if segment['words']:
-                seek_sample = round(segment['words'][-1]['end'] * SAMPLE_RATE)
+                    local_max_dur = round(med_dur * word_dur_factor, 3) if word_dur_factor else None
+                    if max_word_dur:
+                        local_max_dur = min(local_max_dur, max_word_dur) if local_max_dur else max_word_dur
+                        global_max_dur = max_word_dur
+                    else:
+                        global_max_dur = local_max_dur or None
+                    if global_max_dur and med_dur > global_max_dur:
+                        med_dur = global_max_dur
+                    if (
+                            local_max_dur and durations[nonzero_indices[0]] > global_max_dur
+                    ):
+                        new_start = round(max(
+                            curr_words[nonzero_indices[0]]['end'] - (med_dur * nonzero_indices[0] + local_max_dur),
+                            curr_words[nonzero_indices[0]]['start']
+                        ), 3)
+                        if new_start <= time_offset:
+                            new_start = None
+                    else:
+                        new_start = None
+                if new_start is None:
+                    if global_max_dur:
+                        index_offset = nonzero_indices[0] + 1
+                        redo_indices = \
+                            np.flatnonzero(durations[index_offset:redo_index] > global_max_dur) + index_offset
+                        if len(redo_indices):
+                            redo_index = redo_indices[0]
+                    last_ts = curr_words[redo_index - 1]['end']
+                    redo_words(redo_index)
+                else:
+                    last_ts = new_start
+                    redo_words()
+                seek_sample = round(last_ts * SAMPLE_RATE)
             else:
                 seek_sample += audio_segment.shape[-1]
+                last_ts = round(seek_sample / SAMPLE_RATE, 2)
+                redo_words()
 
             update_pbar()
 
-            result.extend(segment['words'])
+            result.extend(curr_words)
 
             if verbose:
                 line = '\n'.join(
                     f"[{format_timestamp(word['start'])}] -> "
                     f"[{format_timestamp(word['end'])}] \"{word['word']}\""
-                    for word in segment.get('words', [])
+                    for word in curr_words
                 )
                 safe_print(line)
-
-        if not result:
-            warnings.warn('Failed to align text.')
-
-        if words and not remove_instant_words:
-            total_duration = round(total_samples / SAMPLE_RATE, 3)
-            result.extend(
-                [
-                    dict(word=w, start=total_duration, end=total_duration, probability=0.0, tokens=wt)
-                    for w, wt in zip(words, word_tokens)
-                ]
-            )
-
         update_pbar(True)
+
+    if not result:
+        warnings.warn('Failed to align text.', stacklevel=2)
+    elif words:
+        warnings.warn(f'Failed to align the last {len(words)}/{total_words} words after '
+                      f'{format_timestamp(result[-1]["end"])}.', stacklevel=2)
+
+    if words and not remove_instant_words:
+        result.extend(
+            [
+                dict(word=w, start=total_duration, end=total_duration, probability=0.0, tokens=wt)
+                for w, wt in zip(words, word_tokens)
+            ]
+        )
+
     if not result:
         return
 
@@ -320,6 +380,9 @@ def align(
         )
     if not original_split:
         result.regroup(regroup)
+
+    if fail_segs := len([None for s in result.segments if s.end-s.start <= 0]):
+        warnings.warn(f'{fail_segs}/{len(result.segments)} segments failed to align.', stacklevel=2)
 
     return result
 

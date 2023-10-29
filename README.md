@@ -49,9 +49,9 @@ stable-ts audio.mp3 -o audio.srt
 </details>
 
 Parameters: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L985-L1014), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L74-L211),
-[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L650-L723)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L1003-L1033), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L75-L216),
+[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L668-L741)
 
 <details>
 <summary>faster-whisper</summary>
@@ -62,7 +62,7 @@ model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
 ```
 Parameters: 
-[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L835-L912), 
+[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L853-L930), 
 
 </details>
 
@@ -173,7 +173,7 @@ stable-ts audio.mp3 --align text.txt --language en
 </details>
 
 Parameters:
-[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L56-L153)
+[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L59-L164)
 
 #### Adjustments
 Timestamps are adjusted after the model predicts them. 
@@ -212,7 +212,7 @@ stable-ts result.json --refine -o audio.srt --refine_option "audio=audio.mp3"
 </details>
 
 Parameters:
-[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L348-L419)
+[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L411-L482)
 
 
 ### Regrouping Words
@@ -264,7 +264,7 @@ for match in matches:
 # verbose=True does the same thing as this for-loop.
 ```
 Parameters:
-[locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L728-L824)
+[locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L791-L887)
 
 The second way allows you to locate words with regular expression,
 but it requires the audio to be fully transcribed first. 
