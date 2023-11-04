@@ -867,7 +867,7 @@ class WhisperResult:
             args = []
         no_words = False
         for i in reversed(range(0, len(self.segments))):
-            no_words = not self.segments[i].has_words
+            no_words = no_words or not self.segments[i].has_words
             indices = get_indices(self.segments[i], *args)
             if indices:
                 new_segments = self.segments[i].split(indices)
