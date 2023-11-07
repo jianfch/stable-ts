@@ -5,7 +5,8 @@ import sys
 
 _COMPATIBLE_WHISPER_VERSIONS = (
     '20230314',
-    '20230918'
+    '20230918',
+    '20231106'
 )
 _required_whisper_ver = _COMPATIBLE_WHISPER_VERSIONS[-1]
 
