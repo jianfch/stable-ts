@@ -11,7 +11,7 @@ from whisper.audio import (
     pad_or_trim, log_mel_spectrogram
 )
 from whisper.utils import exact_div
-from whisper.tokenizer import get_tokenizer, LANGUAGES, TO_LANGUAGE_CODE
+from whisper.tokenizer import LANGUAGES, TO_LANGUAGE_CODE
 from whisper.decoding import DecodingOptions, DecodingResult
 
 from .audio import prep_audio
@@ -20,7 +20,8 @@ from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable
 from .stabilization import get_vad_silence_func, wav2mask, mask2timing, timing2mask
 from .non_whisper import transcribe_any
-from .utils import warn_compatibility_issues, isolate_useful_options, safe_print
+from .utils import isolate_useful_options, safe_print
+from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
@@ -258,7 +259,7 @@ def transcribe_stable(
         verbose=verbose
     )
     sample_padding = int(N_FFT // 2) + 1
-    whole_mel = log_mel_spectrogram(audio, padding=sample_padding) if mel_first else None
+    whole_mel = log_mel_spectrogram(audio, model.dims.n_mels, padding=sample_padding) if mel_first else None
     tokenizer = None
     language = None
     initial_prompt_tokens = []
@@ -292,6 +293,7 @@ def transcribe_stable(
                         if whole_mel is None:
                             curr_mel_segment = log_mel_spectrogram(
                                 audio[..., start_sample:start_sample+N_SAMPLES],
+                                model.dims.n_mels,
                                 padding=sample_padding
                             )
                         else:
@@ -309,7 +311,7 @@ def transcribe_stable(
 
             nonlocal language
             language = decode_options["language"]
-            tokenizer = get_tokenizer(model.is_multilingual, language=language, task=task)
+            tokenizer = get_tokenizer(model, language=language, task=task)
 
             if word_timestamps and task == "translate":
                 warnings.warn("Word-level timestamps on translations may not be reliable.")
@@ -433,7 +435,7 @@ def transcribe_stable(
             segment_duration = segment_samples / SAMPLE_RATE
 
             mel_segment = (
-                log_mel_spectrogram(audio_segment, padding=sample_padding)
+                log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
                 if whole_mel is None else
                 whole_mel[..., round(seek_sample / n_samples_per_frame): round(seek_sample_end / n_samples_per_frame)]
             )
@@ -802,6 +804,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
         if isinstance(audio, bytes):
             import io
             audio = io.BytesIO(audio)
+        progress_callback = faster_transcribe_options.pop('progress_callback', None)
         segments, info = model.transcribe(audio, **faster_transcribe_options)
         language = LANGUAGES.get(info.language, info.language)
         if verbose is not None:
@@ -810,19 +813,28 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
 
         final_segments = []
         task = faster_transcribe_options.get('task', 'transcribe').title()
+        total_duration = round(info.duration, 2)
 
-        with tqdm(total=round(info.duration, 2), unit='sec', disable=verbose is not False, desc=task) as tqdm_pbar:
+        with tqdm(total=total_duration, unit='sec', disable=verbose is not False, desc=task) as tqdm_pbar:
+
+            def update_pbar(seek):
+                tqdm_pbar.update(seek - tqdm_pbar.n)
+                if progress_callback is not None:
+                    progress_callback(seek, total_duration)
+
             for segment in segments:
                 segment = segment._asdict()
                 if (words := segment.get('words')) is not None:
                     segment['words'] = [w._asdict() for w in words]
                 else:
                     del segment['words']
+                if verbose:
+                    safe_print(Segment(**segment).to_display_str())
                 final_segments.append(segment)
-                tqdm_pbar.update(segment["end"] - tqdm_pbar.n)
-            tqdm_pbar.update(tqdm_pbar.total - tqdm_pbar.n)
+                update_pbar(segment["end"])
+            update_pbar(tqdm_pbar.total)
 
-        if verbose is not None:
+        if verbose:
             print(f'Completed transcription with faster-whisper ({model_size_or_path}).')
 
         return dict(language=language, segments=final_segments)
@@ -848,6 +860,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             only_voice_freq: bool = False,
             only_ffmpeg: bool = False,
             check_sorted: bool = True,
+            progress_callback: Callable = None,
             **options
     ) -> WhisperResult:
         """
@@ -911,6 +924,11 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             Whether to use only FFmpeg (instead of not yt-dlp) for URls
         check_sorted : bool, default True
             Whether to raise an error when timestamps returned by faster-whipser are not in ascending order.
+        progress_callback : Callable, optional
+            A function that will be called when transcription progress is updated.
+            The callback need two parameters.
+            The first parameter is a float for seconds of the audio that has been transcribed.
+            The second parameter is a float for total duration of audio in seconds.
         options
             Additional options used for :func:`whisper.transcribe.transcribe` and
             :func:`stable_whisper.non_whisper.transcribe_any`.
@@ -939,6 +957,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
         faster_whisper_options['audio'] = audio
         faster_whisper_options['word_timestamps'] = word_timestamps
         faster_whisper_options['verbose'] = verbose
+        faster_whisper_options['progress_callback'] = progress_callback
         if not demucs_options:
             demucs_options = {}
         if demucs_output:
@@ -1068,6 +1087,13 @@ def cli():
             return str2val[string]
         raise ValueError(f"Expected one of {set(str2val.keys())}, got {string}")
 
+    def valid_model_name(name):
+        if name in available_models() or os.path.exists(name):
+            return name
+        raise ValueError(
+            f"model should be one of {available_models()} or path to a model checkpoint"
+        )
+
     def update_options_with_args(arg_key: str, options: Optional[dict] = None, pop: bool = False):
         extra_options = args.pop(arg_key) if pop else args.get(arg_key)
         if not extra_options:
@@ -1098,7 +1124,7 @@ def cli():
                         help="output filepaths(s);"
                              "if not specified, auto-named output file(s) will be saved to "
                              "[output_dir] or current dir if not specified.")
-    parser.add_argument("--model", '-m', default="base", choices=available_models(),
+    parser.add_argument("--model", '-m', default="base", type=valid_model_name,
                         help="name of the Whisper model to use")
     parser.add_argument("--model_dir", type=str, default=None,
                         help="the path to save model files; uses ~/.cache/whisper by default")

@@ -31,7 +31,7 @@ setup(
         "more-itertools",
         "transformers>=4.19.0",
         "ffmpeg-python==0.2.0",
-        "openai-whisper==20230918"
+        "openai-whisper==20231106"
     ],
     entry_points={
         "console_scripts": ["stable-ts=stable_whisper.whisper_word_level:cli"],

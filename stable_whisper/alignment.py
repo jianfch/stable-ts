@@ -8,7 +8,6 @@ from tqdm import tqdm
 from typing import TYPE_CHECKING, Union, List, Callable, Optional, Tuple
 
 import whisper
-from whisper.tokenizer import get_tokenizer
 from whisper.audio import (
     SAMPLE_RATE, N_FRAMES, N_SAMPLES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH
 )
@@ -16,7 +15,8 @@ from whisper.audio import (
 from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable, split_word_tokens
 from .audio import prep_audio
-from .utils import warn_compatibility_issues, safe_print, format_timestamp
+from .utils import safe_print, format_timestamp
+from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
@@ -196,7 +196,7 @@ def align(
     if language is None:
         raise TypeError('expected argument for language')
     if tokenizer is None:
-        tokenizer = get_tokenizer(model.is_multilingual, language=language, task='transcribe')
+        tokenizer = get_tokenizer(model, language=language, task='transcribe')
     tokens = tokenizer.encode(text) if isinstance(text, str) else text
     tokens = [t for t in tokens if t < tokenizer.eot]
     _, (words, word_tokens), _ = split_word_tokens([dict(tokens=tokens)], tokenizer)
@@ -255,7 +255,7 @@ def align(
             segment_samples = audio_segment.shape[-1]
             time_offset = seek_sample / SAMPLE_RATE
 
-            mel_segment = log_mel_spectrogram(audio_segment, padding=sample_padding)
+            mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
             mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
 
             segment = dict(
@@ -503,7 +503,7 @@ def refine(
     sample_padding = int(N_FFT // 2) + 1
     frame_precision = max(round(precision * FRAMES_PER_SECOND), 2)
     total_duration = round(audio.shape[-1] / SAMPLE_RATE, 3)
-    tokenizer = get_tokenizer(model.is_multilingual, language=result.language, task='transcribe')
+    tokenizer = get_tokenizer(model, language=result.language, task='transcribe')
 
     def ts_to_frames(timestamps: Union[np.ndarray, list]) -> np.ndarray:
         if isinstance(timestamps, list):
@@ -575,7 +575,7 @@ def refine(
 
             text_tokens = [t for w in words for t in w.tokens if t < tokenizer.eot]
             word_tokens = [[t for t in w.tokens if t < tokenizer.eot] for w in words]
-            orig_mel_segment = log_mel_spectrogram(audio_segment, padding=sample_padding)
+            orig_mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
             orig_mel_segment = pad_or_trim(orig_mel_segment, N_FRAMES).to(device=model.device)
 
             def get_prob():
@@ -932,7 +932,7 @@ def locate(
         nonlocal seek_sample, found
         seek = round(seek_sample / SAMPLE_RATE, 3)
         audio_segment = audio[seek_sample: seek_sample + CHUNK_SAMPLES]
-        mel_segment = log_mel_spectrogram(audio_segment, padding=sample_padding)
+        mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
         mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
 
         QKs = [None] * model.dims.n_text_layer

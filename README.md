@@ -49,9 +49,9 @@ stable-ts audio.mp3 -o audio.srt
 </details>
 
 Parameters: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L1003-L1033), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L75-L216),
-[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L668-L741)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L1022-L1052), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L76-L217),
+[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L670-L743)
 
 <details>
 <summary>faster-whisper</summary>
@@ -62,7 +62,7 @@ model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
 ```
 Parameters: 
-[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L853-L930), 
+[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L866-L943), 
 
 </details>
 
@@ -75,10 +75,10 @@ result.to_ass('audio.ass') #ASS
 result.to_tsv('audio.tsv') #TSV
 ```
 Parameters: 
-[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L260-L302),
-[to_ass()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L406-L459),
-[to_tsv()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L334-L372)
-[save_as_json()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L522-L531)
+[to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L266-L308),
+[to_ass()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L412-L465),
+[to_tsv()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L340-L378)
+[save_as_json()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L528-L537)
 <br /><br />
 There are word-level and segment-level timestamps. All output formats support them. 
 They also support will both levels simultaneously except TSV. 
@@ -242,15 +242,15 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1226-L1277)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L923-L937)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L981-L995)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1055-L1084)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L948-L970)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1007-L1028)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1035-L1042)
-- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1105-L1127)
-- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1167-L1190)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1262-L1313)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L939-L955)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1000-L1016)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1088-L1119)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L967-L988)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1028-L1049)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1056-L1063)
+- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1141-L1163)
+- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1204-L1226)
 
 ### Locating Words
 There are two ways to locate words. 
@@ -288,7 +288,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1314-L1330)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1350-L1366)
 
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps

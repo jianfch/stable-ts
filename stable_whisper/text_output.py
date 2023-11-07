@@ -24,6 +24,12 @@ def _get_segments(result: (dict, list), min_dur: float, reverse_text: Union[bool
     return result
 
 
+def finalize_text(text: str, strip: bool = True):
+    if not strip:
+        return text
+    return text.strip().replace('\n ', '\n')
+
+
 def sec2hhmmss(seconds: (float, int)):
     mm, ss = divmod(seconds, 60)
     hh, mm = divmod(mm, 60)
@@ -54,17 +60,17 @@ def sec2ass(seconds: (float, int)) -> str:
 
 def segment2vttblock(segment: dict, strip=True) -> str:
     return f'{sec2vtt(segment["start"])} --> {sec2vtt(segment["end"])}\n' \
-           f'{segment["text"].strip() if strip else segment["text"]}'
+           f'{finalize_text(segment["text"], strip)}'
 
 
 def segment2srtblock(segment: dict, idx: int, strip=True) -> str:
     return f'{idx}\n{sec2srt(segment["start"])} --> {sec2srt(segment["end"])}\n' \
-           f'{segment["text"].strip() if strip else segment["text"]}'
+           f'{finalize_text(segment["text"], strip)}'
 
 
 def segment2assblock(segment: dict, idx: int, strip=True) -> str:
     return f'Dialogue: {idx},{sec2ass(segment["start"])},{sec2ass(segment["end"])},Default,,0,0,0,,' \
-           f'{segment["text"].strip() if strip else segment["text"]}'
+           f'{finalize_text(segment["text"], strip)}'
 
 
 def segment2tsvblock(segment: dict, strip=True) -> str:

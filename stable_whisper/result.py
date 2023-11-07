@@ -862,14 +862,29 @@ class WhisperResult:
     def segments_to_dicts(self, reverse_text: Union[bool, tuple] = False):
         return [s.to_dict(reverse_text=reverse_text) for s in self.segments]
 
-    def _split_segments(self, get_indices, args: list = None, *, lock: bool = False):
+    def _split_segments(self, get_indices, args: list = None, *, lock: bool = False, newline: bool = False):
         if args is None:
             args = []
         no_words = False
         for i in reversed(range(0, len(self.segments))):
             no_words = no_words or not self.segments[i].has_words
             indices = get_indices(self.segments[i], *args)
-            if indices:
+            if not indices:
+                continue
+            if newline:
+                if indices[-1] == len(self.segments[i].words) - 1:
+                    del indices[-1]
+                    if not indices:
+                        continue
+
+                for word_idx in indices:
+                    self.segments[i].words[word_idx].word += '\n'
+                    if lock:
+                        self.segments[i].words[word_idx].lock_right()
+                        if word_idx + 1 < len(self.segments[i].words):
+                            self.segments[i].words[word_idx+1].lock_left()
+                self.segments[i].update_seg_with_words()
+            else:
                 new_segments = self.segments[i].split(indices)
                 if lock:
                     for s in new_segments:
@@ -918,7 +933,8 @@ class WhisperResult:
     def split_by_gap(
             self,
             max_gap: float = 0.1,
-            lock: bool = False
+            lock: bool = False,
+            newline: bool = False
     ) -> "WhisperResult":
         """
         Split (in-place) any segment where the gap between two of its words is greater than ``max_gap``.
@@ -929,13 +945,15 @@ class WhisperResult:
             Maximum second(s) allowed between two words if the same segment.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
+        newline: bool, default False
+            Whether to insert line break at the split points instead of splitting into separate segments.
 
         Returns
         -------
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
-        self._split_segments(lambda x: x.get_gap_indices(max_gap), lock=lock)
+        self._split_segments(lambda x: x.get_gap_indices(max_gap), lock=lock, newline=newline)
         return self
 
     def merge_by_gap(
@@ -976,7 +994,8 @@ class WhisperResult:
     def split_by_punctuation(
             self,
             punctuation: Union[List[str], List[Tuple[str, str]], str],
-            lock: bool = False
+            lock: bool = False,
+            newline: bool = False
     ) -> "WhisperResult":
         """
         Split (in-place) any segment at words that starts/ends with specific punctuations.
@@ -987,13 +1006,15 @@ class WhisperResult:
             Punctuation(s) to split segments by.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
+        newline: bool, default False
+            Whether to insert line break at the split points instead of splitting into separate segments.
 
         Returns
         -------
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
-        self._split_segments(lambda x: x.get_punctuation_indices(punctuation), lock=lock)
+        self._split_segments(lambda x: x.get_punctuation_indices(punctuation), lock=lock, newline=newline)
         return self
 
     def merge_by_punctuation(
@@ -1040,7 +1061,18 @@ class WhisperResult:
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
-        self._merge_segments(list(range(len(self.segments) - 1)))
+        if not self.segments:
+            return self
+        if self.has_words:
+            self.segments[0].words = self.all_words()
+        else:
+            self.segments[0].text += ''.join(s.text for s in self.segments[1:])
+            if all(s.tokens is not None for s in self.segments):
+                self.segments[0].tokens += list(chain.from_iterable(s.tokens for s in self.segments[1:]))
+            self.segments[0].end = self.segments[-1].end
+        self.segments = [self.segments[0]]
+        self.reassign_ids()
+        self.update_all_segs_with_words()
         return self
 
     def split_by_length(
@@ -1050,7 +1082,8 @@ class WhisperResult:
             even_split: bool = True,
             force_len: bool = False,
             lock: bool = False,
-            include_lock: bool = False
+            include_lock: bool = False,
+            newline: bool = False
     ) -> "WhisperResult":
         """
         Split (in-place) any segment that do not exceed the specified length
@@ -1071,6 +1104,8 @@ class WhisperResult:
         include_lock: bool, default False
             Whether to include previous lock before splitting based on max_words, if ``even_split = False``.
             Splitting will be done after the first word that is not locked > ``max_chars`` / ``max_words``.
+        newline: bool, default False
+            Whether to insert line break at the split points instead of splitting into separate segments.
 
         Returns
         -------
@@ -1091,7 +1126,8 @@ class WhisperResult:
                 even_split=even_split,
                 include_lock=include_lock
             ),
-            lock=lock
+            lock=lock,
+            newline=newline
         )
         return self
 
