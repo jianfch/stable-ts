@@ -348,9 +348,9 @@ def visualize_suppression(
 
     Parameters
     ----------
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        If audio is ``np.ndarray`` or ``torch.Tensor``, the audio must be already at sampled to 16kHz.
+        If audio is ``numpy.ndarray`` or ``torch.Tensor``, the audio must be already at sampled to 16kHz.
     output : str, default None, meaning image will be shown directly via Pillow or opencv-python
         Path to save visualization.
     q_levels : int, default 20

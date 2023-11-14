@@ -40,9 +40,9 @@ def isolate_useful_options(options: dict, method, pop: bool = False) -> dict:
     return {k: _get(options, k) for k in get_func_parameters(method) if k in options}
 
 
-def safe_print(msg: str):
+def safe_print(msg: str, _print=None):
     if msg:
-        print(make_safe(msg))
+        (_print or print)(make_safe(msg))
 
 
 def format_timestamp(

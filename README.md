@@ -61,6 +61,9 @@ Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper):
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
 ```
+```commandline
+stable-ts audio.mp3 -o audio.srt -fw
+```
 Parameters: 
 [transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L866-L943), 
 
@@ -155,12 +158,12 @@ stable-ts audio.json -o audio.srt
 Audio can be aligned/synced with plain text on word-level.
 ```python
 text = 'Machines thinking, breeding. You were to bear us a new, promised land.'
-result = model.align('audio.mp3', text)
+result = model.align('audio.mp3', text, language='en')
 ```
 When the text is correct but the timestamps need more work, 
 `align()` is a faster alternative for testing various settings/models.
 ```python
-new_result = model.align('audio.mp3', result)
+new_result = model.align('audio.mp3', result, language='en')
 ```
 <details>
 <summary>CLI</summary>
@@ -186,7 +189,7 @@ Note: both results are required to have word timestamps and matching words.
 result.adjust_by_result(new_result)
 ```
 Parameters:
-[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L754-L765)
+[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L755-L766)
 
 ### Refinement
 Timestamps can be further improved with `refine()`.
@@ -212,7 +215,7 @@ stable-ts result.json --refine -o audio.srt --refine_option "audio=audio.mp3"
 </details>
 
 Parameters:
-[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L411-L482)
+[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L455-L526)
 
 
 ### Regrouping Words
@@ -242,15 +245,15 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1262-L1313)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L939-L955)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1000-L1016)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1088-L1119)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L967-L988)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1028-L1049)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1056-L1063)
-- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1141-L1163)
-- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1204-L1226)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1263-L1314)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L940-L956)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1001-L1017)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1089-L1120)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L968-L989)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1029-L1050)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1057-L1064)
+- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1142-L1164)
+- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1205-L1227)
 
 ### Locating Words
 There are two ways to locate words. 
@@ -258,13 +261,22 @@ The first way is by approximating time at which the words are spoken
 then transcribing a few seconds around the approximated time.
 This also the faster way for locating words.
 ```python
-matches = model.locate('audio.mp3', 'are', 'English', count=0)
+matches = model.locate('audio.mp3', 'are', language='en', count=0)
 for match in matches:
     print(match.to_display_str())
 # verbose=True does the same thing as this for-loop.
 ```
 Parameters:
-[locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L791-L887)
+[locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L835-L931)
+
+<details>
+<summary>CLI</summary>
+
+```
+stable-ts audio.mp3 --locate "are" --language en -to "count=0"
+```
+
+</details>
 
 The second way allows you to locate words with regular expression,
 but it requires the audio to be fully transcribed first. 
@@ -288,7 +300,7 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1350-L1366)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1351-L1367)
 
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps

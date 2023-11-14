@@ -45,16 +45,28 @@ def warn_compatibility_issues(
             warnings.warn(compatibility_warning)
 
 
-def get_tokenizer(model=None, **kwargs):
+def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
     """
-    Backward compatible wrapper of :func:`whisper.tokenizer.get_tokenizer`.
+    Backward compatible wrapper of :func:`whisper.tokenizer.get_tokenizer` and
+    :class:`faster_whisper.tokenizer.Tokenizer`.
     """
+    if is_faster_model:
+        import faster_whisper.tokenizer
+        tokenizer = faster_whisper.tokenizer.Tokenizer
+        params = get_func_parameters(tokenizer)
+        if model is not None and 'tokenizer' not in kwargs:
+            kwargs['tokenizer'] = model.hf_tokenizer
+    else:
+        tokenizer = whisper.tokenizer.get_tokenizer
+        params = _TOKENIZER_PARAMS
     if model is not None and 'multilingual' not in kwargs:
-        kwargs['multilingual'] = model.is_multilingual
-    if 'num_languages' in _TOKENIZER_PARAMS:
+        kwargs['multilingual'] = \
+            (model.is_multilingual if hasattr(model, 'is_multilingual') else model.model.is_multilingual)
+    if 'num_languages' in params:
         if hasattr(model, 'num_languages'):
-            kwargs['num_languages'] = model.num_languages
+            kwargs['num_languages'] = \
+                (model.num_languages if hasattr(model, 'num_languages') else model.model.num_languages)
     elif 'num_languages' in kwargs:
         del kwargs['num_languages']
-    return whisper.tokenizer.get_tokenizer(**kwargs)
+    return tokenizer(**kwargs)
 

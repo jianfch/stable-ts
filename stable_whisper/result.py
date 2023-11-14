@@ -49,8 +49,6 @@ class WordTiming:
         return len(self.word)
 
     def __add__(self, other: 'WordTiming'):
-        assert self.start <= other.start or self.end <= other.end
-
         self_copy = deepcopy(self)
 
         self_copy.start = min(self_copy.start, other.start)
@@ -188,8 +186,6 @@ class Segment:
         self.round_all_timestamps()
 
     def __add__(self, other: 'Segment'):
-        assert self.start <= other.start or self.end <= other.end
-
         self_copy = deepcopy(self)
 
         self_copy.start = min(self_copy.start, other.start)
@@ -520,7 +516,12 @@ class Segment:
 
 class WhisperResult:
 
-    def __init__(self, result: Union[str, dict, list], force_order: bool = False, check_sorted: Union[bool, str] = True):
+    def __init__(
+            self,
+            result: Union[str, dict, list],
+            force_order: bool = False,
+            check_sorted: Union[bool, str] = True
+    ):
         result, self.path = self._standardize_result(result)
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
@@ -653,9 +654,9 @@ class WhisperResult:
 
         Parameters
         ----------
-        silent_starts : np.ndarray
+        silent_starts : numpy.ndarray
             An array starting timestamps of silent sections of audio.
-        silent_ends : np.ndarray
+        silent_ends : numpy.ndarray
             An array ending timestamps of silent sections of audio.
         min_word_dur : float, default 0.1
             Only allow changes on timestamps that results in word duration greater than this value.
@@ -694,7 +695,7 @@ class WhisperResult:
 
         Parameters
         ----------
-        audio : str or np.ndarray or torch.Tensor or bytes
+        audio : str or numpy.ndarray or torch.Tensor or bytes
             Path/URL to the audio file, the audio waveform, or bytes of audio file.
         vad : bool, default False
             Whether to use Silero VAD to generate timestamp suppression mask.

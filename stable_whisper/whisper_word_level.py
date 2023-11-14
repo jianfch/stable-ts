@@ -85,9 +85,9 @@ def transcribe_stable(
     ----------
     model : whisper.model.Whisper
         An instance of Whisper ASR model.
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        If audio is :class:`np.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     verbose : bool or None, default False
         Whether to display the text being decoded to the console.
         Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
@@ -200,11 +200,11 @@ def transcribe_stable(
 
     See Also
     --------
-    stable_whisper.non_whisper.transcribe_any : Return ``stable_whisper.result.WhisperResult`` containing all the data
-        from transcribing audio with unmodified :func:`whisper.transcribe.transcribe` with preprocessing and
+    stable_whisper.non_whisper.transcribe_any : Return :class:`stable_whisper.result.WhisperResult` containing all the
+        data from transcribing audio with unmodified :func:`whisper.transcribe.transcribe` with preprocessing and
         postprocessing.
     stable_whisper.whisper_word_level.load_faster_whisper.faster_transcribe : Return
-        ``stable_whisper.result.WhisperResult`` containing all the data from transcribing audio with
+        :class:`stable_whisper.result.WhisperResult` containing all the data from transcribing audio with
         :meth:`faster_whisper.WhisperModel.transcribe` with preprocessing and postprocessing.
 
     Examples
@@ -237,7 +237,7 @@ def transcribe_stable(
                       DeprecationWarning, stacklevel=2)
     if decode_options.pop('input_sr', None):
         warnings.warn('``input_sr`` is deprecated. '
-                      '``audio`` of types np.ndarray and torch.Tensor inputs must be already at 16kHz. '
+                      '``audio`` of types numpy.ndarray and torch.Tensor inputs must be already at 16kHz. '
                       'To higher sample rates for ``audio`` use str or bytes.',
                       DeprecationWarning, stacklevel=2)
     if not demucs_options:
@@ -679,9 +679,9 @@ def transcribe_minimal(
     ----------
     model : whisper.model.Whisper
         An instance of Whisper ASR model.
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        If audio is ``np.ndarray`` or ``torch.Tensor``, the audio must be already at sampled to 16kHz.
+        If audio is ``numpy.ndarray`` or ``torch.Tensor``, the audio must be already at sampled to 16kHz.
     verbose : bool or None, default False
         Whether to display the text being decoded to the console.
         Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
@@ -876,9 +876,9 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
         ----------
         model : faster_whisper.WhisperModel
             The faster-whisper ASR model instance.
-        audio : str or np.ndarray or torch.Tensor or bytes
+        audio : str or numpy.ndarray or torch.Tensor or bytes
             Path/URL to the audio file, the audio waveform, or bytes of audio file.
-            If audio is :class:`np.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+            If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
         verbose : bool or None, default False
             Whether to display the text being decoded to the console.
             Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
@@ -991,6 +991,8 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
         )
 
     faster_model.transcribe_stable = MethodType(faster_transcribe, faster_model)
+    from .alignment import align
+    faster_model.align = MethodType(align, faster_model)
 
     return faster_model
 
@@ -1324,6 +1326,9 @@ def cli():
     parser.add_argument('--refine', '-r', action='store_true',
                         help='Refine timestamps to increase precision of timestamps')
 
+    parser.add_argument('--locate', '-lc', action="extend", nargs='+', type=str,
+                        help='words to locate in the audio(s); skips transcription and output')
+
     parser.add_argument('--refine_option', '-ro', action="extend", nargs='+', type=str,
                         help='Extra option(s) to use for refining timestamps; Replace True/False with 1/0; '
                              'E.g. --refine_option "steps=sese" --refine_options "rel_prob_decrease=0.05"')
@@ -1334,15 +1339,22 @@ def cli():
                         help='Extra option(s) to use for loading model; Replace True/False with 1/0; '
                              'E.g. --model_option "download_root=./downloads"')
     parser.add_argument('--transcribe_option', '-to', action="extend", nargs='+', type=str,
-                        help='Extra option(s) to use for transcribing/alignment; Replace True/False with 1/0; '
+                        help='Extra option(s) to use for transcribing/alignment/locating; Replace True/False with 1/0; '
                              'E.g. --transcribe_option "ignore_compatibility=1"')
     parser.add_argument('--save_option', '-so', action="extend", nargs='+', type=str,
                         help='Extra option(s) to use for text outputs; Replace True/False with 1/0; '
                              'E.g. --save_option "highlight_color=ffffff"')
 
+    parser.add_argument('--faster_whisper', '-fw', action='store_true',
+                        help='whether to use faster-whisper (https://github.com/guillaumekln/faster-whisper); '
+                             'note: some features may not be available')
+
     args = parser.parse_args().__dict__
     debug = args.pop('debug')
+    if not args['language'] and (args['align'] or args['locate']):
+        raise ValueError('langauge is required for --align / --locate')
 
+    is_faster_whisper = args.pop('faster_whisper')
     model_name: str = args.pop("model")
     model_dir: str = args.pop("model_dir")
     inputs: List[Union[str, torch.Tensor]] = args.pop("inputs")
@@ -1352,12 +1364,13 @@ def cli():
     overwrite: bool = args.pop("overwrite")
     use_demucs = args['demucs'] or False
     demucs_outputs: List[Optional[str]] = args.pop("demucs_output")
-    args['demucs_options']= update_options_with_args('demucs_option', pop=True)
+    args['demucs_options'] = update_options_with_args('demucs_option', pop=True)
     regroup = args.pop('regroup')
     max_chars = args.pop('max_chars')
     max_words = args.pop('max_words')
     args['verbose'] = False if args['verbose'] == 1 else (True if args['verbose'] == 2 else None)
     show_curr_task = args['verbose'] is not None
+    strings_to_locate = args.pop('locate')
     if dq := args.pop('dynamic_quantization', False):
         args['device'] = 'cpu'
     if args['reverse_text']:
@@ -1501,7 +1514,7 @@ def cli():
 
     if show_curr_task:
         model_from_str = '' if model_dir is None else f' from {model_dir}'
-        model_loading_str = f'Whisper {model_name} model {model_from_str}'
+        model_loading_str = f'{"Faster-Whisper" if is_faster_whisper else "Whisper"} {model_name} model {model_from_str}'
         print(f'Loading {model_loading_str}\r', end='\n' if debug else '')
     else:
         model_loading_str = ''
@@ -1514,17 +1527,21 @@ def cli():
         if model is None:
             model_options = dict(
                 name=model_name,
+                model_size_or_path=model_name,
                 device=args.get('device'),
                 download_root=model_dir,
                 dq=dq,
             )
+            load_model_func = load_faster_whisper if is_faster_whisper else load_model
+            model_options = isolate_useful_options(model_options, load_model_func)
             update_options_with_args('model_option', model_options)
-            model = call_method_with_options(load_model, model_options)
+            model = call_method_with_options(load_model_func, model_options)
             if model_loading_str:
                 print(f'Loaded {model_loading_str}  ')
         return model
 
     for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
+        skip_output = False
         if isinstance(input_audio, str) and is_json(input_audio):
             result = WhisperResult(input_audio)
         else:
@@ -1543,12 +1560,32 @@ def cli():
                         text = f.read()
                 args['text'] = text
                 transcribe_method = 'align'
+            if is_faster_whisper and transcribe_method == 'transcribe':
+                transcribe_method = 'transcribe_stable'
+            if strings_to_locate and (text := strings_to_locate[i]):
+                args['text'] = text
+                transcribe_method = 'locate'
+                skip_output = args['verbose'] = True
             transcribe_method = getattr(model, transcribe_method)
             transcribe_options = isolate_useful_options(args, transcribe_method)
             if not text:
-                transcribe_options.update(isolate_useful_options(args, DecodingOptions))
+                decoding_options = (
+                    isolate_useful_options(args, model.transcribe if is_faster_whisper else DecodingOptions)
+                )
+                if is_faster_whisper:
+                    if decoding_options['suppress_tokens']:
+                        decoding_options['suppress_tokens'] = (
+                            list(map(int, decoding_options['suppress_tokens'].split(',')))
+                        )
+                    for k in list(decoding_options.keys()):
+                        if decoding_options[k] is None:
+                            del decoding_options[k]
+                transcribe_options.update(decoding_options)
             update_options_with_args('transcribe_option', transcribe_options)
             result: WhisperResult = call_method_with_options(transcribe_method, transcribe_options)
+
+        if skip_output:
+            continue
 
         if args['refine']:
             model = _load_model()

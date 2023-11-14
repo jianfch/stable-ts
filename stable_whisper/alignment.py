@@ -66,9 +66,9 @@ def align(
     ----------
     model : "Whisper"
         The Whisper ASR model modified instance
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        If audio is :class:`np.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     text : str or list of int or stable_whisper.result.WhisperResult
         String of plain-text, list of tokens, or instance of :class:`stable_whisper.result.WhisperResult`.
     language : str, default None, uses ``language`` in ``text`` if it is a :class:`stable_whisper.result.WhisperResult`
@@ -162,6 +162,7 @@ def align(
     >>> result.to_srt_vtt('helloword.srt')
     Saved 'helloworld.srt'
     """
+    is_faster_model = model.__module__.startswith('faster_whisper.')
     if demucs_options is None:
         demucs_options = {}
     if demucs_output:
@@ -170,7 +171,7 @@ def align(
         warnings.warn('``demucs_output`` is deprecated. Use ``demucs_options`` with ``save_path`` instead. '
                       'E.g. demucs_options=dict(save_path="demucs_output.mp3")',
                       DeprecationWarning, stacklevel=2)
-    max_token_step = model.dims.n_text_ctx - 6
+    max_token_step = (model.max_length if is_faster_model else model.dims.n_text_ctx) - 6
     if token_step < 1:
         token_step = max_token_step
     elif token_step > max_token_step:
@@ -196,7 +197,7 @@ def align(
     if language is None:
         raise TypeError('expected argument for language')
     if tokenizer is None:
-        tokenizer = get_tokenizer(model, language=language, task='transcribe')
+        tokenizer = get_tokenizer(model, is_faster_model=is_faster_model, language=language, task='transcribe')
     tokens = tokenizer.encode(text) if isinstance(text, str) else text
     tokens = [t for t in tokens if t < tokenizer.eot]
     _, (words, word_tokens), _ = split_word_tokens([dict(tokens=tokens)], tokenizer)
@@ -214,6 +215,65 @@ def align(
     total_samples = audio.shape[-1]
     total_duration = round(total_samples / SAMPLE_RATE, 2)
     total_words = len(words)
+
+    if is_faster_model:
+        def timestamp_words():
+            temp_segment = dict(
+                seek=0,
+                start=0.0,
+                end=round(segment_samples / model.feature_extractor.sampling_rate, 3),
+                tokens=[t for wt in curr_word_tokens for t in wt],
+            )
+            features = model.feature_extractor(audio_segment.numpy())
+            encoder_output = model.encode(features[:, : model.feature_extractor.nb_max_frames])
+
+            model.add_word_timestamps(
+                segments=[temp_segment],
+                tokenizer=tokenizer,
+                encoder_output=encoder_output,
+                num_frames=round(segment_samples / model.feature_extractor.hop_length),
+                prepend_punctuations=prepend_punctuations,
+                append_punctuations=append_punctuations,
+                last_speech_timestamp=temp_segment['start'],
+            )
+
+            cumsum_lens = np.cumsum([len(w) for w in curr_words]).tolist()
+            final_cumsum_lens = np.cumsum([len(w['word']) for w in temp_segment['words']]).tolist()
+
+            assert not (set(final_cumsum_lens) - set(cumsum_lens)), 'word mismatch'
+            prev_l_idx = 0
+            for w_idx, cs_len in enumerate(final_cumsum_lens):
+                temp_segment['words'][w_idx]['start'] = round(temp_segment['words'][w_idx]['start'] + time_offset, 3)
+                temp_segment['words'][w_idx]['end'] = round(temp_segment['words'][w_idx]['end'] + time_offset, 3)
+                l_idx = cumsum_lens.index(cs_len)+1
+                temp_segment['words'][w_idx]['tokens'] = [t for wt in curr_word_tokens[prev_l_idx:l_idx] for t in wt]
+                prev_l_idx = l_idx
+
+            return temp_segment
+
+    else:
+        def timestamp_words():
+            temp_segment = dict(
+                seek=time_offset,
+                tokens=(curr_words, curr_word_tokens)
+            )
+
+            mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
+            mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
+
+            add_word_timestamps_stable(
+                segments=[temp_segment],
+                model=model,
+                tokenizer=tokenizer,
+                mel=mel_segment,
+                num_samples=segment_samples,
+                split_callback=(lambda x, _: x),
+                prepend_punctuations=prepend_punctuations,
+                append_punctuations=append_punctuations,
+                gap_padding=None
+            )
+
+            return temp_segment
 
     def get_curr_words():
         nonlocal words, word_tokens
@@ -247,33 +307,17 @@ def align(
                 word_tokens = seg_tokens[_idx:] + word_tokens
                 curr_words = curr_words[:_idx]
 
+        n_samples = model.feature_extractor.n_samples if is_faster_model else N_SAMPLES
+
         while words and seek_sample < total_samples:
             curr_words, curr_word_tokens = get_curr_words()
 
-            seek_sample_end = seek_sample + N_SAMPLES
+            seek_sample_end = seek_sample + n_samples
             audio_segment = audio[seek_sample:seek_sample_end]
             segment_samples = audio_segment.shape[-1]
             time_offset = seek_sample / SAMPLE_RATE
 
-            mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
-            mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
-
-            segment = dict(
-                seek=time_offset,
-                tokens=(curr_words, curr_word_tokens)
-            )
-
-            add_word_timestamps_stable(
-                segments=[segment],
-                model=model,
-                tokenizer=tokenizer,
-                mel=mel_segment,
-                num_samples=segment_samples,
-                split_callback=(lambda x, _: x),
-                prepend_punctuations=prepend_punctuations,
-                append_punctuations=append_punctuations,
-                gap_padding=None
-            )
+            segment = timestamp_words()
             curr_words = segment['words']
             seg_words = [w['word'] for w in curr_words]
             seg_tokens = [w['tokens'] for w in curr_words]
@@ -421,9 +465,9 @@ def refine(
     ----------
     model : "Whisper"
         The Whisper ASR model modified instance
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        If audio is :class:`np.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     result : stable_whisper.result.WhisperResult
         All timestamps, words, probabilities, and other data from the transcription of ``audio``.
     steps : str, default 'se'
@@ -802,9 +846,9 @@ def locate(
     ----------
     model : whisper.model.Whisper
         An instance of Whisper ASR model.
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        If audio is :class:`np.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     text: str or list of int
         Words/phrase or list of tokens to search for in ``audio``.
     language : str
@@ -1074,7 +1118,7 @@ def locate(
 
         if found_target:
             if found_msg:
-                safe_print('Confirmed: ' + found_msg)
+                safe_print('Confirmed: ' + found_msg, tqdm_pbar.write)
             final_tokens = [p['token'] for p in predictions]
             if mode == 1:
                 _, (ws, wts), _ = split_word_tokens([dict(tokens=final_tokens)], tokenizer)
@@ -1085,7 +1129,7 @@ def locate(
                 near_text = "".join(ws)
                 segment = dict(end=final_end, text=text, duration_window_text=near_text, duration_window_word=words)
                 if verbose:
-                    safe_print(f'Duration Window: "{near_text}"\n')
+                    safe_print(f'Duration Window: "{near_text}"\n', tqdm_pbar.write)
                 seek_sample += round(curr_end * SAMPLE_RATE)
             else:
 
@@ -1108,7 +1152,7 @@ def locate(
                 segment.offset_time(seek)
                 segment.seek = curr_start
                 if verbose:
-                    safe_print(segment.to_display_str())
+                    safe_print(segment.to_display_str(), tqdm_pbar.write)
 
         else:
             seek_sample += adjusted_chunk_size if audio_segment.shape[-1] == CHUNK_SAMPLES else audio_segment.shape[-1]
@@ -1117,7 +1161,7 @@ def locate(
 
     total_duration = round(total_samples / SAMPLE_RATE, 2)
     matches = []
-    with tqdm(total=total_duration, unit='sec', disable=verbose is not False, desc='Locate') as tqdm_pbar:
+    with tqdm(total=total_duration, unit='sec', disable=verbose is None, desc='Locate') as tqdm_pbar:
         while seek_sample < total_samples and (not count or found < count):
             if match := _locate():
                 matches.append(match)

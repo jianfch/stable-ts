@@ -47,7 +47,7 @@ def transcribe_any(
     inference_func : Callable
         Function that runs ASR when provided the [audio] and return data in the appropriate format.
         For format examples see, https://github.com/jianfch/stable-ts/blob/main/examples/non-whisper.ipynb.
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
     audio_type : {'str', 'byte', 'torch', 'numpy', None}, default None, meaning same type as ``audio``
         The type that ``audio`` needs to be for ``inference_func``.
@@ -105,7 +105,7 @@ def transcribe_any(
     only_ffmpeg : bool, default False
         Whether to use only FFmpeg (instead of not yt-dlp) for URls
     force_order : bool, default False
-        Whether to use adjacent timestamps if to replace timestamps that are out of order. Use this parameter only if
+        Whether to use adjacent timestamps to replace timestamps that are out of order. Use this parameter only if
         the words/segments returned by ``inference_func`` are expected to be in chronological order.
     check_sorted : bool, default True
         Whether to raise an error when timestamps returned by ``inference_func`` are not in ascending order.

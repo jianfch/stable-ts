@@ -65,7 +65,7 @@ def load_audio(file: Union[str, bytes], sr: int = SAMPLE_RATE, verbose: bool = T
 
     Returns
     -------
-    np.ndarray
+    numpy.ndarray
         A array containing the audio waveform in float32.
     """
     file = _load_file(file, verbose=verbose, only_ffmpeg=only_ffmpeg)
@@ -235,9 +235,9 @@ def prep_audio(
 
     Parameters
     ----------
-    audio : str or np.ndarray or torch.Tensor or bytes
+    audio : str or numpy.ndarray or torch.Tensor or bytes
         Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        If audio is :class:`np.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     demucs : bool or torch.nn.Module, default False
         Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
         a Demucs model to avoid reloading the model for each run.
