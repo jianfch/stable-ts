@@ -497,6 +497,29 @@ class Segment:
                         curr_chars = len(word)
         return indices
 
+    def get_duration_indices(self, max_dur: float, even_split: bool = True, include_lock: bool = False):
+        if not self.has_words or (total_duration := np.sum([w.duration for w in self.words])) <= max_dur:
+            return []
+        if even_split:
+            splits = np.ceil(total_duration / max_dur)
+            dur_per_split = total_duration / splits
+            cum_dur = np.cumsum([w.duration for w in self.words[:-1]])
+            indices = [
+                (np.abs(cum_dur - (i * dur_per_split))).argmin()
+                for i in range(1, int(splits))
+            ]
+        else:
+            indices = []
+            curr_total_dur = 0.0
+            locked_indices = self.get_locked_indices() if include_lock else []
+            for i, word in enumerate(self.words):
+                curr_total_dur += word.duration
+                if i != 0:
+                    if curr_total_dur > max_dur and i - 1 not in locked_indices:
+                        indices.append(i - 1)
+                        curr_total_dur = word.duration
+        return indices
+
     def split(self, indices: List[int]):
         if len(indices) == 0:
             return []
@@ -869,7 +892,7 @@ class WhisperResult:
         no_words = False
         for i in reversed(range(0, len(self.segments))):
             no_words = no_words or not self.segments[i].has_words
-            indices = get_indices(self.segments[i], *args)
+            indices = sorted(set(get_indices(self.segments[i], *args)))
             if not indices:
                 continue
             if newline:
@@ -879,6 +902,8 @@ class WhisperResult:
                         continue
 
                 for word_idx in indices:
+                    if self.segments[i].words[word_idx].word.endswith('\n'):
+                        continue
                     self.segments[i].words[word_idx].word += '\n'
                     if lock:
                         self.segments[i].words[word_idx].lock_right()
@@ -1087,14 +1112,14 @@ class WhisperResult:
             newline: bool = False
     ) -> "WhisperResult":
         """
-        Split (in-place) any segment that do not exceed the specified length
+        Split (in-place) any segment that exceeds ``max_chars`` or ``max_words`` into smaller segments.
 
         Parameters
         ----------
-        max_words : int, optional
-            Maximum number of words allowed in each segment.
         max_chars : int, optional
             Maximum number of characters allowed in each segment.
+        max_words : int, optional
+            Maximum number of words allowed in each segment.
         even_split : bool, default True
             Whether to evenly split a segment in length if it exceeds ``max_chars`` or ``max_words``.
         force_len : bool, default False
@@ -1104,7 +1129,7 @@ class WhisperResult:
             Whether to prevent future splits/merges from altering changes made by this method.
         include_lock: bool, default False
             Whether to include previous lock before splitting based on max_words, if ``even_split = False``.
-            Splitting will be done after the first word that is not locked > ``max_chars`` / ``max_words``.
+            Splitting will be done after the first non-locked word > ``max_chars`` / ``max_words``.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
 
@@ -1124,6 +1149,58 @@ class WhisperResult:
             lambda x: x.get_length_indices(
                 max_chars=max_chars,
                 max_words=max_words,
+                even_split=even_split,
+                include_lock=include_lock
+            ),
+            lock=lock,
+            newline=newline
+        )
+        return self
+
+    def split_by_duration(
+            self,
+            max_dur: float,
+            even_split: bool = True,
+            force_len: bool = False,
+            lock: bool = False,
+            include_lock: bool = False,
+            newline: bool = False
+    ) -> "WhisperResult":
+        """
+        Split (in-place) any segment that exceeds ``max_dur`` into smaller segments.
+
+        Parameters
+        ----------
+        max_dur : float
+            Maximum duration (in seconds) per segment.
+        even_split : bool, default True
+            Whether to evenly split a segment in length if it exceeds ``max_dur``.
+        force_len : bool, default False
+            Whether to force a constant length for each segment except the last segment.
+            This will ignore all previous non-locked segment boundaries.
+        lock : bool, default False
+            Whether to prevent future splits/merges from altering changes made by this method.
+        include_lock: bool, default False
+            Whether to include previous lock before splitting based on max_words, if ``even_split = False``.
+            Splitting will be done after the first non-locked word > ``max_dur``.
+        newline: bool, default False
+            Whether to insert line break at the split points instead of splitting into separate segments.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        If ``even_split = True``, segments can still exceed ``max_dur`` and locked words will be ignored to avoid
+        uneven splitting.
+        """
+        if force_len:
+            self.merge_all_segments()
+        self._split_segments(
+            lambda x: x.get_duration_indices(
+                max_dur=max_dur,
                 even_split=even_split,
                 include_lock=include_lock
             ),
@@ -1284,6 +1361,7 @@ class WhisperResult:
                 sg: split_by_gap
                 sp: split_by_punctuation
                 sl: split_by_length
+                sd: split_by_duration
                 mg: merge_by_gap
                 mp: merge_by_punctuation
                 ms: merge_all_segment
@@ -1321,6 +1399,7 @@ class WhisperResult:
             sg=self.split_by_gap,
             sp=self.split_by_punctuation,
             sl=self.split_by_length,
+            sd=self.split_by_duration,
             mg=self.merge_by_gap,
             mp=self.merge_by_punctuation,
             ms=self.merge_all_segments,
