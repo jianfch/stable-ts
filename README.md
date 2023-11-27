@@ -12,6 +12,7 @@ https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-
     * [Adjustments](#adjustments)
   * [Refinement](#refinement)
   * [Regrouping Words](#regrouping-words)
+  * [Editing](#editing)
   * [Locating Words](#locating-words)
   * [Tips](#tips)
   * [Visualizing Suppression](#visualizing-suppression)
@@ -48,7 +49,7 @@ stable-ts audio.mp3 -o audio.srt
 
 </details>
 
-Parameters: 
+Docstrings: 
 [load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L1022-L1052), 
 [transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L76-L217),
 [transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L670-L743)
@@ -64,7 +65,7 @@ result = model.transcribe_stable('audio.mp3')
 ```commandline
 stable-ts audio.mp3 -o audio.srt -fw
 ```
-Parameters: 
+Docstring: 
 [transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L866-L943), 
 
 </details>
@@ -77,11 +78,12 @@ result.to_srt_vtt('audio.vtt') #VTT
 result.to_ass('audio.ass') #ASS
 result.to_tsv('audio.tsv') #TSV
 ```
-Parameters: 
+Docstrings: 
 [to_srt_vtt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L266-L308),
 [to_ass()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L412-L465),
 [to_tsv()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L340-L378)
-[save_as_json()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L528-L537)
+[to_txt()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L534-L568)
+[save_as_json()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/text_output.py#L587-L597)
 <br /><br />
 There are word-level and segment-level timestamps. All output formats support them. 
 They also support will both levels simultaneously except TSV. 
@@ -175,7 +177,7 @@ stable-ts audio.mp3 --align text.txt --language en
 
 </details>
 
-Parameters:
+Docstring:
 [align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L59-L164)
 
 #### Adjustments
@@ -188,8 +190,8 @@ Note: both results are required to have word timestamps and matching words.
 # the adjustments are in-place for `result`
 result.adjust_by_result(new_result)
 ```
-Parameters:
-[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L755-L766)
+Docstring:
+[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L861-L872)
 
 ### Refinement
 Timestamps can be further improved with `refine()`.
@@ -214,7 +216,7 @@ stable-ts result.json --refine -o audio.srt --refine_option "audio=audio.mp3"
 
 </details>
 
-Parameters:
+Docstring:
 [refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L455-L526)
 
 
@@ -245,16 +247,74 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1340-L1392)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L965-L981)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1026-L1042)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1114-L1145)
-- [split_by_duration()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1169-L1198)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L993-L1014)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1054-L1075)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1082-L1089)
-- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1219-L1241)
-- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1282-L1304)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1809-L1866)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1092-L1108)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1153-L1169)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1241-L1272)
+- [split_by_duration()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1296-L1325)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1120-L1141)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1181-L1202)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1209-L1216)
+- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1346-L1368)
+- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1409-L1431)
+
+### Editing
+The editing methods in stable-ts can be chained with [Regrouping Methods](#regrouping-methods) and used in `regroup()`.
+
+Remove specific instances words or segments:
+```python
+# Remove first word of the first segment:
+first_word = result[0][0]
+result.remove_word(first_word)
+# This following is also does the same:
+del result[0][0]
+
+# Remove the last segment:
+last_segment = result[-1]
+result.remove_segment(last_segment)
+# This following is also does the same:
+del result[-1]
+```
+Docstrings:
+[remove_word()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1467-L1483),
+[remove_segment()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1509-L1525)
+
+
+Removing repetitions:
+```python
+# Example 1: "This is is is a test." -> "This is a test."
+# The following removes the last two " is":
+result.remove_repetition(1)
+
+# Example 2: "This is is is a test this is a test." -> "This is a test."
+# The following removes the second " is" and third " is", then remove the last "this is a test"
+# The first parameter `max_words` is `4` because "this is a test" consists 4 words
+result.remove_repetition(4)
+```
+Docstring:
+[remove_repetition()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1549-L1571)
+
+Removing specific word(s) by string content:
+```python
+# Remove all " ok" from " ok ok this is a test."
+result.remove_words_by_str('ok')
+
+# Remove all " ok" and " Um..." from " ok this is a test. Um..."
+result.remove_words_by_str(['ok', 'um'])
+```
+Docstring:
+[remove_words_by_str()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1637-L1664)
+
+Filling in segment gaps:
+```python
+# result0:             [" How are you?"] [" I'm good."]                     [" Good!"]
+# result1: [" Hello!"] [" How are you?"]                [" How about you?"] [" Good!"]
+result0.fill_in_gaps(result1)
+# After filling in the gaps in `result0` with contents in `result1`:
+# result0: [" Hello!"] [" How are you?"] [" I'm good."] [" How about you?"] [" Good!"]
+```
+Docstring:
+[fill_in_gaps()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1709-L1735)
 
 ### Locating Words
 There are two ways to locate words. 
@@ -267,7 +327,7 @@ for match in matches:
     print(match.to_display_str())
 # verbose=True does the same thing as this for-loop.
 ```
-Parameters:
+Docstring:
 [locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L835-L931)
 
 <details>
@@ -300,8 +360,8 @@ for match in matches:
         f'start: {match.start}\n'
         f'end: {match.end}\n')
 ```
-Parameters: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1430-L1446)
+Docstring: 
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1909-L1925)
 
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
@@ -333,7 +393,7 @@ stable_whisper.visualize_suppression('audio.mp3', 'image.png', q_levels=20, k_si
 stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_threshold=0.35)
 ```
 ![vad](https://user-images.githubusercontent.com/28970749/225825446-980924a5-7485-41e1-b0d9-c9b069d605f2.png)
-Parameters: 
+Docstring: 
 [visualize_suppression()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/stabilization.py#L344-L373)
 
 ### Encode Comparison
@@ -346,7 +406,7 @@ stable_whisper.encode_video_comparison(
     labels=['Example 1', 'Example 2']
 )
 ```
-Parameters: 
+Docstring: 
 [encode_video_comparison()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/video_output.py#L29-L73)
 
 #### Multiple Files with CLI 

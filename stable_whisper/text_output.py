@@ -5,7 +5,8 @@ from typing import List, Tuple, Union, Callable
 from itertools import chain
 from .stabilization import valid_ts
 
-__all__ = ['result_to_srt_vtt', 'result_to_ass', 'result_to_tsv', 'save_as_json', 'load_result']
+__all__ = ['result_to_srt_vtt', 'result_to_ass', 'result_to_tsv', 'result_to_txt', 'save_as_json', 'load_result']
+SUPPORTED_FORMATS = ('srt', 'vtt', 'ass', 'tsv', 'txt')
 
 
 def _save_as_file(content: str, path: str):
@@ -223,9 +224,8 @@ def result_to_any(result: (dict, list),
 
     if filetype is None:
         filetype = os.path.splitext(filepath)[-1][1:] or 'srt'
-    if filetype.lower() not in ('srt', 'vtt', 'ass', 'tsv'):
+    if filetype.lower() not in SUPPORTED_FORMATS:
         raise NotImplementedError(f'{filetype} not supported')
-
     if filepath and not filepath.lower().endswith(f'.{filetype}'):
         filepath += f'.{filetype}'
 
@@ -264,7 +264,7 @@ def result_to_srt_vtt(result: (dict, list),
                       strip=True,
                       reverse_text: Union[bool, tuple] = False):
     """
-    Generate SRT/VTT from result to display segment-level and/or word-level timestamp.
+    Generate SRT/VTT from ``result`` to display segment-level and/or word-level timestamp.
 
     Parameters
     ----------
@@ -338,7 +338,7 @@ def result_to_tsv(result: (dict, list),
                   strip=True,
                   reverse_text: Union[bool, tuple] = False):
     """
-    Generate TSV from result to display segment-level and/or word-level timestamp.
+    Generate TSV from ``result`` to display segment-level and/or word-level timestamp.
 
     Parameters
     ----------
@@ -521,6 +521,65 @@ def result_to_ass(result: (dict, list),
             if karaoke or (word_level and segment_level and tag is None)
             else None
         )
+    )
+
+
+def result_to_txt(
+        result: (dict, list),
+        filepath: str = None,
+        min_dur: float = 0.02,
+        strip=True,
+        reverse_text: Union[bool, tuple] = False
+):
+    """
+    Generate plain-text without timestamps from ``result``.
+
+    Parameters
+    ----------
+    result : dict or list or stable_whisper.result.WhisperResult
+        Result of transcription.
+    filepath : str, default None, meaning content will be returned as a ``str``
+        Path to save file.
+    min_dur : float, default 0.2
+        Minimum duration allowed for any word/segment before the word/segments are merged with adjacent word/segments.
+    strip : bool, default True
+        Whether to remove spaces before and after text on each segment for output.
+    reverse_text: bool or tuple, default False
+        Whether to reverse the order of words for each segment or provide the ``prepend_punctuations`` and
+        ``append_punctuations`` as tuple pair instead of ``True`` which is for the default punctuations.
+
+    Returns
+    -------
+    str
+        String of the content if ``filepath`` is ``None``.
+
+    Notes
+    -----
+    ``reverse_text`` will not fix RTL text not displaying tags properly which is an issue with some video player. VLC
+    seems to not suffer from this issue.
+
+    Examples
+    --------
+    >>> import stable_whisper
+    >>> model = stable_whisper.load_model('base')
+    >>> result = model.transcribe('audio.mp3')
+    >>> result.to_txt('audio.txt')
+    Saved: audio.txt
+    """
+
+    def segments2blocks(segments: dict, _strip=True) -> str:
+        return '\n'.join(f'{segment["text"].strip() if _strip else segment["text"]}' for segment in segments)
+
+    return result_to_any(
+        result=result,
+        filepath=filepath,
+        filetype='txt',
+        segments2blocks=segments2blocks,
+        segment_level=True,
+        word_level=False,
+        min_dur=min_dur,
+        strip=strip,
+        reverse_text=reverse_text
     )
 
 

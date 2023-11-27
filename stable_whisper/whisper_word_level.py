@@ -785,7 +785,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
     Parameters
     ----------
     model_size_or_path : {'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1',
-        'large-v2', or 'large'}
+        'large-v2', 'large-v3', or 'large'}
         Size of the model.
 
     model_init_options
@@ -1027,7 +1027,7 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     Parameters
     ----------
     name : {'tiny', 'tiny.en', 'base', 'base.en', 'small', 'small.en', 'medium', 'medium.en', 'large-v1',
-        'large-v2', or 'large'}
+        'large-v2', 'large-v3', or 'large'}
         One of the official model names listed by :func:`whisper.available_models`, or
         path to a model checkpoint containing the model dimensions and the model state_dict.
     device : str or torch.device, optional
@@ -1114,7 +1114,9 @@ def cli():
         "ass": "to_ass",
         "json": "save_as_json",
         "vtt": "to_srt_vtt",
-        "tsv": "to_tsv"}
+        "tsv": "to_tsv",
+        "txt": "to_txt",
+    }
 
     OUTPUT_FORMATS = set(OUTPUT_FORMATS_METHODS.keys())
 

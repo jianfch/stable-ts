@@ -2,7 +2,7 @@ import warnings
 import re
 import torch
 import numpy as np
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple, Optional, Callable
 from dataclasses import dataclass
 from copy import deepcopy
 from itertools import chain
@@ -61,6 +61,22 @@ class WordTiming:
 
         return self_copy
 
+    def __deepcopy__(self, memo=None):
+        return self.copy()
+
+    def copy(self):
+        return WordTiming(
+            word=self.word,
+            start=self.start,
+            end=self.end,
+            probability=self.probability,
+            tokens=None if self.tokens is None else self.tokens.copy(),
+            left_locked=self.left_locked,
+            right_locked=self.right_locked,
+            segment_id=self.segment_id,
+            id=self.id
+        )
+
     @property
     def duration(self):
         return round(self.end - self.start, 3)
@@ -74,7 +90,7 @@ class WordTiming:
         self.end = round(self.end + offset_seconds, 3)
 
     def to_dict(self):
-        dict_ = deepcopy(self.__dict__)
+        dict_ = deepcopy(self).__dict__
         dict_.pop('left_locked')
         dict_.pop('right_locked')
         return dict_
@@ -118,6 +134,15 @@ class WordTiming:
                     print(f'Start: {self.start}\nEnd: {self.end} -> {new_end}\nText:"{self.word}"\n')
                 self.end = new_end
 
+    def set_segment(self, segment: 'Segment'):
+        self._segment = segment
+
+    def get_segment(self) -> Union['Segment', None]:
+        """
+        Return instance of :class:`stable_whisper.result.Segment` that this instance is a part of.
+        """
+        return getattr(self, '_segment', None)
+
 
 def _words_by_lock(words: List[WordTiming], only_text: bool = False, include_single: bool = False):
     """
@@ -151,9 +176,46 @@ class Segment:
     ori_has_words: bool = None
     id: int = None
 
-    def to_display_str(self):
-        line = f"[{format_timestamp(self.start)} --> {format_timestamp(self.end)}] {self.text}"
-        if self.has_words:
+    def __getitem__(self, index: int) -> WordTiming:
+        if self.words is None:
+            raise ValueError('segment contains no words')
+        return self.words[index]
+
+    def __delitem__(self, index: int):
+        if self.words is None:
+            raise ValueError('segment contains no words')
+        del self.words[index]
+        self.reassign_ids()
+        self.update_seg_with_words()
+
+    def __deepcopy__(self, memo=None):
+        return self.copy()
+
+    def copy(self, new_words: Optional[List[WordTiming]] = None):
+        if new_words is None:
+            words = None if self.words is None else [w.copy() for w in self.words]
+        else:
+            words = [w.copy() for w in new_words]
+
+        new_seg = Segment(
+            start=self.start,
+            end=self.end,
+            text=self.text,
+            seek=self.seek,
+            tokens=self.tokens,
+            temperature=self.temperature,
+            avg_logprob=self.avg_logprob,
+            compression_ratio=self.compression_ratio,
+            no_speech_prob=self.no_speech_prob,
+            words=words,
+            id=self.id
+        )
+        new_seg.update_seg_with_words()
+        return new_seg
+
+    def to_display_str(self, only_segment: bool = False):
+        line = f'[{format_timestamp(self.start)} --> {format_timestamp(self.end)}] "{self.text}"'
+        if self.has_words and not only_segment:
             line += '\n' + '\n'.join(
                 f"-[{format_timestamp(w.start)}] -> [{format_timestamp(w.end)}] \"{w.word}\"" for w in self.words
             ) + '\n'
@@ -181,6 +243,8 @@ class Segment:
         if self.has_words:
             self.words: List[WordTiming] = \
                 [WordTiming(**word) if isinstance(word, dict) else word for word in self.words]
+            for w in self.words:
+                w.set_segment(self)
         if self.ori_has_words is None:
             self.ori_has_words = self.has_words
         self.round_all_timestamps()
@@ -321,7 +385,7 @@ class Segment:
                  self._to_reverse_text()).__dict__
             )
         else:
-            seg_dict = deepcopy(self.__dict__)
+            seg_dict = deepcopy(self).__dict__
         seg_dict.pop('ori_has_words')
         if self.has_words:
             seg_dict['words'] = [w.to_dict() for w in seg_dict['words']]
@@ -381,6 +445,8 @@ class Segment:
                 if any(w.tokens is None for w in self.words) else
                 [t for w in self.words for t in w.tokens]
             )
+            for w in self.words:
+                w.set_segment(self)
 
     def suppress_silence(self,
                          silent_starts: np.ndarray,
@@ -536,6 +602,15 @@ class Segment:
             prev_i = i
         return seg_copies
 
+    def set_result(self, result: 'WhisperResult'):
+        self._result = result
+
+    def get_result(self) -> Union['WhisperResult', None]:
+        """
+        Return outer instance of :class:`stable_whisper.result.WhisperResult` that ``self`` is a part of.
+        """
+        return getattr(self, '_result', None)
+
 
 class WhisperResult:
 
@@ -556,6 +631,13 @@ class WhisperResult:
         self.raise_for_unsorted(check_sorted)
         self.remove_no_word_segments()
         self.update_all_segs_with_words()
+
+    def __getitem__(self, index: int) -> Segment:
+        return self.segments[index]
+
+    def __delitem__(self, index: int):
+        del self.segments[index]
+        self.reassign_ids(True)
 
     @staticmethod
     def _standardize_result(result: Union[str, dict, list]):
@@ -615,6 +697,7 @@ class WhisperResult:
     def update_all_segs_with_words(self):
         for seg in self.segments:
             seg.update_seg_with_words()
+            seg.set_result(self)
 
     def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False):
         new_seg = self.segments[index0] + self.segments[index1]
@@ -809,10 +892,11 @@ class WhisperResult:
                         print(f'{line}"{word.word}"')
         self.update_all_segs_with_words()
 
-    def reassign_ids(self):
+    def reassign_ids(self, only_segments: bool = False):
         for i, s in enumerate(self.segments):
             s.id = i
-            s.reassign_ids()
+            if not only_segments:
+                s.reassign_ids()
 
     def remove_no_word_segments(self, ignore_ori=False):
         for i in reversed(range(len(self.segments))):
@@ -955,6 +1039,49 @@ class WhisperResult:
                 continue
             self.add_segments(i, i + 1, inplace=True, lock=lock)
         self.remove_no_word_segments()
+
+    def get_content_by_time(
+            self,
+            time: Union[float, Tuple[float, float]],
+            within: bool = False,
+            segment_level: bool = False
+    ) -> Union[List[WordTiming], List[Segment]]:
+        """
+        Return content in the ``time`` range.
+
+        Parameters
+        ----------
+        time : float or tuple of (float, float)
+            Range of time to find content. For tuple of two floats, first value is the start time and second value is
+            the end time. For a single float value, it is treated as both the start and end time.
+        within : bool, default False
+            Whether to only find content fully overlaps with ``time`` range.
+        segment_level : bool, default False
+            Whether to look only on the segment level and return instances of :class:`stable_whisper.result.Segment`
+            instead of :class:`stable_whisper.result.WordTiming`.
+
+        Returns
+        -------
+        list of stable_whisper.result.WordTiming or list of stable_whisper.result.Segment
+            List of contents in the ``time`` range. The contents are instances of
+            :class:`stable_whisper.result.Segment` if ``segment_level = True`` else
+            :class:`stable_whisper.result.WordTiming`.
+        """
+        if not segment_level and not self.has_words:
+            raise ValueError('Missing word timestamps in result. Use ``segment_level=True`` instead.')
+        contents = self.segments if segment_level else self.all_words()
+        if isinstance(time, (float, int)):
+            time = [time, time]
+        start, end = time
+
+        if within:
+            def is_in_range(c):
+                return start <= c.start and end >= c.end
+        else:
+            def is_in_range(c):
+                return start <= c.end and end >= c.start
+
+        return [c for c in contents if is_in_range(c)]
 
     def split_by_gap(
             self,
@@ -1331,6 +1458,348 @@ class WhisperResult:
                         part.lock_left()
         return self
 
+    def remove_word(
+            self,
+            word: Union[WordTiming, Tuple[int, int]],
+            reassign_ids: bool = True,
+            verbose: bool = True
+    ) -> 'WhisperResult':
+        """
+        Remove a word.
+
+        Parameters
+        ----------
+        word : WordTiming or tuple of (int, int)
+            Instance of :class:`stable_whisper.result.WordTiming` or tuple of (segment index, word index).
+        reassign_ids : bool, default True
+            Whether to reassign segment and word ids (indices) after removing ``word``.
+        verbose : bool, default True
+            Whether to print detail of the removed word.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+        """
+        if isinstance(word, WordTiming):
+            if self[word.segment_id][word.id] is not word:
+                self.reassign_ids()
+                if self[word.segment_id][word.id] is not word:
+                    raise ValueError('word not in result')
+            seg_id, word_id = word.segment_id, word.id
+        else:
+            seg_id, word_id = word
+        if verbose:
+            print(f'Removed: {self[seg_id][word_id].to_dict()}')
+        del self.segments[seg_id].words[word_id]
+        if not reassign_ids:
+            return self
+        if self[seg_id].has_words:
+            self[seg_id].reassign_ids()
+        else:
+            self.remove_no_word_segments()
+        return self
+
+    def remove_segment(
+            self,
+            segment: Union[Segment, int],
+            reassign_ids: bool = True,
+            verbose: bool = True
+    ) -> 'WhisperResult':
+        """
+        Remove a segment.
+
+        Parameters
+        ----------
+        segment : Segment or int
+            Instance :class:`stable_whisper.result.Segment` or segment index.
+        reassign_ids : bool, default True
+            Whether to reassign segment IDs (indices) after removing ``segment``.
+        verbose : bool, default True
+            Whether to print detail of the removed word.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+        """
+        if isinstance(segment, Segment):
+            if self[segment.id] is not segment:
+                self.reassign_ids()
+                if self[segment.id] is not segment:
+                    raise ValueError('segment not in result')
+            segment = segment.id
+        if verbose:
+            print(f'Removed: [id:{self[segment].id}] {self[segment].to_display_str(True)}')
+        del self.segments[segment]
+        if not reassign_ids:
+            return self
+        self.reassign_ids(True)
+        return self
+
+    def remove_repetition(
+            self,
+            max_words: int = 1,
+            case_sensitive: bool = False,
+            strip: bool = True,
+            ignore_punctuations: str = "\"',.?!",
+            extend_duration: bool = True,
+            verbose: bool = True
+    ) -> 'WhisperResult':
+        """
+        Remove words that repeat consecutively.
+
+        Parameters
+        ----------
+        max_words : int
+            Maximum number of words to look for consecutively.
+        case_sensitive : bool, default False
+            Whether the case of words need to match to be considered as repetition.
+        strip : bool, default True
+            Whether to ignore spaces before and after each word.
+        ignore_punctuations : bool, default '"',.?!'
+            Ending punctuations to ignore.
+        extend_duration: bool, default True
+            Whether to extend the duration of the previous word to cover the duration of the repetition.
+        verbose: bool, default True
+            Whether to print detail of the removed repetitions.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+        """
+        if not self.has_words:
+            return self
+
+        for count in range(1, max_words + 1):
+            all_words = self.all_words()
+            if len(all_words) < 2:
+                return self
+            all_words_str = [w.word for w in all_words]
+            if strip:
+                all_words_str = [w.strip() for w in all_words_str]
+            if ignore_punctuations:
+                ptn = f'[{ignore_punctuations}]+$'
+                all_words_str = [re.sub(ptn, '', w) for w in all_words_str]
+            if not case_sensitive:
+                all_words_str = [w.lower() for w in all_words_str]
+            next_i = None
+            changes = []
+            for i in reversed(range(count*2, len(all_words_str)+1)):
+                if next_i is not None:
+                    if next_i != i:
+                        continue
+                    else:
+                        next_i = None
+                s = i - count
+                if all_words_str[s - count:s] != all_words_str[s:i]:
+                    continue
+                next_i = s
+                if extend_duration:
+                    all_words[s-1].end = all_words[i-1].end
+                temp_changes = []
+                for j in reversed(range(s, i)):
+                    if verbose:
+                        temp_changes.append(f'- {all_words[j].to_dict()}')
+                    self.remove_word(all_words[j], False, verbose=False)
+                if temp_changes:
+                    changes.append(
+                        f'Remove: [{format_timestamp(all_words[s].start)} -> {format_timestamp(all_words[i-1].end)}] '
+                        + ''.join(_w.word for _w in all_words[s:i]) + '\n'
+                        + '\n'.join(reversed(temp_changes)) + '\n'
+                    )
+                for i0, i1 in zip(range(s - count, s), range(s, i)):
+                    if len(all_words[i0].word) < len(all_words[i1].word):
+                        all_words[i1].start = all_words[i0].start
+                        all_words[i1].end = all_words[i0].end
+                        _sid, _wid = all_words[i0].segment_id, all_words[i0].id
+                        self.segments[_sid].words[_wid] = all_words[i1]
+
+            if changes:
+                print('\n'.join(reversed(changes)))
+
+            self.remove_no_word_segments()
+        self.update_all_segs_with_words()
+
+        return self
+
+    def remove_words_by_str(
+            self,
+            words: Union[str, List[str], None],
+            case_sensitive: bool = False,
+            strip: bool = True,
+            ignore_punctuations: str = "\"',.?!",
+            min_prob: float = None,
+            filters: Callable = None,
+            verbose: bool = True
+    ) -> 'WhisperResult':
+        """
+        Remove words that match ``words``.
+
+        Parameters
+        ----------
+        words : str or list of str or None
+            A word or list of words to remove.``None`` for all words to be passed into ``filters``.
+        case_sensitive : bool, default False
+            Whether the case of words need to match to be considered as repetition.
+        strip : bool, default True
+            Whether to ignore spaces before and after each word.
+        ignore_punctuations : bool, default '"',.?!'
+            Ending punctuations to ignore.
+        min_prob : float, optional
+            Acts as the first filter the for the words that match ``words``. Words with probability < ``min_prob`` will
+            be removed if ``filters`` is ``None``, else pass the words into ``filters``. Words without probability will
+            be treated as having probability < ``min_prob``.
+        filters : Callable, optional
+            A function that takes an instance of :class:`stable_whisper.result.WordTiming` as its only argument.
+            This function is custom filter for the words that match ``words`` and were not caught by ``min_prob``.
+        verbose:
+            Whether to print detail of the removed words.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+        """
+        if not self.has_words:
+            return self
+        if isinstance(words, str):
+            words = [words]
+        all_words = self.all_words()
+        all_words_str = [w.word for w in all_words]
+        if strip:
+            all_words_str = [w.strip() for w in all_words_str]
+            words = [w.strip() for w in words]
+        if ignore_punctuations:
+            ptn = f'[{ignore_punctuations}]+$'
+            all_words_str = [re.sub(ptn, '', w) for w in all_words_str]
+            words = [re.sub(ptn, '', w) for w in words]
+        if not case_sensitive:
+            all_words_str = [w.lower() for w in all_words_str]
+            words = [w.lower() for w in words]
+
+        changes = []
+        for i, w in reversed(list(enumerate(all_words_str))):
+            if not (words is None or any(w == _w for _w in words)):
+                continue
+            if (
+                    (min_prob is None or all_words[i].probability is None or min_prob > all_words[i].probability) and
+                    (filters is None or filters(all_words[i]))
+            ):
+                if verbose:
+                    changes.append(f'Removed: {all_words[i].to_dict()}')
+                self.remove_word(all_words[i], False, verbose=False)
+        if changes:
+            print('\n'.join(reversed(changes)))
+        self.remove_no_word_segments()
+        self.update_all_segs_with_words()
+
+        return self
+
+    def fill_in_gaps(
+            self,
+            other_result: Union['WhisperResult', str],
+            min_gap: float = 0.1,
+            case_sensitive: bool = False,
+            strip: bool = True,
+            ignore_punctuations: str = "\"',.?!",
+            verbose: bool = True
+    ) -> 'WhisperResult':
+        """
+        Fill in segment gaps larger than ``min_gap`` with content from ``other_result`` at the times of gaps.
+
+        Parameters
+        ----------
+        other_result : WhisperResult or str
+            Another transcription result as an instance of :class:`stable_whisper.result.WhisperResult` or path to the
+            JSON of the result.
+        min_gap : float, default 0.1
+            The minimum seconds of a gap between segments that must be exceeded to be filled in.
+        case_sensitive : bool, default False
+            Whether to consider the case of the first and last word of the gap to determine overlapping words to remove
+            before filling in.
+        strip : bool, default True
+            Whether to ignore spaces before and after the first and last word of the gap to determine overlapping words
+            to remove before filling in.
+        ignore_punctuations : bool, default '"',.?!'
+            Ending punctuations to ignore in the first and last word of the gap to determine overlapping words to
+            remove before filling in.
+        verbose:
+            Whether to print detail of the filled content.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+        """
+        if len(self.segments) < 2:
+            return self
+        if isinstance(other_result, str):
+            other_result = WhisperResult(other_result)
+
+        if strip:
+            def strip_space(w):
+                return w.strip()
+        else:
+            def strip_space(w):
+                return w
+
+        if ignore_punctuations:
+            ptn = f'[{ignore_punctuations}]+$'
+
+            def strip_punctuations(w):
+                return re.sub(ptn, '', strip_space(w))
+        else:
+            strip_punctuations = strip_space
+
+        if case_sensitive:
+            strip = strip_punctuations
+        else:
+            def strip(w):
+                return strip_punctuations(w).lower()
+
+        seg_pairs = list(enumerate(zip(self.segments[:-1], self.segments[1:])))
+        seg_pairs.insert(0, (-1, (None, self.segments[0])))
+        seg_pairs.append((seg_pairs[-1][0]+1, (self.segments[-1], None)))
+
+        changes = []
+        for i, (seg0, seg1) in reversed(seg_pairs):
+            first_word = None if seg0 is None else seg0.words[-1]
+            last_word = None if seg1 is None else seg1.words[0]
+            start = (other_result[0].start if first_word is None else first_word.end)
+            end = other_result[-1].end if last_word is None else last_word.start
+            if end - start <= min_gap:
+                continue
+            gap_words = other_result.get_content_by_time((start, end))
+            if first_word is not None and gap_words and strip(first_word.word) == strip(gap_words[0].word):
+                first_word.end = gap_words[0].end
+                gap_words = gap_words[1:]
+            if last_word is not None and gap_words and strip(last_word.word) == strip(gap_words[-1].word):
+                last_word.start = gap_words[-1].start
+                gap_words = gap_words[:-1]
+            if not gap_words:
+                continue
+            if last_word is not None and last_word.start < gap_words[-1].end:
+                last_word.start = gap_words[-1].end
+            new_segments = [other_result[gap_words[0].segment_id].copy([])]
+            for j, new_word in enumerate(gap_words):
+                new_word = deepcopy(new_word)
+                if j == 0 and first_word is not None and first_word.end > gap_words[0].start:
+                    new_word.start = first_word.end
+                if new_segments[-1].id != new_word.segment_id:
+                    new_segments.append(other_result[new_word.segment_id].copy([]))
+                new_segments[-1].words.append(new_word)
+            if verbose:
+                changes.append('\n'.join('Added: ' + s.to_display_str(True) for s in new_segments))
+            self.segments = self.segments[:i+1] + new_segments + self.segments[i+1:]
+        if changes:
+            print('\n'.join(reversed(changes)))
+        self.reassign_ids()
+        self.update_all_segs_with_words()
+
+        return self
+
     def regroup(
             self,
             regroup_algo: Union[str, bool] = None,
@@ -1369,6 +1838,11 @@ class WhisperResult:
                 l: lock
                 us: unlock_all_segments
                 da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                rw: remove_word
+                rs: remove_segment
+                rp: remove_repetition
+                rws: remove_words_by_str
+                fg: fill_in_gaps
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -1405,7 +1879,12 @@ class WhisperResult:
             ms=self.merge_all_segments,
             cm=self.clamp_max,
             us=self.unlock_all_segments,
-            l=self.lock
+            l=self.lock,
+            rw=self.remove_word,
+            rs=self.remove_segment,
+            rp=self.remove_repetition,
+            rws=self.remove_words_by_str,
+            fg=self.fill_in_gaps,
         )
 
         calls = regroup_algo.split('_')
@@ -1477,6 +1956,7 @@ class WhisperResult:
     to_srt_vtt = result_to_srt_vtt
     to_ass = result_to_ass
     to_tsv = result_to_tsv
+    to_txt = result_to_txt
     save_as_json = save_as_json
 
 
