@@ -1,6 +1,6 @@
 # Stabilizing Timestamps for Whisper
 
-This script modifies [OpenAI's Whisper](https://github.com/openai/whisper) to produce more reliable timestamps.
+This library modifies [Whisper](https://github.com/openai/whisper) to produce more reliable timestamps and extends its functionality.
 
 https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-aedd-069389b8ae43.mp4
 
