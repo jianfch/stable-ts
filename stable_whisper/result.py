@@ -623,6 +623,7 @@ class WhisperResult:
         result, self.path = self._standardize_result(result)
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
+        self._regroup_history = result.get('regroup_history', '')
         segments = deepcopy(result.get('segments', self.ori_dict.get('segments')))
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
         self._forced_order = force_order
@@ -965,7 +966,8 @@ class WhisperResult:
         return dict(text=self.text,
                     segments=self.segments_to_dicts(),
                     language=self.language,
-                    ori_dict=self.ori_dict)
+                    ori_dict=self.ori_dict,
+                    regroup_history=self._regroup_history)
 
     def segments_to_dicts(self, reverse_text: Union[bool, tuple] = False):
         return [s.to_dict(reverse_text=reverse_text) for s in self.segments]
@@ -1107,6 +1109,9 @@ class WhisperResult:
             The current instance after the changes.
         """
         self._split_segments(lambda x: x.get_gap_indices(max_gap), lock=lock, newline=newline)
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += f'sg={max_gap}+{int(lock)}+{int(newline)}'
         return self
 
     def merge_by_gap(
@@ -1142,16 +1147,22 @@ class WhisperResult:
         indices = self.get_gap_indices(min_gap)
         self._merge_segments(indices,
                              max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += f'mg={min_gap}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}'
         return self
 
     def split_by_punctuation(
             self,
             punctuation: Union[List[str], List[Tuple[str, str]], str],
             lock: bool = False,
-            newline: bool = False
+            newline: bool = False,
+            min_words: Optional[int] = None,
+            min_chars: Optional[int] = None,
+            min_dur: Optional[int] = None
     ) -> "WhisperResult":
         """
-        Split (in-place) any segment at words that starts/ends with specific punctuations.
+        Split (in-place) segments at words that start/end with ``punctuation``.
 
         Parameters
         ----------
@@ -1159,15 +1170,38 @@ class WhisperResult:
             Punctuation(s) to split segments by.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
-        newline: bool, default False
+        newline : bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        min_words : int, optional
+            Split segments with words >= ``min_words``.
+        min_chars : int, optional
+            Split segments with characters >= ``min_chars``.
+        min_dur : int, optional
+            split segments with duration (in seconds) >= ``min_dur``.
 
         Returns
         -------
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
-        self._split_segments(lambda x: x.get_punctuation_indices(punctuation), lock=lock, newline=newline)
+        def _over_max(x: Segment):
+            return (
+                    (min_words and len(x.words) >= min_words) or
+                    (min_chars and x.char_count() >= min_chars) or
+                    (min_dur and x.duration >= min_dur)
+            )
+
+        indices = set(s.id for s in self.segments if _over_max(s))
+
+        def _get_indices(x: Segment):
+            return x.get_punctuation_indices(punctuation) if x.id in indices else []
+
+        self._split_segments(_get_indices, lock=lock, newline=newline)
+        if self._regroup_history:
+            self._regroup_history += '_'
+        punct_str = '/'.join(p if isinstance(p, str) else '*'.join(p) for p in punctuation)
+        self._regroup_history += f'sp={punct_str}+{int(lock)}+{int(newline)}'
+        self._regroup_history += f'+{min_words or ""}+{min_chars or ""}+{min_dur or ""}'.rstrip('+')
         return self
 
     def merge_by_punctuation(
@@ -1203,6 +1237,10 @@ class WhisperResult:
         indices = self.get_punctuation_indices(punctuation)
         self._merge_segments(indices,
                              max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
+        if self._regroup_history:
+            self._regroup_history += '_'
+        punct_str = '/'.join(p if isinstance(p, str) else '*'.join(p) for p in punctuation)
+        self._regroup_history += f'mp={punct_str}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}'
         return self
 
     def merge_all_segments(self) -> "WhisperResult":
@@ -1226,6 +1264,9 @@ class WhisperResult:
         self.segments = [self.segments[0]]
         self.reassign_ids()
         self.update_all_segs_with_words()
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += 'ms'
         return self
 
     def split_by_length(
@@ -1282,6 +1323,10 @@ class WhisperResult:
             lock=lock,
             newline=newline
         )
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += (f'sl={max_chars or ""}+{max_words or ""}+{int(even_split)}+{int(force_len)}'
+                                  f'+{int(lock)}+{int(include_lock)}+{int(newline)}')
         return self
 
     def split_by_duration(
@@ -1334,6 +1379,10 @@ class WhisperResult:
             lock=lock,
             newline=newline
         )
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += (f'sd={max_dur}+{int(even_split)}+{int(force_len)}'
+                                  f'+{int(lock)}+{int(include_lock)}+{int(newline)}')
         return self
 
     def clamp_max(
@@ -1394,7 +1443,9 @@ class WhisperResult:
                     word.clamp_max(curr_max_dur, clip_start=clip_start, verbose=verbose)
 
             seg.update_seg_with_words()
-
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += f'cm={medium_factor}+{max_dur or ""}+{clip_start or ""}+{int(verbose)}'
         return self
 
     def lock(
@@ -1456,6 +1507,12 @@ class WhisperResult:
                         part.lock_right()
                     if left:
                         part.lock_left()
+        if self._regroup_history:
+            self._regroup_history += '_'
+        startswith_str = (startswith if isinstance(startswith, str) else '/'.join(startswith)) if startswith else ""
+        endswith_str = (endswith if isinstance(endswith, str) else '/'.join(endswith)) if endswith else ""
+        self._regroup_history += (f'l={startswith_str}+{endswith_str}'
+                                  f'+{int(right)}+{int(left)}+{int(case_sensitive)}+{int(strip)}')
         return self
 
     def remove_word(
@@ -1869,6 +1926,15 @@ class WhisperResult:
         if regroup_algo is None or regroup_algo is True:
             regroup_algo = 'da'
 
+        for method, kwargs, msg in self.parse_regroup_algo(regroup_algo, include_str=verbose or only_show):
+            if msg:
+                print(msg)
+            if not only_show:
+                method(**kwargs)
+
+        return self
+
+    def parse_regroup_algo(self, regroup_algo: str, include_str: bool = True) -> List[Tuple[Callable, dict, str]]:
         methods = dict(
             sg=self.split_by_gap,
             sp=self.split_by_punctuation,
@@ -1886,24 +1952,28 @@ class WhisperResult:
             rws=self.remove_words_by_str,
             fg=self.fill_in_gaps,
         )
+        if not regroup_algo:
+            return []
 
         calls = regroup_algo.split('_')
         if 'da' in calls:
             default_calls = 'cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
             calls = chain.from_iterable(default_calls if method == 'da' else [method] for method in calls)
+        operations = []
         for method in calls:
             method, args = method.split('=', maxsplit=1) if '=' in method else (method, '')
             if method not in methods:
                 raise NotImplementedError(f'{method} is not one of the available methods: {tuple(methods.keys())}')
             args = [] if len(args) == 0 else list(map(str_to_valid_type, args.split('+')))
             kwargs = {k: v for k, v in zip(methods[method].__code__.co_varnames[1:], args) if v is not None}
-            if verbose or only_show:
+            if include_str:
                 kwargs_str = ', '.join(f'{k}="{v}"' if isinstance(v, str) else f'{k}={v}' for k, v in kwargs.items())
-                print(f'{methods[method].__name__}({kwargs_str})')
-            if not only_show:
-                methods[method](**kwargs)
+                op_str = f'{methods[method].__name__}({kwargs_str})'
+            else:
+                op_str = None
+            operations.append((methods[method], kwargs, op_str))
 
-        return self
+        return operations
 
     def find(self, pattern: str, word_level=True, flags=None) -> "WhisperResultMatches":
         """
@@ -1929,6 +1999,20 @@ class WhisperResult:
     def text(self):
         return ''.join(s.text for s in self.segments)
 
+    @property
+    def regroup_history(self):
+        # same syntax as ``regroup_algo`` for :meth:``result.WhisperResult.regroup`
+        return self._regroup_history
+
+    def show_regroup_history(self):
+        """
+        Print details of all regrouping operations that been performed on data.
+        """
+        if not self._regroup_history:
+            print('Result has no history.')
+        for *_, msg in self.parse_regroup_algo(self._regroup_history):
+            print(f'.{msg}')
+
     def __len__(self):
         return len(self.segments)
 
@@ -1942,6 +2026,7 @@ class WhisperResult:
         Restore all values to that at initialization.
         """
         self.language = self.ori_dict.get('language')
+        self._regroup_history = ''
         segments = self.ori_dict.get('segments')
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
         if self._forced_order:
