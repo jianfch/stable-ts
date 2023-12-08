@@ -1191,10 +1191,10 @@ class WhisperResult:
                     (min_dur and x.duration >= min_dur)
             )
 
-        indices = set(s.id for s in self.segments if _over_max(s))
+        indices = set(s.id for s in self.segments if _over_max(s)) if any((min_words, min_chars, min_dur)) else None
 
         def _get_indices(x: Segment):
-            return x.get_punctuation_indices(punctuation) if x.id in indices else []
+            return x.get_punctuation_indices(punctuation) if indices is None or x.id in indices else []
 
         self._split_segments(_get_indices, lock=lock, newline=newline)
         if self._regroup_history:
