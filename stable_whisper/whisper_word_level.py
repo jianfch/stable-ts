@@ -59,6 +59,7 @@ def transcribe_stable(
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         min_word_dur: float = 0.1,
+        nonspeech_error: float = 0.3,
         only_voice_freq: bool = False,
         prepend_punctuations: str = "\"'“¿([{-",
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
@@ -154,7 +155,9 @@ def transcribe_stable(
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
     min_word_dur : float, default 0.1
-        Only allow suppressing timestamps that result in word durations greater than this value.
+        Shortest duration each word is allowed to reach for silence suppression.
+    nonspeech_error : float, default 0.3
+        Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
     prepend_punctuations : str, default '"\'“¿([{-)'
@@ -403,6 +406,7 @@ def transcribe_stable(
     total_duration = round(total_samples / SAMPLE_RATE, 2)
     n_samples_per_frame = exact_div(N_SAMPLES_PER_TOKEN * TOKENS_PER_SECOND, FRAMES_PER_SECOND)
 
+    silent_timings = [[], []]
     silence_timing = None
     if suppress_silence and vad:
         silence_timing = get_vad_silence_func(onnx=vad_onnx, verbose=verbose)(audio, speech_threshold=vad_threshold)
@@ -594,11 +598,14 @@ def transcribe_stable(
                 continue
 
             if segment_silence_timing is not None:
+                silent_timings[0].extend(segment_silence_timing[0])
+                silent_timings[1].extend(segment_silence_timing[1])
                 for seg_i, segment in enumerate(current_segments):
                     segment = Segment(**segment).suppress_silence(
                             *segment_silence_timing,
                             min_word_dur=min_word_dur,
-                            word_level=suppress_word_ts
+                            word_level=suppress_word_ts,
+                            nonspeech_error=nonspeech_error
                         )
                     if verbose:
                         safe_print(segment.to_display_str())
@@ -642,6 +649,8 @@ def transcribe_stable(
     if len(final_result.text) == 0:
         warnings.warn(f'Failed to {task} audio. Result contains no text. ')
 
+    final_result.update_nonspeech_sections(*silent_timings)
+
     return final_result
 
 
@@ -663,6 +672,7 @@ def transcribe_minimal(
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         min_word_dur: float = 0.1,
+        nonspeech_error: float = 0.3,
         only_voice_freq: bool = False,
         only_ffmpeg: bool = False,
         **options) \
@@ -720,7 +730,9 @@ def transcribe_minimal(
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
     min_word_dur : float, default 0.1
-        Only allow suppressing timestamps that result in word durations greater than this value.
+        Shortest duration each word is allowed to reach for silence suppression.
+    nonspeech_error : float, default 0.3
+        Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
     only_ffmpeg : bool, default False
@@ -771,6 +783,7 @@ def transcribe_minimal(
         vad_threshold=vad_threshold,
         vad_onnx=vad_onnx,
         min_word_dur=min_word_dur,
+        nonspeech_error=nonspeech_error,
         only_voice_freq=only_voice_freq,
         only_ffmpeg=only_ffmpeg,
         force_order=True,
@@ -857,6 +870,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             vad_threshold: float = 0.35,
             vad_onnx: bool = False,
             min_word_dur: float = 0.1,
+            nonspeech_error: float = 0.3,
             only_voice_freq: bool = False,
             only_ffmpeg: bool = False,
             check_sorted: bool = True,
@@ -917,7 +931,9 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
         vad_onnx : bool, default False
             Whether to use ONNX for Silero VAD.
         min_word_dur : float, default 0.1
-            Only allow suppressing timestamps that result in word durations greater than this value.
+            Shortest duration each word is allowed to reach for silence suppression.
+        nonspeech_error : float, default 0.3
+            Relative error of non-speech sections that appear in between a word for silence suppression.
         only_voice_freq : bool, default False
             Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
         only_ffmpeg : bool, default False
@@ -930,7 +946,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             The first parameter is a float for seconds of the audio that has been transcribed.
             The second parameter is a float for total duration of audio in seconds.
         options
-            Additional options used for :func:`whisper.transcribe.transcribe` and
+            Additional options used for :meth:`faster_whisper.WhisperModel.transcribe` and
             :func:`stable_whisper.non_whisper.transcribe_any`.
 
         Returns
@@ -983,6 +999,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             vad_threshold=vad_threshold,
             vad_onnx=vad_onnx,
             min_word_dur=min_word_dur,
+            nonspeech_error=nonspeech_error,
             only_voice_freq=only_voice_freq,
             only_ffmpeg=only_ffmpeg,
             force_order=True,
@@ -1227,7 +1244,10 @@ def cli():
                         help='whether to use ONNX for Silero VAD')
 
     parser.add_argument('--min_word_dur', type=float, default=0.1,
-                        help="only allow suppressing timestamps that result in word durations greater than this value")
+                        help="shortest duration each word is allowed to reach for silence suppression")
+    parser.add_argument('--nonspeech_error', type=float, default=0.3,
+                        help="relative error of non-speech sections that appear in between a word for "
+                             "silence suppression.")
 
     parser.add_argument('--max_chars', type=int,
                         help="maximum number of character allowed in each segment")

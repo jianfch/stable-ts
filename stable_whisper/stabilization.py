@@ -89,32 +89,51 @@ def suppress_silence(
         result_obj,
         silent_starts: np.ndarray,
         silent_ends: np.ndarray,
-        min_word_dur: float
+        min_word_dur: float,
+        nonspeech_error: float = 0.3
 ):
     assert len(silent_starts) == len(silent_ends)
-    if len(silent_starts) == 0:
+    if len(silent_starts) == 0 or (result_obj.end - result_obj.start) <= min_word_dur:
         return
-    if result_obj.end - result_obj.start > min_word_dur:
 
-        start_match = np.logical_and(
-            silent_starts <= result_obj.start,
-            result_obj.start < silent_ends
+    start_overlaps = np.all(
+        (silent_starts <= result_obj.start, result_obj.start < silent_ends, silent_ends <= result_obj.end),
+        axis=0
+    ).nonzero()[0].tolist()
+    if start_overlaps:
+        new_start = silent_ends[start_overlaps[0]]
+        result_obj.start = min(new_start, round(result_obj.end - min_word_dur, 3))
+        if (result_obj.end - result_obj.start) <= min_word_dur:
+            return
+
+    end_overlaps = np.all(
+        (result_obj.start <= silent_starts, silent_starts < result_obj.end, result_obj.end <= silent_ends),
+        axis=0
+    ).nonzero()[0].tolist()
+    if end_overlaps:
+        new_end = silent_starts[end_overlaps[0]]
+        result_obj.end = max(new_end, round(result_obj.start + min_word_dur, 3))
+        if (result_obj.end - result_obj.start) <= min_word_dur:
+            return
+
+    if nonspeech_error:
+        matches = np.logical_and(
+            result_obj.start <= silent_starts,
+            result_obj.end >= silent_ends,
         ).nonzero()[0].tolist()
-
-        end_match = np.logical_and(
-            silent_starts < result_obj.end,
-            result_obj.end <= silent_ends
-        ).nonzero()[0].tolist()
-
-        if len(start_match) != 0:
-            if len(end_match) == 0:
-                new_start = silent_ends[start_match[0]]
-                if result_obj.end - new_start > min_word_dur:
-                    result_obj.start = new_start
-        elif len(end_match) != 0:
-            new_end = silent_starts[end_match[0]]
-            if new_end - result_obj.start > min_word_dur:
-                result_obj.end = new_end
+        if len(matches) == 0:
+            return
+        silence_start = np.min(silent_starts[matches])
+        silence_end = np.max(silent_ends[matches])
+        start_extra = silence_start - result_obj.start
+        end_extra = result_obj.end - silence_end
+        silent_duration = silence_end - silence_start
+        if start_extra <= end_extra:
+            if (start_extra / silent_duration) <= nonspeech_error:
+                result_obj.start = min(silence_end, round(result_obj.end - min_word_dur, 3))
+        else:
+            if (end_extra / silent_duration) <= nonspeech_error:
+                result_obj.end = max(silence_start, round(result_obj.start + min_word_dur, 3))
 
 
 def standardize_audio(

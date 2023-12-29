@@ -35,6 +35,7 @@ def align(
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
         min_word_dur: bool = 0.1,
+        nonspeech_error: float = 0.3,
         q_levels: int = 20,
         k_size: int = 5,
         vad: bool = False,
@@ -123,7 +124,9 @@ def align(
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
     min_word_dur : float, default 0.1
-        Only allow suppressing timestamps that result in word durations greater than this value.
+        Shortest duration each word is allowed to reach for silence suppression.
+    nonspeech_error : float, default 0.3
+        Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
     prepend_punctuations : str, default '"'“¿([{-)'
@@ -420,7 +423,8 @@ def align(
             vad_onnx=vad_onnx, vad_threshold=vad_threshold,
             q_levels=q_levels, k_size=k_size,
             sample_rate=SAMPLE_RATE, min_word_dur=min_word_dur,
-            word_level=suppress_word_ts, verbose=verbose
+            word_level=suppress_word_ts, verbose=verbose,
+            nonspeech_error=nonspeech_error
         )
     if not original_split:
         result.regroup(regroup)

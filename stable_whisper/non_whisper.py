@@ -34,6 +34,7 @@ def transcribe_any(
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         min_word_dur: float = 0.1,
+        nonspeech_error: float = 0.3,
         only_voice_freq: bool = False,
         only_ffmpeg: bool = False,
         force_order: bool = False,
@@ -99,7 +100,9 @@ def transcribe_any(
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
     min_word_dur : float, default 0.1
-        Only allow suppressing timestamps that result in word durations greater than this value.
+        Shortest duration each word is allowed to reach for silence suppression.
+    nonspeech_error : float, default 0.3
+        Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
     only_ffmpeg : bool, default False
@@ -323,7 +326,8 @@ def transcribe_any(
                 vad_onnx=vad_onnx, vad_threshold=vad_threshold,
                 q_levels=q_levels, k_size=k_size,
                 sample_rate=curr_sr, min_word_dur=min_word_dur,
-                word_level=suppress_word_ts, verbose=True
+                word_level=suppress_word_ts, verbose=True,
+                nonspeech_error=nonspeech_error
             )
 
         if result.has_words and regroup:

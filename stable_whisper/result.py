@@ -112,8 +112,9 @@ class WordTiming:
     def suppress_silence(self,
                          silent_starts: np.ndarray,
                          silent_ends: np.ndarray,
-                         min_word_dur: float = 0.1):
-        suppress_silence(self, silent_starts, silent_ends, min_word_dur)
+                         min_word_dur: float = 0.1,
+                         nonspeech_error: float = 0.3):
+        suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error)
         return self
 
     def rescale_time(self, scale_factor: float):
@@ -452,17 +453,19 @@ class Segment:
                          silent_starts: np.ndarray,
                          silent_ends: np.ndarray,
                          min_word_dur: float = 0.1,
-                         word_level: bool = True):
+                         word_level: bool = True,
+                         nonspeech_error: float = 0.3):
         if self.has_words:
             words = self.words if word_level or len(self.words) == 1 else [self.words[0], self.words[-1]]
             for w in words:
-                w.suppress_silence(silent_starts, silent_ends, min_word_dur)
+                w.suppress_silence(silent_starts, silent_ends, min_word_dur, nonspeech_error)
             self.update_seg_with_words()
         else:
             suppress_silence(self,
                              silent_starts,
                              silent_ends,
-                             min_word_dur)
+                             min_word_dur,
+                             nonspeech_error)
 
         return self
 
@@ -624,6 +627,7 @@ class WhisperResult:
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
         self._regroup_history = result.get('regroup_history', '')
+        self._nonspeech_sections = result.get('nonspeech_sections', [])
         segments = deepcopy(result.get('segments', self.ori_dict.get('segments')))
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
         self._forced_order = force_order
@@ -700,6 +704,9 @@ class WhisperResult:
             seg.update_seg_with_words()
             seg.set_result(self)
 
+    def update_nonspeech_sections(self, silent_starts, silent_ends):
+        self._nonspeech_sections = [dict(start=s, end=e) for s, e in zip(silent_starts, silent_ends)]
+
     def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False):
         new_seg = self.segments[index0] + self.segments[index1]
         new_seg.update_seg_with_words()
@@ -754,7 +761,8 @@ class WhisperResult:
             silent_starts: np.ndarray,
             silent_ends: np.ndarray,
             min_word_dur: float = 0.1,
-            word_level: bool = True
+            word_level: bool = True,
+            nonspeech_error: float = 0.3
     ) -> "WhisperResult":
         """
         Move any start/end timestamps in silence parts of audio to the boundaries of the silence.
@@ -766,9 +774,11 @@ class WhisperResult:
         silent_ends : numpy.ndarray
             An array ending timestamps of silent sections of audio.
         min_word_dur : float, default 0.1
-            Only allow changes on timestamps that results in word duration greater than this value.
+            Shortest duration each word is allowed to reach for adjustments.
         word_level : bool, default False
             Whether to settings to word level timestamps.
+        nonspeech_error : float, default 0.3
+            Relative error of non-speech sections that appear in between a word for adjustments.
 
         Returns
         -------
@@ -776,7 +786,8 @@ class WhisperResult:
             The current instance after the changes.
         """
         for s in self.segments:
-            s.suppress_silence(silent_starts, silent_ends, min_word_dur, word_level=word_level)
+            s.suppress_silence(silent_starts, silent_ends, min_word_dur,
+                               word_level=word_level, nonspeech_error=nonspeech_error)
 
         return self
 
@@ -792,7 +803,8 @@ class WhisperResult:
             q_levels: int = 20,
             k_size: int = 5,
             min_word_dur: float = 0.1,
-            word_level: bool = True
+            word_level: bool = True,
+            nonspeech_error: float = 0.3
 
     ) -> "WhisperResult":
         """
@@ -824,9 +836,11 @@ class WhisperResult:
             Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
             Recommend 5 or 3; higher sizes will reduce detection of silence.
         min_word_dur : float, default 0.1
-            Only allow changes on timestamps that results in word duration greater than this value.
+            Shortest duration each word is allowed to reach from adjustments.
         word_level : bool, default False
             Whether to settings to word level timestamps.
+        nonspeech_error : float, default 0.3
+            Relative error of non-speech sections that appear in between a word for adjustments.
 
         Returns
         -------
@@ -851,7 +865,10 @@ class WhisperResult:
             )
         if silent_timings is None:
             return self
-        return self.suppress_silence(*silent_timings, min_word_dur=min_word_dur, word_level=word_level)
+        self.suppress_silence(*silent_timings, min_word_dur=min_word_dur,
+                              word_level=word_level, nonspeech_error=nonspeech_error)
+        self.update_nonspeech_sections(*silent_timings)
+        return self
 
     def adjust_by_result(
             self,
@@ -967,7 +984,8 @@ class WhisperResult:
                     segments=self.segments_to_dicts(),
                     language=self.language,
                     ori_dict=self.ori_dict,
-                    regroup_history=self._regroup_history)
+                    regroup_history=self._regroup_history,
+                    nonspeech_sections=self._nonspeech_sections)
 
     def segments_to_dicts(self, reverse_text: Union[bool, tuple] = False):
         return [s.to_dict(reverse_text=reverse_text) for s in self.segments]
@@ -1044,7 +1062,7 @@ class WhisperResult:
 
     def get_content_by_time(
             self,
-            time: Union[float, Tuple[float, float]],
+            time: Union[float, Tuple[float, float], dict],
             within: bool = False,
             segment_level: bool = False
     ) -> Union[List[WordTiming], List[Segment]]:
@@ -1053,7 +1071,7 @@ class WhisperResult:
 
         Parameters
         ----------
-        time : float or tuple of (float, float)
+        time : float or tuple of (float, float) or dict
             Range of time to find content. For tuple of two floats, first value is the start time and second value is
             the end time. For a single float value, it is treated as both the start and end time.
         within : bool, default False
@@ -1074,6 +1092,8 @@ class WhisperResult:
         contents = self.segments if segment_level else self.all_words()
         if isinstance(time, (float, int)):
             time = [time, time]
+        elif isinstance(time, dict):
+            time = [time['start'], time['end']]
         start, end = time
 
         if within:
@@ -2003,6 +2023,10 @@ class WhisperResult:
     def regroup_history(self):
         # same syntax as ``regroup_algo`` for :meth:``result.WhisperResult.regroup`
         return self._regroup_history
+
+    @property
+    def nonspeech_sections(self):
+        return self._nonspeech_sections
 
     def show_regroup_history(self):
         """

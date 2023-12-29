@@ -14,6 +14,7 @@ https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-
   * [Regrouping Words](#regrouping-words)
   * [Editing](#editing)
   * [Locating Words](#locating-words)
+  * [Silence Suppression](#silence-suppression)
   * [Tips](#tips)
   * [Visualizing Suppression](#visualizing-suppression)
   * [Encode Comparison](#encode-comparison)
@@ -50,9 +51,9 @@ stable-ts audio.mp3 -o audio.srt
 </details>
 
 Docstrings: 
-[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L1022-L1052), 
-[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L76-L217),
-[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L670-L743)
+[load_model()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L1041-L1071), 
+[transcribe()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L77-L220),
+[transcribe_minimal()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L680-L755)
 
 <details>
 <summary>faster-whisper</summary>
@@ -66,7 +67,8 @@ result = model.transcribe_stable('audio.mp3')
 stable-ts audio.mp3 -o audio.srt -fw
 ```
 Docstring: 
-[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L866-L943), 
+[load_faster_whisper()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L795-L812),
+[transcribe_stable()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/whisper_word_level.py#L880-L964)
 
 </details>
 
@@ -178,7 +180,7 @@ stable-ts audio.mp3 --align text.txt --language en
 </details>
 
 Docstring:
-[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L59-L164)
+[align()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L60-L167)
 
 #### Adjustments
 Timestamps are adjusted after the model predicts them. 
@@ -191,7 +193,7 @@ Note: both results are required to have word timestamps and matching words.
 result.adjust_by_result(new_result)
 ```
 Docstring:
-[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L861-L872)
+[adjust_by_result()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L879-L890)
 
 ### Refinement
 Timestamps can be further improved with `refine()`.
@@ -217,7 +219,7 @@ stable-ts result.json --refine -o audio.srt --refine_option "audio=audio.mp3"
 </details>
 
 Docstring:
-[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L455-L526)
+[refine()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L459-L530)
 
 
 ### Regrouping Words
@@ -247,16 +249,16 @@ result0.reset()
 ```
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
 #### Regrouping Methods
-- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1866-L1923)
-- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1094-L1110)
-- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1164-L1185)
-- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1282-L1313)
-- [split_by_duration()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1341-L1370)
-- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1125-L1146)
-- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1215-L1236)
-- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1247-L1254)
-- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1395-L1417)
-- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1460-L1482)
+- [regroup()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1886-L1943)
+- [split_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1114-L1130)
+- [split_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1184-L1206)
+- [split_by_length()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1302-L1333)
+- [split_by_duration()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1361-L1390)
+- [merge_by_gap()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1145-L1166)
+- [merge_by_punctuation()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1235-L1256)
+- [merge_all_segments()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1267-L1274)
+- [clamp_max()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1415-L1437)
+- [lock()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1480-L1502)
 
 ### Editing
 The editing methods in stable-ts can be chained with [Regrouping Methods](#regrouping-methods) and used in `regroup()`.
@@ -276,8 +278,8 @@ result.remove_segment(last_segment)
 del result[-1]
 ```
 Docstrings:
-[remove_word()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1524-L1540),
-[remove_segment()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1566-L1582)
+[remove_word()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1544-L1560),
+[remove_segment()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1586-L1602)
 
 
 Removing repetitions:
@@ -292,7 +294,7 @@ result.remove_repetition(1)
 result.remove_repetition(4)
 ```
 Docstring:
-[remove_repetition()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1606-L1628)
+[remove_repetition()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1626-L1648)
 
 Removing specific word(s) by string content:
 ```python
@@ -303,7 +305,7 @@ result.remove_words_by_str('ok')
 result.remove_words_by_str(['ok', 'um'])
 ```
 Docstring:
-[remove_words_by_str()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1694-L1721)
+[remove_words_by_str()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1714-L1741)
 
 Filling in segment gaps:
 ```python
@@ -314,7 +316,7 @@ result0.fill_in_gaps(result1)
 # result0: [" Hello!"] [" How are you?"] [" I'm good."] [" How about you?"] [" Good!"]
 ```
 Docstring:
-[fill_in_gaps()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1766-L1792)
+[fill_in_gaps()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1786-L1812)
 
 ### Locating Words
 There are two ways to locate words. 
@@ -328,7 +330,7 @@ for match in matches:
 # verbose=True does the same thing as this for-loop.
 ```
 Docstring:
-[locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L835-L931)
+[locate()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/alignment.py#L839-L935)
 
 <details>
 <summary>CLI</summary>
@@ -361,18 +363,54 @@ for match in matches:
         f'end: {match.end}\n')
 ```
 Docstring: 
-[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1979-L1995)
+[find()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/result.py#L1999-L1015)
+
+### Silence Suppression
+While the timestamps predicted by Whisper are generally accurate, 
+it sometimes predicts the start of a word way before the word is spoken 
+or the end of a word long after the word has been spoken.
+This is where "silence suppression" helps. It is enabled by default (`suppress_silence=True`).
+The idea is to adjust the timestamps based on the timestamps of non-speech portions of the audio.
+![silence_suppresion0](./silence_suppresion0.png)
+*Note: In V1, "silence suppressing" refers to the process of suppressing timestamp tokens of the silent portions, 
+but changed to postprocessing adjustments in V2, which allows stable-ts to be used with other ASR models. 
+The timestamp token suppression feature is disabled by default, but can still be enabled with `suppress_ts_tokens=True`*
+
+By default, stable-ts determines the non-speech timestamps based on 
+how loud a section of the audio is relative to the neighboring sections. 
+This method is most effective for cases, where the speech is significantly louder than the background noise.
+The other method is to use [Silero VAD](https://github.com/snakers4/silero-vad) (enabled with `vad=True`). 
+To visualize the differences between non-VAD and VAD, see [Visualizing Suppression](#visualizing-suppression).
+
+Besides the parameters for non-speech detection sensitivity (see [Visualizing Suppression](#visualizing-suppression)), 
+the following parameters are used to combat inaccurate non-speech detection.<br>
+`min_word_dur` is the shortest duration each word is allowed from adjustments.<br>
+`nonspeech_error` is the relative error of the non-speech that appears in between a word.
+*Note: Before 2.14, `nonspeech_error` was not available, 
+and `min_word_dur` prevented any adjustments that resulted in word duration shorter than `min_word_dur`*
+
+For the following example, `min_word_dur=0.5` (default: 0.1) and `nonspeech_error=0.3` (default: 0.3).
+![silence_suppresion1](./silence_suppresion1.png) 
+`nonspeech_error=0.3` allows each non-speech section to be treated 1.3 times their actual duration.
+Either from the start of the corresponding word to the end of the non-speech 
+or from the start of the non-speech to the end of the corresponding word.
+In the case that both conditions are met, the shorter one is used.
+Or if both are equal, then the start of the non-speech to the end of the word is used.<br>
+The second non-speech from 1.375s to 1.75s is ignored for 'world.' because it failed both conditions.<br>
+The first word, 'Hello', satisfies only the former condition from 0s to 0.625, thus the new start for 'Hello'
+would be 0.625s. However, `min_word_dur=0.5` requires the resultant duration to be at least 0.5s. 
+As a result, the start of 'Hello' is changed to 0.375s instead of 0.625s. 
 
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
 - use `vad=True` for more accurate non-speech detection
 - use `demucs=True` to isolate vocals with [Demucs](https://github.com/facebookresearch/demucs); it is also effective at isolating vocals even if there is no music
 - use `demucs=True` and `vad=True` for music
-- `--dq true` or `dq=True` for `stable_whisper.load_model` to enable dynamic quantization for inference on CPU
+- set same seed for each transcription (e.g. `random.seed(0)`) for `demucs=True` to produce deterministic outputs
+- to enable dynamic quantization for inference on CPU use `--dq true` for CLI or `dq=True` for `stable_whisper.load_model`
 - use `encode_video_comparison()` to encode multiple transcripts into one video for synced comparison; see [Encode Comparison](#encode-comparison) 
 - use `visualize_suppression()` to visualize the differences between non-VAD and VAD options; see [Visualizing Suppression](#visualizing-suppression)
-- if the non-speech/silence seems to be detected but the starting timestamps do not reflect that, then try `min_word_dur=0`
-- [refinement](#refinement) is a great alternative to silence suppression (e.g. if VAD isn't effective)
+- [refinement](#refinement) can an effective (but slow) alternative for polishing timestamps if silence suppression isn't effective
 
 ### Visualizing Suppression
 You can visualize which parts of the audio will likely be suppressed (i.e. marked as silent). 
@@ -394,7 +432,7 @@ stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_thr
 ```
 ![vad](https://user-images.githubusercontent.com/28970749/225825446-980924a5-7485-41e1-b0d9-c9b069d605f2.png)
 Docstring: 
-[visualize_suppression()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/stabilization.py#L344-L373)
+[visualize_suppression()](https://github.com/jianfch/stable-ts/blob/main/stable_whisper/stabilization.py#L363-L392)
 
 ### Encode Comparison
 You can encode videos similar to the ones in the doc for comparing transcriptions of the same audio. 
