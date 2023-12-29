@@ -673,17 +673,17 @@ class WhisperResult:
         return result, path
 
     def force_order(self):
-        prev_ts = 0
+        prev_ts_end = 0
         timestamps = self.all_words_or_segments()
         for i, ts in enumerate(timestamps, 1):
-            if ts.start < prev_ts:
-                ts.start = prev_ts
+            if ts.start < prev_ts_end:
+                ts.start = prev_ts_end
             if ts.start > ts.end:
-                if ts.start != prev_ts:
-                    ts.start = prev_ts
+                if ts.start != prev_ts_end:
+                    ts.start = prev_ts_end
                 else:
-                    ts.end = ts.start if i == len(timestamps) else timestamps[i+1].start
-            prev_ts = ts.end
+                    ts.end = ts.start if i == len(timestamps) else timestamps[i].start
+            prev_ts_end = ts.end
         if self.has_words:
             self.update_all_segs_with_words()
 
