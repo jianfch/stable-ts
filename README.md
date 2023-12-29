@@ -2,7 +2,7 @@
 
 This library modifies [Whisper](https://github.com/openai/whisper) to produce more reliable timestamps and extends its functionality.
 
-https://user-images.githubusercontent.com/28970749/225826345-ef7115db-51e4-4b23-aedd-069389b8ae43.mp4
+https://github.com/jianfch/stable-ts/assets/28970749/7adf0540-3620-4b2b-b2d4-e316906d6dfa
 
 * [Setup](#setup)
 * [Usage](#usage)
@@ -228,7 +228,7 @@ This preset is enabled by `regroup=True` (default).
 But there are other built-in [regrouping methods](#regrouping-methods) that allow you to customize the regrouping algorithm. 
 This preset is just a predefined combination of those methods.
 
-https://user-images.githubusercontent.com/28970749/226504985-3d087539-cfa4-46d1-8eb5-7083f235b429.mp4
+https://github.com/jianfch/stable-ts/assets/28970749/7b6164a3-50e2-4368-8b75-853cb14045ec
 
 ```python
 # The following results are all functionally equivalent:
@@ -372,9 +372,9 @@ or the end of a word long after the word has been spoken.
 This is where "silence suppression" helps. It is enabled by default (`suppress_silence=True`).
 The idea is to adjust the timestamps based on the timestamps of non-speech portions of the audio.
 ![silence_suppresion0](./silence_suppresion0.png)
-*Note: In V1, "silence suppressing" refers to the process of suppressing timestamp tokens of the silent portions, 
-but changed to postprocessing adjustments in V2, which allows stable-ts to be used with other ASR models. 
-The timestamp token suppression feature is disabled by default, but can still be enabled with `suppress_ts_tokens=True`*
+*Note: In 1.X, "silence suppression" refers to the process of suppressing timestamp tokens of the silent portions during inference, 
+but changed to post-inference timestamp adjustments in 2.X, which allows stable-ts to be used with other ASR models. 
+The timestamp token suppression feature is disabled by default, but can still be enabled with `suppress_ts_tokens=True`.*
 
 By default, stable-ts determines the non-speech timestamps based on 
 how loud a section of the audio is relative to the neighboring sections. 
