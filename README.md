@@ -385,9 +385,9 @@ To visualize the differences between non-VAD and VAD, see [Visualizing Suppressi
 Besides the parameters for non-speech detection sensitivity (see [Visualizing Suppression](#visualizing-suppression)), 
 the following parameters are used to combat inaccurate non-speech detection.<br>
 `min_word_dur` is the shortest duration each word is allowed from adjustments.<br>
-`nonspeech_error` is the relative error of the non-speech that appears in between a word.
+`nonspeech_error` is the relative error of the non-speech that appears in between a word.<br>
 *Note: Before 2.14, `nonspeech_error` was not available, 
-and `min_word_dur` prevented any adjustments that resulted in word duration shorter than `min_word_dur`*
+and `min_word_dur` prevented any adjustments that resulted in word duration shorter than `min_word_dur`.*
 
 For the following example, `min_word_dur=0.5` (default: 0.1) and `nonspeech_error=0.3` (default: 0.3).
 ![silence_suppresion1](./silence_suppresion1.png) 
