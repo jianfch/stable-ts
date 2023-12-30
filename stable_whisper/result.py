@@ -634,7 +634,7 @@ class WhisperResult:
         if self._forced_order:
             self.force_order()
         self.raise_for_unsorted(check_sorted)
-        self.remove_no_word_segments()
+        self.remove_no_word_segments(any(seg.has_words for seg in self.segments))
         self.update_all_segs_with_words()
 
     def __getitem__(self, index: int) -> Segment:
@@ -2055,7 +2055,7 @@ class WhisperResult:
         self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
         if self._forced_order:
             self.force_order()
-        self.remove_no_word_segments()
+        self.remove_no_word_segments(any(seg.has_words for seg in self.segments))
         self.update_all_segs_with_words()
 
     @property
