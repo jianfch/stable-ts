@@ -49,6 +49,7 @@ def transcribe_stable(
         ts_noise: float = 0.1,
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
+        use_word_position: bool = True,
         q_levels: int = 20,
         k_size: int = 5,
         time_scale: float = None,
@@ -126,6 +127,9 @@ def transcribe_stable(
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
     q_levels : int, default 20
         Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
@@ -605,7 +609,8 @@ def transcribe_stable(
                             *segment_silence_timing,
                             min_word_dur=min_word_dur,
                             word_level=suppress_word_ts,
-                            nonspeech_error=nonspeech_error
+                            nonspeech_error=nonspeech_error,
+                            use_word_position=use_word_position,
                         )
                     if verbose:
                         safe_print(segment.to_display_str())
@@ -663,6 +668,7 @@ def transcribe_minimal(
         regroup: Union[bool, str] = True,
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
+        use_word_position: bool = True,
         q_levels: int = 20,
         k_size: int = 5,
         demucs: bool = False,
@@ -706,6 +712,9 @@ def transcribe_minimal(
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
     q_levels : int, default 20
         Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
@@ -784,6 +793,7 @@ def transcribe_minimal(
         vad_onnx=vad_onnx,
         min_word_dur=min_word_dur,
         nonspeech_error=nonspeech_error,
+        use_word_position=use_word_position,
         only_voice_freq=only_voice_freq,
         only_ffmpeg=only_ffmpeg,
         force_order=True,
@@ -861,6 +871,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             regroup: Union[bool, str] = True,
             suppress_silence: bool = True,
             suppress_word_ts: bool = True,
+            use_word_position: bool = True,
             q_levels: int = 20,
             k_size: int = 5,
             demucs: bool = False,
@@ -907,6 +918,9 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             Whether to enable timestamps adjustments based on the detected silence.
         suppress_word_ts : bool, default True
             Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+        use_word_position : bool, default True
+            Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+            adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
         q_levels : int, default 20
             Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
             Acts as a threshold to marking sound as silent.
@@ -1000,6 +1014,7 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
             vad_onnx=vad_onnx,
             min_word_dur=min_word_dur,
             nonspeech_error=nonspeech_error,
+            use_word_position=use_word_position,
             only_voice_freq=only_voice_freq,
             only_ffmpeg=only_ffmpeg,
             force_order=True,

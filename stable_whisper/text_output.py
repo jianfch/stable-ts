@@ -583,9 +583,18 @@ def result_to_txt(
     )
 
 
-def save_as_json(result: dict, path: str):
+def save_as_json(result: dict, path: str, ensure_ascii: bool = False, **kwargs):
     """
     Save ``result`` as JSON file to ``path``.
+
+    Parameters
+    ----------
+    result : dict or list or stable_whisper.result.WhisperResult
+        Result of transcription.
+    path : str
+        Path to save file.
+    ensure_ascii : bool, default False
+        Whether to escape non-ASCII characters.
 
     Examples
     --------
@@ -599,7 +608,7 @@ def save_as_json(result: dict, path: str):
         result = result.to_dict()
     if not path.lower().endswith('.json'):
         path += '.json'
-    result = json.dumps(result, allow_nan=True)
+    result = json.dumps(result, allow_nan=True, ensure_ascii=ensure_ascii, **kwargs)
     _save_as_file(result, path)
 
 

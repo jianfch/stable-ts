@@ -17,6 +17,7 @@ from .timing import add_word_timestamps_stable, split_word_tokens
 from .audio import prep_audio
 from .utils import safe_print, format_timestamp
 from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
+from .stabilization import get_vad_silence_func, wav2mask, mask2timing
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
@@ -34,6 +35,7 @@ def align(
         regroup: bool = True,
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
+        use_word_position: bool = True,
         min_word_dur: bool = 0.1,
         nonspeech_error: float = 0.3,
         q_levels: int = 20,
@@ -54,6 +56,7 @@ def align(
         original_split: bool = False,
         word_dur_factor: Optional[float] = 2.0,
         max_word_dur: Optional[float] = 3.0,
+        nonspeech_skip: Optional[float] = 3.0,
         fast_mode: bool = False,
         tokenizer: "Tokenizer" = None
 ) -> Union[WhisperResult, None]:
@@ -85,6 +88,8 @@ def align(
     word_dur_factor : float or None, default 2.0
         Factor to compute the Local maximum word duration, which is ``word_dur_factor`` * local medium word duration.
         Words that need re-alignment, are re-algined with duration <= local/global maximum word duration.
+    nonspeech_skip : float or None, default 3.0
+        Skip non-speech sections that are equal or longer than this duration in seconds. Disable skipping if ``None``.
     fast_mode : bool, default False
         Whether to speed up alignment by re-alignment with local/global maximum word duration.
         ``True`` tends produce better timestamps when ``text`` is accurate and there are no large speechless gaps.
@@ -100,6 +105,9 @@ def align(
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
     q_levels : int, default 20
         Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
         Acts as a threshold to marking sound as silent.
@@ -292,6 +300,15 @@ def align(
         return w, wt
     result = []
 
+    nonspeech_timings = [[], []]
+    nonspeech_vad_timings = None
+    if (suppress_silence or nonspeech_skip is not None) and vad:
+        nonspeech_vad_timings = (
+            get_vad_silence_func(onnx=vad_onnx, verbose=verbose)(audio, speech_threshold=vad_threshold)
+        )
+        if nonspeech_vad_timings is not None:
+            nonspeech_timings = nonspeech_vad_timings[0].copy(), nonspeech_vad_timings[1].copy()
+
     with tqdm(total=total_duration, unit='sec', disable=verbose is not False, desc='Align') as tqdm_pbar:
 
         def update_pbar(finish: bool = False):
@@ -300,25 +317,95 @@ def align(
                 progress_callback(seek=tqdm_pbar.n, total=tqdm_pbar.total)
 
         def redo_words(_idx: int = None):
-            nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words
-            if _idx is None:
+            nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words, temp_word
+            if curr_words and temp_word is not None:
+                assert curr_words[0]['word'] == temp_word['word']
+                if curr_words[0]['probability'] >= temp_word['probability']:
+                    temp_word = curr_words[0]
+            if _idx is None:  # redo all
                 words = seg_words + words
                 word_tokens = seg_tokens + word_tokens
                 curr_words = []
-            elif _idx != len(seg_words):
+            elif _idx != len(seg_words):  # redo from _idx
                 words = seg_words[_idx:] + words
                 word_tokens = seg_tokens[_idx:] + word_tokens
                 curr_words = curr_words[:_idx]
+                if curr_words:
+                    if temp_word is not None:
+                        curr_words[0] = temp_word
+                        temp_word = None
+                    words = seg_words[_idx-1:_idx] + words
+                    word_tokens = seg_tokens[_idx-1:_idx] + word_tokens
+                    temp_word = curr_words.pop(-1)
+            else:
+                if temp_word is not None:
+                    curr_words[0] = temp_word
+                    temp_word = None
 
         n_samples = model.feature_extractor.n_samples if is_faster_model else N_SAMPLES
 
-        while words and seek_sample < total_samples:
-            curr_words, curr_word_tokens = get_curr_words()
+        temp_word = None
 
+        while words and seek_sample < total_samples:
+
+            time_offset = seek_sample / SAMPLE_RATE
             seek_sample_end = seek_sample + n_samples
             audio_segment = audio[seek_sample:seek_sample_end]
             segment_samples = audio_segment.shape[-1]
-            time_offset = seek_sample / SAMPLE_RATE
+
+            if nonspeech_skip is not None:
+                segment_nonspeech_timings = None
+                if not vad:
+                    ts_token_mask = wav2mask(audio_segment, q_levels=q_levels, k_size=k_size)
+                    segment_nonspeech_timings = mask2timing(ts_token_mask, time_offset=time_offset)
+                    if segment_nonspeech_timings is not None:
+                        nonspeech_timings[0].extend(segment_nonspeech_timings[0])
+                        nonspeech_timings[1].extend(segment_nonspeech_timings[1])
+                elif nonspeech_vad_timings:
+                    timing_indices = np.logical_and(
+                        nonspeech_vad_timings[1] > time_offset,
+                        nonspeech_vad_timings[0] < time_offset + 30.0
+                    )
+
+                    if timing_indices.any():
+                        segment_nonspeech_timings = (
+                            nonspeech_vad_timings[0][timing_indices], nonspeech_vad_timings[1][timing_indices]
+                        )
+                    else:
+                        segment_nonspeech_timings = None
+
+                    if mn := timing_indices.argmax():
+                        nonspeech_vad_timings = (nonspeech_vad_timings[0][mn:], nonspeech_vad_timings[1][mn:])
+
+                if segment_nonspeech_timings is not None:
+                    # segment has no detectable speech
+                    if (
+                            (segment_nonspeech_timings[0][0] <= time_offset + min_word_dur) and
+                            (segment_nonspeech_timings[1][0] >= time_offset + segment_samples - min_word_dur)
+                    ):
+                        seek_sample += segment_samples
+                        continue
+
+                    timing_indices = (segment_nonspeech_timings[1] - segment_nonspeech_timings[0]) >= nonspeech_skip
+                    if any(timing_indices):
+                        nonspeech_starts = segment_nonspeech_timings[0][timing_indices]
+                        nonspeech_ends = segment_nonspeech_timings[1][timing_indices]
+
+                        if round(time_offset, 3) >= nonspeech_starts[0]:
+                            seek_sample = round(nonspeech_ends[0] * SAMPLE_RATE)
+                            if seek_sample + (min_word_dur * SAMPLE_RATE) >= total_samples:
+                                seek_sample = total_samples
+                                continue
+                            time_offset = seek_sample / SAMPLE_RATE
+
+                            if len(nonspeech_starts) > 1:
+                                seek_sample_end = (
+                                        seek_sample + round((nonspeech_starts[1] - nonspeech_ends[0]) * SAMPLE_RATE)
+                                )
+                            audio_segment = audio[seek_sample:seek_sample_end]
+                            segment_samples = audio_segment.shape[-1]
+
+            curr_words, curr_word_tokens = get_curr_words()
 
             segment = timestamp_words()
             curr_words = segment['words']
@@ -393,6 +480,8 @@ def align(
                 safe_print(line)
         update_pbar(True)
 
+    if temp_word is not None:
+        result.append(temp_word)
     if not result:
         warnings.warn('Failed to align text.', stacklevel=2)
     elif words:
@@ -418,14 +507,14 @@ def align(
         result = WhisperResult([result])
 
     if suppress_silence:
-        result.adjust_by_silence(
-            audio, vad,
-            vad_onnx=vad_onnx, vad_threshold=vad_threshold,
-            q_levels=q_levels, k_size=k_size,
-            sample_rate=SAMPLE_RATE, min_word_dur=min_word_dur,
-            word_level=suppress_word_ts, verbose=verbose,
-            nonspeech_error=nonspeech_error
+        result.suppress_silence(
+            *nonspeech_timings,
+            min_word_dur=min_word_dur,
+            word_level=suppress_word_ts,
+            nonspeech_error=nonspeech_error,
+            use_word_position=use_word_position
         )
+        result.update_nonspeech_sections(*nonspeech_timings)
     if not original_split:
         result.regroup(regroup)
 

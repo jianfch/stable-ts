@@ -113,8 +113,9 @@ class WordTiming:
                          silent_starts: np.ndarray,
                          silent_ends: np.ndarray,
                          min_word_dur: float = 0.1,
-                         nonspeech_error: float = 0.3):
-        suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error)
+                         nonspeech_error: float = 0.3,
+                         keep_end: Optional[bool] = True):
+        suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)
         return self
 
     def rescale_time(self, scale_factor: float):
@@ -454,11 +455,16 @@ class Segment:
                          silent_ends: np.ndarray,
                          min_word_dur: float = 0.1,
                          word_level: bool = True,
-                         nonspeech_error: float = 0.3):
+                         nonspeech_error: float = 0.3,
+                         use_word_position: bool = True):
         if self.has_words:
             words = self.words if word_level or len(self.words) == 1 else [self.words[0], self.words[-1]]
-            for w in words:
-                w.suppress_silence(silent_starts, silent_ends, min_word_dur, nonspeech_error)
+            for i, w in enumerate(words, 1):
+                if use_word_position:
+                    keep_end = True if i == 1 else (False if i == len(words) else None)
+                else:
+                    keep_end = None
+                w.suppress_silence(silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)
             self.update_seg_with_words()
         else:
             suppress_silence(self,
@@ -621,7 +627,8 @@ class WhisperResult:
             self,
             result: Union[str, dict, list],
             force_order: bool = False,
-            check_sorted: Union[bool, str] = True
+            check_sorted: Union[bool, str] = True,
+            show_unsorted: bool = True
     ):
         result, self.path = self._standardize_result(result)
         self.ori_dict = result.get('ori_dict') or result
@@ -633,7 +640,7 @@ class WhisperResult:
         self._forced_order = force_order
         if self._forced_order:
             self.force_order()
-        self.raise_for_unsorted(check_sorted)
+        self.raise_for_unsorted(check_sorted, show_unsorted)
         self.remove_no_word_segments(any(seg.has_words for seg in self.segments))
         self.update_all_segs_with_words()
 
@@ -679,19 +686,52 @@ class WhisperResult:
             if ts.start < prev_ts_end:
                 ts.start = prev_ts_end
             if ts.start > ts.end:
-                if ts.start != prev_ts_end:
-                    ts.start = prev_ts_end
+                if prev_ts_end > ts.end:
+                    warnings.warn('Multiple consecutive timestamps are out of order. Some parts will have no duration.')
+                    ts.start = ts.end
+                    for j in range(i-2, -1, -1):
+                        if timestamps[j].end > ts.end:
+                            timestamps[j].end = ts.end
+                        if timestamps[j].start > ts.end:
+                            timestamps[j].start = ts.end
                 else:
-                    ts.end = ts.start if i == len(timestamps) else timestamps[i].start
+                    if ts.start != prev_ts_end:
+                        ts.start = prev_ts_end
+                    else:
+                        ts.end = ts.start if i == len(timestamps) else timestamps[i].start
             prev_ts_end = ts.end
         if self.has_words:
             self.update_all_segs_with_words()
 
-    def raise_for_unsorted(self, check_sorted: Union[bool, str] = True):
+    def raise_for_unsorted(self, check_sorted: Union[bool, str] = True, show_unsorted: bool = True):
         if check_sorted is False:
             return
-        timestamps = np.array(list(chain.from_iterable((p.start, p.end) for p in self.all_words_or_segments())))
-        if len(timestamps) > 1 and (timestamps[:-1] > timestamps[1:]).any():
+        all_parts = self.all_words_or_segments()
+        has_words = self.has_words
+        timestamps = np.array(list(chain.from_iterable((p.start, p.end) for p in all_parts)))
+        if len(timestamps) > 1 and (unsorted_mask := timestamps[:-1] > timestamps[1:]).any():
+            if show_unsorted:
+                def get_part_info(idx):
+                    curr_part = all_parts[idx]
+                    seg_id = curr_part.segment_id if has_words else curr_part.id
+                    word_id_str = f'Word ID: {curr_part.id}\n' if has_words else ''
+                    return (
+                        f'Segment ID: {seg_id}\n{word_id_str}'
+                        f'Start: {curr_part.start}\nEnd: {curr_part.end}\n'
+                        f'Text: "{curr_part.word if has_words else curr_part.text}"'
+                    ), curr_part.start, curr_part.end
+
+                for i, unsorted in enumerate(unsorted_mask, 2):
+                    if unsorted:
+                        word_id = i//2-1
+                        part_info, start, end = get_part_info(word_id)
+                        if i % 2 == 1:
+                            next_info, next_start, _ = get_part_info(word_id+1)
+                            part_info += f'\nConflict: end ({end}) > next start ({next_start})\n{next_info}'
+                        else:
+                            part_info += f'\nConflict: start ({start}) > end ({end})'
+                        print(part_info, end='\n\n')
+
             data = self.to_dict()
             if check_sorted is True:
                 raise UnsortedException(data=data)
@@ -762,7 +802,8 @@ class WhisperResult:
             silent_ends: np.ndarray,
             min_word_dur: float = 0.1,
             word_level: bool = True,
-            nonspeech_error: float = 0.3
+            nonspeech_error: float = 0.3,
+            use_word_position: bool = True
     ) -> "WhisperResult":
         """
         Move any start/end timestamps in silence parts of audio to the boundaries of the silence.
@@ -779,6 +820,9 @@ class WhisperResult:
             Whether to settings to word level timestamps.
         nonspeech_error : float, default 0.3
             Relative error of non-speech sections that appear in between a word for adjustments.
+        use_word_position : bool, default True
+            Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+            adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
 
         Returns
         -------
@@ -786,8 +830,14 @@ class WhisperResult:
             The current instance after the changes.
         """
         for s in self.segments:
-            s.suppress_silence(silent_starts, silent_ends, min_word_dur,
-                               word_level=word_level, nonspeech_error=nonspeech_error)
+            s.suppress_silence(
+                silent_starts,
+                silent_ends,
+                min_word_dur,
+                word_level=word_level,
+                nonspeech_error=nonspeech_error,
+                use_word_position=use_word_position
+            )
 
         return self
 
@@ -804,7 +854,8 @@ class WhisperResult:
             k_size: int = 5,
             min_word_dur: float = 0.1,
             word_level: bool = True,
-            nonspeech_error: float = 0.3
+            nonspeech_error: float = 0.3,
+            use_word_position: bool = True
 
     ) -> "WhisperResult":
         """
@@ -841,6 +892,9 @@ class WhisperResult:
             Whether to settings to word level timestamps.
         nonspeech_error : float, default 0.3
             Relative error of non-speech sections that appear in between a word for adjustments.
+        use_word_position : bool, default True
+            Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+            adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
 
         Returns
         -------
@@ -865,8 +919,13 @@ class WhisperResult:
             )
         if silent_timings is None:
             return self
-        self.suppress_silence(*silent_timings, min_word_dur=min_word_dur,
-                              word_level=word_level, nonspeech_error=nonspeech_error)
+        self.suppress_silence(
+            *silent_timings,
+            min_word_dur=min_word_dur,
+            word_level=word_level,
+            nonspeech_error=nonspeech_error,
+            use_word_position=use_word_position
+        )
         self.update_nonspeech_sections(*silent_timings)
         return self
 

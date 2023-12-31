@@ -35,6 +35,7 @@ def transcribe_any(
         vad_onnx: bool = False,
         min_word_dur: float = 0.1,
         nonspeech_error: float = 0.3,
+        use_word_position: bool = True,
         only_voice_freq: bool = False,
         only_ffmpeg: bool = False,
         force_order: bool = False,
@@ -103,6 +104,9 @@ def transcribe_any(
         Shortest duration each word is allowed to reach for silence suppression.
     nonspeech_error : float, default 0.3
         Relative error of non-speech sections that appear in between a word for silence suppression.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
     only_ffmpeg : bool, default False
@@ -327,7 +331,8 @@ def transcribe_any(
                 q_levels=q_levels, k_size=k_size,
                 sample_rate=curr_sr, min_word_dur=min_word_dur,
                 word_level=suppress_word_ts, verbose=True,
-                nonspeech_error=nonspeech_error
+                nonspeech_error=nonspeech_error,
+                use_word_position=use_word_position
             )
 
         if result.has_words and regroup:

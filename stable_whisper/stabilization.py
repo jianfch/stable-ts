@@ -87,14 +87,19 @@ def timing2mask(
 
 def suppress_silence(
         result_obj,
-        silent_starts: np.ndarray,
-        silent_ends: np.ndarray,
+        silent_starts: Union[np.ndarray, List[float]],
+        silent_ends: Union[np.ndarray, List[float]],
         min_word_dur: float,
-        nonspeech_error: float = 0.3
+        nonspeech_error: float = 0.3,
+        keep_end: Optional[bool] = True
 ):
     assert len(silent_starts) == len(silent_ends)
     if len(silent_starts) == 0 or (result_obj.end - result_obj.start) <= min_word_dur:
         return
+    if isinstance(silent_starts, list):
+        silent_starts = np.array(silent_starts)
+    if isinstance(silent_ends, list):
+        silent_ends = np.array(silent_ends)
 
     start_overlaps = np.all(
         (silent_starts <= result_obj.start, result_obj.start < silent_ends, silent_ends <= result_obj.end),
@@ -128,11 +133,18 @@ def suppress_silence(
         start_extra = silence_start - result_obj.start
         end_extra = result_obj.end - silence_end
         silent_duration = silence_end - silence_start
-        if start_extra <= end_extra:
-            if (start_extra / silent_duration) <= nonspeech_error:
-                result_obj.start = min(silence_end, round(result_obj.end - min_word_dur, 3))
+        start_within_error = (start_extra / silent_duration) <= nonspeech_error
+        end_within_error = (end_extra / silent_duration) <= nonspeech_error
+        if keep_end is None:
+            keep_end = start_extra <= end_extra
+            within_error = start_within_error if keep_end else end_within_error
         else:
-            if (end_extra / silent_duration) <= nonspeech_error:
+            within_error = start_within_error or end_within_error
+
+        if within_error:
+            if keep_end:
+                result_obj.start = min(silence_end, round(result_obj.end - min_word_dur, 3))
+            else:
                 result_obj.end = max(silence_start, round(result_obj.start + min_word_dur, 3))
 
 
