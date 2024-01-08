@@ -325,7 +325,7 @@ class Segment:
                 elif i == 0:
                     segment.add_words(i, i+1, inplace=True)
                 else:
-                    if segment.words[i-1].duration < segment.words[i-1].duration:
+                    if segment.words[i+1].duration < segment.words[i-1].duration:
                         segment.add_words(i-1, i, inplace=True)
                     else:
                         segment.add_words(i, i+1, inplace=True)
@@ -782,7 +782,7 @@ class WhisperResult:
                 elif i == 0:
                     result.add_segments(i, i+1, inplace=True)
                 else:
-                    if result.segments[i-1].duration < result.segments[i-1].duration:
+                    if result.segments[i+1].duration < result.segments[i-1].duration:
                         result.add_segments(i-1, i, inplace=True)
                     else:
                         result.add_segments(i, i+1, inplace=True)
