@@ -149,8 +149,7 @@ def demucs_audio(audio: (torch.Tensor, str),
             raise ValueError('No [input_sr] specified for audio tensor.')
         audio = torchaudio.functional.resample(audio,
                                                orig_freq=input_sr,
-                                               new_freq=model.samplerate,
-                                               resampling_method="kaiser_window")
+                                               new_freq=model.samplerate)
     if not track_name:
         track_name = 'audio track'
     audio_dims = audio.dim()
@@ -190,8 +189,7 @@ def demucs_audio(audio: (torch.Tensor, str),
     if output_sr is not None and model.samplerate != output_sr:
         vocals = torchaudio.functional.resample(vocals,
                                                 orig_freq=model.samplerate,
-                                                new_freq=output_sr,
-                                                resampling_method="kaiser_window")
+                                                new_freq=output_sr)
 
     if save_path is not None:
         if isinstance(save_path, str) and not save_path.lower().endswith('.wav'):

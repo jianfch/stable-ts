@@ -165,7 +165,7 @@ def standardize_audio(
                 out_sr = [out_sr]
             if in_sr not in out_sr:
                 from torchaudio.functional import resample
-                audio = resample(audio, in_sr, out_sr[0], resampling_method="kaiser_window")
+                audio = resample(audio, in_sr, out_sr[0])
 
     return audio
 
@@ -303,10 +303,11 @@ def get_vad_silence_func(
     if onnx in _model_cache:
         model, get_ts = _model_cache[onnx]
     else:
-        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad',
+        model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad:master',
                                       model='silero_vad',
                                       verbose=verbose,
-                                      onnx=onnx)
+                                      onnx=onnx,
+                                      trust_repo=True)
         get_ts = utils[0]
         _model_cache[onnx] = (model, get_ts)
 
