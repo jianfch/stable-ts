@@ -108,7 +108,7 @@ def find_alignment_stable(
 
 
 def _split_tokens(tokens: List[int], tokenizer: "Tokenizer"):
-    split_by_space = tokenizer.language not in {"zh", "ja", "th", "lo", "my"}
+    split_by_space = getattr(tokenizer, 'language_code', tokenizer.language) not in {"zh", "ja", "th", "lo", "my"}
     text = tokenizer.decode_with_timestamps(tokens)
     words = []
     word_tokens = []
