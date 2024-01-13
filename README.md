@@ -449,6 +449,9 @@ Docstring:
 </details>
 
 ### Output
+
+https://github.com/jianfch/stable-ts/assets/28970749/c22dcdf9-79cb-485a-ae38-184d006e513e
+
 Stable-ts supports various text output formats.
 ```python
 result.to_srt_vtt('audio.srt') #SRT
