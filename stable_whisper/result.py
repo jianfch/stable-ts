@@ -669,7 +669,7 @@ class WhisperResult:
                             text=''.join(w['word'] for w in words),
                             words=words
                         )
-                        for words in result
+                        for words in result if words
                     ]
                 )
 

@@ -198,9 +198,13 @@ def align(
         text = text.all_tokens() if text.has_words and all(w.tokens for w in text.all_words()) else text.text
     elif isinstance(text, str):
         if original_split and '\n' in text:
-            text_split = [line if line.startswith(' ') else ' '+line for line in text.splitlines() if line]
+            text_split = [
+                ' '+norm_line
+                for line in text.splitlines()
+                if (norm_line := re.sub(r'\s', ' ', line).strip())
+            ]
             split_indices_by_char = np.cumsum([len(seg) for seg in text_split])
-            text = ''.join(re.sub(r'\s', ' ', seg) for seg in text_split)
+            text = ''.join(seg for seg in text_split)
         else:
             text = re.sub(r'\s', ' ', text)
             if not text.startswith(' '):
@@ -377,7 +381,7 @@ def align(
                     if mn := timing_indices.argmax():
                         nonspeech_vad_timings = (nonspeech_vad_timings[0][mn:], nonspeech_vad_timings[1][mn:])
 
-                if segment_nonspeech_timings is not None:
+                if segment_nonspeech_timings is not None and len(segment_nonspeech_timings[0]):
                     # segment has no detectable speech
                     if (
                             (segment_nonspeech_timings[0][0] <= time_offset + min_word_dur) and
@@ -502,7 +506,7 @@ def align(
     if len(split_indices_by_char):
         word_lens = np.cumsum([[len(w['word']) for w in result]])
         split_indices = [(word_lens >= i).nonzero()[0][0]+1 for i in split_indices_by_char]
-        result = WhisperResult([result[i:j] for i, j in zip([0]+split_indices[:-1], split_indices)])
+        result = WhisperResult([result[i:j] for i, j in zip([0]+split_indices[:-1], split_indices) if i != j])
     else:
         result = WhisperResult([result])
 
