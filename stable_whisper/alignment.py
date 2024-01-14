@@ -198,7 +198,7 @@ def align(
         text = text.all_tokens() if text.has_words and all(w.tokens for w in text.all_words()) else text.text
     elif isinstance(text, str):
         if original_split and '\n' in text:
-            text_split = [line if line.startswith(' ') else ' '+line for line in text.splitlines()]
+            text_split = [line if line.startswith(' ') else ' '+line for line in text.splitlines() if line]
             split_indices_by_char = np.cumsum([len(seg) for seg in text_split])
             text = ''.join(re.sub(r'\s', ' ', seg) for seg in text_split)
         else:
@@ -318,7 +318,7 @@ def align(
 
         def redo_words(_idx: int = None):
             nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words, temp_word
-            if curr_words and temp_word is not None:
+            if _idx is not None and curr_words and temp_word is not None:
                 assert curr_words[0]['word'] == temp_word['word']
                 if curr_words[0]['probability'] >= temp_word['probability']:
                     temp_word = curr_words[0]
@@ -418,7 +418,7 @@ def align(
                 redo_index = nonzero_indices[-1] + 1
                 if (
                         words and
-                        redo_index > 1 and
+                        len(nonzero_indices) > 1 and
                         curr_words[nonzero_indices[-1]]['end'] >= np.floor(time_offset + segment_samples / SAMPLE_RATE)
                 ):
                     nonzero_mask[nonzero_indices[-1]] = False
