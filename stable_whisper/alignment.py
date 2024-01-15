@@ -678,21 +678,24 @@ def refine(
 
         prev_i = 0
         curr_words, curr_starts, curr_ends = [], [], []
+        curr_token_count = 0
 
         for i, w in enumerate(all_words, 1):
             if (
                     (end_times[0] - start > 30) or
-                    (len(curr_words) + 1 > max_inference_tokens)
+                    (curr_token_count + len(w.tokens) > max_inference_tokens)
             ):
                 if curr_words:
                     yield curr_words, curr_starts, curr_ends, seg_edge_mask[prev_i:prev_i+len(curr_words)]
                     curr_words, curr_starts, curr_ends = [], [], []
                 start = start_times[0]
                 prev_i = i - 1
+                curr_token_count = 0
 
             curr_words.append(w)
             curr_starts.append(start_times.pop(0))
             curr_ends.append(end_times.pop(0))
+            curr_token_count += len(w.tokens)
 
             if i == len(all_words):
                 yield curr_words, curr_starts, curr_ends, seg_edge_mask[prev_i:prev_i+len(curr_words)]
