@@ -1,3 +1,3 @@
-from .whisper_word_level import cli
+from .whisper_word_level.cli import cli
 
 cli()

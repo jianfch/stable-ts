@@ -7,9 +7,12 @@ from dataclasses import dataclass
 from copy import deepcopy
 from itertools import chain
 
-from .stabilization import suppress_silence, get_vad_silence_func, mask2timing, wav2mask
+from .stabilization import suppress_silence, get_vad_silence_func, VAD_SAMPLE_RATES
+from .stabilization.nonvad import audio2timings
 from .text_output import *
 from .utils import str_to_valid_type, format_timestamp, UnsortedException
+from .audio.utils import standardize_audio
+from .default import get_min_word_dur, get_append_punctuations, get_prepend_punctuations
 
 
 __all__ = ['WhisperResult', 'Segment']
@@ -112,7 +115,7 @@ class WordTiming:
     def suppress_silence(self,
                          silent_starts: np.ndarray,
                          silent_ends: np.ndarray,
-                         min_word_dur: float = 0.1,
+                         min_word_dur: Optional[float] = None,
                          nonspeech_error: float = 0.3,
                          keep_end: Optional[bool] = True):
         suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)
@@ -334,18 +337,16 @@ class Segment:
 
     def _to_reverse_text(
             self,
-            prepend_punctuations: str = None,
-            append_punctuations: str = None
+            prepend_punctuations: Optional[str] = None,
+            append_punctuations: Optional[str] = None,
     ):
         """
         Return a copy with words reversed order per segment.
         """
-        if prepend_punctuations is None:
-            prepend_punctuations = "\"'“¿([{-"
+        prepend_punctuations = get_prepend_punctuations(prepend_punctuations)
         if prepend_punctuations and ' ' not in prepend_punctuations:
             prepend_punctuations += ' '
-        if append_punctuations is None:
-            append_punctuations = "\"'.。,，!！?？:：”)]}、"
+        append_punctuations = get_append_punctuations(append_punctuations)
         self_copy = deepcopy(self)
         has_prepend = bool(prepend_punctuations)
         has_append = bool(append_punctuations)
@@ -453,15 +454,17 @@ class Segment:
     def suppress_silence(self,
                          silent_starts: np.ndarray,
                          silent_ends: np.ndarray,
-                         min_word_dur: float = 0.1,
+                         min_word_dur: Optional[float] = None,
                          word_level: bool = True,
                          nonspeech_error: float = 0.3,
                          use_word_position: bool = True):
+        min_word_dur = get_min_word_dur(min_word_dur)
         if self.has_words:
+            ending_punctuations = get_append_punctuations()
             words = self.words if word_level or len(self.words) == 1 else [self.words[0], self.words[-1]]
             for i, w in enumerate(words, 1):
                 if use_word_position:
-                    keep_end = True if i == 1 else (False if i == len(words) else None)
+                    keep_end = w.word[-1] not in ending_punctuations
                 else:
                     keep_end = None
                 w.suppress_silence(silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)
@@ -745,7 +748,9 @@ class WhisperResult:
             seg.set_result(self)
 
     def update_nonspeech_sections(self, silent_starts, silent_ends):
-        self._nonspeech_sections = [dict(start=s, end=e) for s, e in zip(silent_starts, silent_ends)]
+        self._nonspeech_sections = [
+            dict(start=round(s, 3), end=round(e, 3)) for s, e in zip(silent_starts, silent_ends)
+        ]
 
     def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False):
         new_seg = self.segments[index0] + self.segments[index1]
@@ -800,7 +805,7 @@ class WhisperResult:
             self,
             silent_starts: np.ndarray,
             silent_ends: np.ndarray,
-            min_word_dur: float = 0.1,
+            min_word_dur: Optional[float] = None,
             word_level: bool = True,
             nonspeech_error: float = 0.3,
             use_word_position: bool = True
@@ -814,7 +819,7 @@ class WhisperResult:
             An array starting timestamps of silent sections of audio.
         silent_ends : numpy.ndarray
             An array ending timestamps of silent sections of audio.
-        min_word_dur : float, default 0.1
+        min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
             Shortest duration each word is allowed to reach for adjustments.
         word_level : bool, default False
             Whether to settings to word level timestamps.
@@ -829,6 +834,7 @@ class WhisperResult:
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
+        min_word_dur = get_min_word_dur(min_word_dur)
         for s in self.segments:
             s.suppress_silence(
                 silent_starts,
@@ -852,7 +858,7 @@ class WhisperResult:
             vad_threshold: float = 0.35,
             q_levels: int = 20,
             k_size: int = 5,
-            min_word_dur: float = 0.1,
+            min_word_dur: Optional[float] = None,
             word_level: bool = True,
             nonspeech_error: float = 0.3,
             use_word_position: bool = True
@@ -886,7 +892,7 @@ class WhisperResult:
         k_size : int, default 5
             Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
             Recommend 5 or 3; higher sizes will reduce detection of silence.
-        min_word_dur : float, default 0.1
+        min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
             Shortest duration each word is allowed to reach from adjustments.
         word_level : bool, default False
             Whether to settings to word level timestamps.
@@ -908,15 +914,16 @@ class WhisperResult:
         :func:`stable_whisper.non_whisper.transcribe_any` / :func:`stable_whisper.alignment.align`
         if ``suppress_silence = True``.
         """
+        min_word_dur = get_min_word_dur(min_word_dur)
         if vad:
+            audio = standardize_audio(audio, (sample_rate, VAD_SAMPLE_RATES[0]))
+            sample_rate = VAD_SAMPLE_RATES[0]
             silent_timings = get_vad_silence_func(
                 onnx=vad_onnx,
                 verbose=verbose
             )(audio, speech_threshold=vad_threshold, sr=sample_rate)
         else:
-            silent_timings = mask2timing(
-                wav2mask(audio, q_levels=q_levels, k_size=k_size, sr=sample_rate)
-            )
+            silent_timings = audio2timings(audio, q_levels=q_levels, k_size=k_size, sr=sample_rate)
         if silent_timings is None:
             return self
         self.suppress_silence(
@@ -932,7 +939,7 @@ class WhisperResult:
     def adjust_by_result(
             self,
             other_result: "WhisperResult",
-            min_word_dur: float = 0.1,
+            min_word_dur: Optional[float] = None,
             verbose: bool = False
     ):
         """
@@ -942,7 +949,7 @@ class WhisperResult:
         ----------
         other_result : "WhisperResult"
             Timing data of the same words in a WhisperResult instance.
-        min_word_dur : float, default 0.1
+        min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
             Prevent changes to timestamps if the resultant word duration is less than ``min_word_dur``.
         verbose : bool, default False
             Whether to print out the timestamp changes.
@@ -951,6 +958,7 @@ class WhisperResult:
             raise NotImplementedError('This operation can only be performed on results with word timestamps')
         assert [w.word for w in self.all_words()] == [w.word for w in other_result.all_words()], \
             'The words in [other_result] do not match the current words.'
+        min_word_dur = get_min_word_dur(min_word_dur)
         for word, other_word in zip(self.all_words(), other_result.all_words()):
             if word.end > other_word.start:
                 new_start = max(word.start, other_word.start)

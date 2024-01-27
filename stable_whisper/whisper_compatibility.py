@@ -70,4 +70,3 @@ def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
     elif 'num_languages' in kwargs:
         del kwargs['num_languages']
     return tokenizer(**kwargs)
-

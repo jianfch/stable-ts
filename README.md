@@ -91,16 +91,17 @@ Docstrings:
     Transcribe audio using Whisper.
 
     This is a modified version of :func:`whisper.transcribe.transcribe` with slightly different decoding logic while
-    allowing additional preprocessing and postprocessing. The preprocessing performed on the audio includes: isolating
-    voice / removing noise with Demucs and low/high-pass filter. The postprocessing performed on the transcription
+    allowing additional preprocessing and postprocessing. The preprocessing performed on the audio includes:
+    voice isolation / noise removal and low/high-pass filter. The postprocessing performed on the transcription
     result includes: adjusting timestamps with VAD and custom regrouping segments based punctuation and speech gaps.
 
     Parameters
     ----------
     model : whisper.model.Whisper
         An instance of Whisper ASR model.
-    audio : str or numpy.ndarray or torch.Tensor or bytes
-        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+    audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
+        Path/URL to the audio file, the audio waveform, or bytes of audio file or
+        instance of :class:`stable_whisper.audio.AudioLoader`.
         If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     verbose : bool or None, default False
         Whether to display the text being decoded to the console.
@@ -149,20 +150,11 @@ Docstrings:
     k_size : int, default 5
         Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-    time_scale : float, optional
-        Factor for scaling audio duration for inference.
-        Greater than 1.0 'slows down' the audio, and less than 1.0 'speeds up' the audio. None is same as 1.0.
-        A factor of 1.5 will stretch 10s audio to 15s for inference. This increases the effective resolution
-        of the model but can increase word error rate.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo. https://github.com/facebookresearch/demucs.
-    demucs_output : str, optional
-        Path to save the vocals isolated by Demucs as WAV file. Ignored if ``demucs = False``.
-        Demucs must be installed to use. Official repo. https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     vad : bool, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
@@ -170,17 +162,20 @@ Docstrings:
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
-    min_word_dur : float, default 0.1
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
-    nonspeech_error : float, default 0.3
+    nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
-    prepend_punctuations : str, default '"\'“¿([{-)'
+    prepend_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Punctuations to prepend to next word.
-    append_punctuations : str, default '.。,，!！?？:：”)]}、)'
+    append_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Punctuations to append to previous word.
-    mel_first : bool, default False
+    stream : bool or None, default None
+        Whether to loading ``audio`` in chunks of 30 seconds until the end of file/stream.
+        If ``None`` and ``audio`` is a string then set to ``True`` else ``False``.
+    mel_first : bool, optional
         Process entire audio track into log-Mel spectrogram first instead in chunks.
         Used if odd behavior seen in stable-ts but not in whisper, but use significantly more memory for long audio.
     split_callback : Callable, optional
@@ -222,7 +217,7 @@ Docstrings:
     stable_whisper.non_whisper.transcribe_any : Return :class:`stable_whisper.result.WhisperResult` containing all the
         data from transcribing audio with unmodified :func:`whisper.transcribe.transcribe` with preprocessing and
         postprocessing.
-    stable_whisper.whisper_word_level.load_faster_whisper.faster_transcribe : Return
+    stable_whisper.whisper_word_level.faster_whisper.faster_transcribe : Return
         :class:`stable_whisper.result.WhisperResult` containing all the data from transcribing audio with
         :meth:`faster_whisper.WhisperModel.transcribe` with preprocessing and postprocessing.
 
@@ -242,9 +237,9 @@ Docstrings:
     Transcribe audio using Whisper.
 
     This is uses the original whisper transcribe function, :func:`whisper.transcribe.transcribe`, while still allowing
-    additional preprocessing and postprocessing. The preprocessing performed on the audio includes: isolating voice /
-    removing noise with Demucs and low/high-pass filter. The postprocessing performed on the transcription
-    result includes: adjusting timestamps with VAD and custom regrouping segments based punctuation and speech gaps.
+    additional preprocessing and postprocessing. The preprocessing performed on the audio includes: voice isolation /
+    noise removal and low/high-pass filter. The postprocessing performed on the transcription result includes:
+    adjusting timestamps with VAD and custom regrouping segments based punctuation and speech gaps.
 
     Parameters
     ----------
@@ -277,15 +272,11 @@ Docstrings:
     k_size : int, default 5
         Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_output : str, optional
-        Path to save the vocals isolated by Demucs as WAV file. Ignored if ``demucs = False``.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     vad : bool, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
@@ -295,7 +286,7 @@ Docstrings:
         Whether to use ONNX for Silero VAD.
     min_word_dur : float, default 0.1
         Shortest duration each word is allowed to reach for silence suppression.
-    nonspeech_error : float, default 0.3
+    nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
@@ -357,92 +348,88 @@ Docstring:
 <details>
 <summary>transcribe_stable()</summary>
 
-        Transcribe audio using faster-whisper (https://github.com/guillaumekln/faster-whisper).
+    Transcribe audio using faster-whisper (https://github.com/guillaumekln/faster-whisper).
 
-        This is uses the transcribe method from faster-whisper, :meth:`faster_whisper.WhisperModel.transcribe`, while
-        still allowing additional preprocessing and postprocessing. The preprocessing performed on the audio includes:
-        isolating voice / removing noise with Demucs and low/high-pass filter. The postprocessing performed on the
-        transcription result includes: adjusting timestamps with VAD and custom regrouping segments based punctuation
-        and speech gaps.
+    This is uses the transcribe method from faster-whisper, :meth:`faster_whisper.WhisperModel.transcribe`, while
+    still allowing additional preprocessing and postprocessing. The preprocessing performed on the audio includes:
+    voice isolation / noise removal and low/high-pass filter. The postprocessing performed on the
+    transcription result includes: adjusting timestamps with VAD and custom regrouping segments based punctuation
+    and speech gaps.
 
-        Parameters
-        ----------
-        model : faster_whisper.WhisperModel
-            The faster-whisper ASR model instance.
-        audio : str or numpy.ndarray or torch.Tensor or bytes
-            Path/URL to the audio file, the audio waveform, or bytes of audio file.
-            If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
-        verbose : bool or None, default False
-            Whether to display the text being decoded to the console.
-            Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
-        word_timestamps : bool, default True
-            Extract word-level timestamps using the cross-attention pattern and dynamic time warping,
-            and include the timestamps for each word in each segment.
-            Disabling this will prevent segments from splitting/merging properly.
-        regroup : bool or str, default True, meaning the default regroup algorithm
-            String for customizing the regrouping algorithm. False disables regrouping.
-            Ignored if ``word_timestamps = False``.
-        suppress_silence : bool, default True
-            Whether to enable timestamps adjustments based on the detected silence.
-        suppress_word_ts : bool, default True
-            Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
-        use_word_position : bool, default True
-            Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
-            adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
-        q_levels : int, default 20
-            Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
-            Acts as a threshold to marking sound as silent.
-            Fewer levels will increase the threshold of volume at which to mark a sound as silent.
-        k_size : int, default 5
-            Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
-            Recommend 5 or 3; higher sizes will reduce detection of silence.
-        demucs : bool or torch.nn.Module, default False
-            Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance
-            of a Demucs model to avoid reloading the model for each run.
-            Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-        demucs_output : str, optional
-            Path to save the vocals isolated by Demucs as WAV file. Ignored if ``demucs = False``.
-            Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-        demucs_options : dict, optional
-            Options to use for :func:`stable_whisper.audio.demucs_audio`.
-        vad : bool, default False
-            Whether to use Silero VAD to generate timestamp suppression mask.
-            Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
-        vad_threshold : float, default 0.35
-            Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
-        vad_onnx : bool, default False
-            Whether to use ONNX for Silero VAD.
-        min_word_dur : float, default 0.1
-            Shortest duration each word is allowed to reach for silence suppression.
-        nonspeech_error : float, default 0.3
-            Relative error of non-speech sections that appear in between a word for silence suppression.
-        only_voice_freq : bool, default False
-            Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
-        only_ffmpeg : bool, default False
-            Whether to use only FFmpeg (instead of not yt-dlp) for URls
-        check_sorted : bool, default True
-            Whether to raise an error when timestamps returned by faster-whipser are not in ascending order.
-        progress_callback : Callable, optional
-            A function that will be called when transcription progress is updated.
-            The callback need two parameters.
-            The first parameter is a float for seconds of the audio that has been transcribed.
-            The second parameter is a float for total duration of audio in seconds.
-        options
-            Additional options used for :meth:`faster_whisper.WhisperModel.transcribe` and
-            :func:`stable_whisper.non_whisper.transcribe_any`.
+    Parameters
+    ----------
+    model : faster_whisper.WhisperModel
+        The faster-whisper ASR model instance.
+    audio : str or numpy.ndarray or torch.Tensor or bytes
+        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+    verbose : bool or None, default False
+        Whether to display the text being decoded to the console.
+        Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
+    word_timestamps : bool, default True
+        Extract word-level timestamps using the cross-attention pattern and dynamic time warping,
+        and include the timestamps for each word in each segment.
+        Disabling this will prevent segments from splitting/merging properly.
+    regroup : bool or str, default True, meaning the default regroup algorithm
+        String for customizing the regrouping algorithm. False disables regrouping.
+        Ignored if ``word_timestamps = False``.
+    suppress_silence : bool, default True
+        Whether to enable timestamps adjustments based on the detected silence.
+    suppress_word_ts : bool, default True
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
+    q_levels : int, default 20
+        Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
+        Acts as a threshold to marking sound as silent.
+        Fewer levels will increase the threshold of volume at which to mark a sound as silent.
+    k_size : int, default 5
+        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
+        Recommend 5 or 3; higher sizes will reduce detection of silence.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
+    vad : bool, default False
+        Whether to use Silero VAD to generate timestamp suppression mask.
+        Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
+    vad_threshold : float, default 0.35
+        Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
+    vad_onnx : bool, default False
+        Whether to use ONNX for Silero VAD.
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Shortest duration each word is allowed to reach for silence suppression.
+    nonspeech_error : float, default 0.3
+        Relative error of non-speech sections that appear in between a word for silence suppression.
+    only_voice_freq : bool, default False
+        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
+    only_ffmpeg : bool, default False
+        Whether to use only FFmpeg (instead of not yt-dlp) for URls
+    check_sorted : bool, default True
+        Whether to raise an error when timestamps returned by faster-whipser are not in ascending order.
+    progress_callback : Callable, optional
+        A function that will be called when transcription progress is updated.
+        The callback need two parameters.
+        The first parameter is a float for seconds of the audio that has been transcribed.
+        The second parameter is a float for total duration of audio in seconds.
+    options
+        Additional options used for :meth:`faster_whisper.WhisperModel.transcribe` and
+        :func:`stable_whisper.non_whisper.transcribe_any`.
 
-        Returns
-        -------
-        stable_whisper.result.WhisperResult
-            All timestamps, words, probabilities, and other data from the transcription of ``audio``.
+    Returns
+    -------
+    stable_whisper.result.WhisperResult
+        All timestamps, words, probabilities, and other data from the transcription of ``audio``.
 
-        Examples
-        --------
-        >>> import stable_whisper
-        >>> model = stable_whisper.load_faster_whisper('base')
-        >>> result = model.transcribe_stable('audio.mp3', vad=True)
-        >>> result.to_srt_vtt('audio.srt')
-        Saved: audio.srt
+    Examples
+    --------
+    >>> import stable_whisper
+    >>> model = stable_whisper.load_faster_whisper('base')
+    >>> result = model.transcribe_stable('audio.mp3', vad=True)
+    >>> result.to_srt_vtt('audio.srt')
+    Saved: audio.srt
 
 </details>
 
@@ -777,8 +764,9 @@ Docstring:
     ----------
     model : "Whisper"
         The Whisper ASR model modified instance
-    audio : str or numpy.ndarray or torch.Tensor or bytes
-        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+    audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
+        Path/URL to the audio file, the audio waveform, or bytes of audio file or
+        instance of :class:`stable_whisper.audio.AudioLoader`.
         If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     text : str or list of int or stable_whisper.result.WhisperResult
         String of plain-text, list of tokens, or instance of :class:`stable_whisper.result.WhisperResult`.
@@ -795,13 +783,18 @@ Docstring:
     word_dur_factor : float or None, default 2.0
         Factor to compute the Local maximum word duration, which is ``word_dur_factor`` * local medium word duration.
         Words that need re-alignment, are re-algined with duration <= local/global maximum word duration.
-    nonspeech_skip : float or None, default 3.0
+    nonspeech_skip : float or None, default 5.0
         Skip non-speech sections that are equal or longer than this duration in seconds. Disable skipping if ``None``.
     fast_mode : bool, default False
         Whether to speed up alignment by re-alignment with local/global maximum word duration.
         ``True`` tends produce better timestamps when ``text`` is accurate and there are no large speechless gaps.
     tokenizer : "Tokenizer", default None, meaning a new tokenizer is created according ``language`` and ``model``
         A tokenizer to used tokenizer text and detokenize tokens.
+    stream : bool or None, default None
+        Whether to loading ``audio`` in chunks of 30 seconds until the end of file/stream.
+        If ``None`` and ``audio`` is a string then set to ``True`` else ``False``.
+    failure_threshold : float, optional
+        Abort alignment when percentage of words with zero duration exceeds ``failure_threshold``.
     verbose : bool or None, default False
         Whether to display the text being decoded to the console.
         Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
@@ -822,15 +815,11 @@ Docstring:
     k_size : int, default 5
         Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_output : str, optional
-        Path to save the vocals isolated by Demucs as WAV file. Ignored if ``demucs = False``.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     vad : bool, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
@@ -838,15 +827,15 @@ Docstring:
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
-    min_word_dur : float, default 0.1
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
-    nonspeech_error : float, default 0.3
+    nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
-    prepend_punctuations : str, default '"'“¿([{-)'
+    prepend_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Punctuations to prepend to next word.
-    append_punctuations : str, default '.。,，!！?？:：”)]}、)'
+    append_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Punctuations to append to previous word.
     progress_callback : Callable, optional
         A function that will be called when transcription progress is updated.
@@ -897,12 +886,12 @@ Docstring:
 <summary>adjust_by_result()</summary>
 
         Minimize the duration of words using timestamps of another result.
-
+        
         Parameters
         ----------
         other_result : "WhisperResult"
             Timing data of the same words in a WhisperResult instance.
-        min_word_dur : float, default 0.1
+        min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
             Prevent changes to timestamps if the resultant word duration is less than ``min_word_dur``.
         verbose : bool, default False
             Whether to print out the timestamp changes.
@@ -1591,12 +1580,11 @@ Docstring:
         to make it more likely to predict those word correctly.
     suppress_tokens : str or list of int, default '-1', meaning suppress special characters except common punctuations
         List of tokens to suppress.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
 
@@ -1620,7 +1608,7 @@ Docstring:
     --------
     >>> import stable_whisper
     >>> model = stable_whisper.load_model('base')
-    >>> matches = model.locate('audio.mp3', 'are', 'English', verbose=True)
+    >>> matches = model.locate('audio.mp3', 'are', language='English', verbose=True)
 
     Some words can sound the same but have different spellings to increase of the chance of finding such words use
     ``initial_prompt``.

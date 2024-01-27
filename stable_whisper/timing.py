@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from typing import TYPE_CHECKING, List, Callable, Optional
 from itertools import chain
+
 from whisper.audio import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN
 from whisper.timing import WordTiming, median_filter, dtw, merge_punctuations
 

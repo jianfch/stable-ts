@@ -1,5 +1,5 @@
 import os
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 def version() -> str:
@@ -22,15 +22,12 @@ setup(
     author="Jian",
     url="https://github.com/jianfch/stable-ts",
     license="MIT",
-    packages=['stable_whisper'],
+    packages=find_packages(include=["stable_whisper", "stable_whisper.*"]),
     install_requires=[
         "numpy",
         "torch",
         "torchaudio",
         "tqdm",
-        "more-itertools",
-        "transformers>=4.19.0",
-        "ffmpeg-python==0.2.0",
         "openai-whisper==20231117"
     ],
     entry_points={

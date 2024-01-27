@@ -7,27 +7,32 @@ import numpy as np
 from tqdm import tqdm
 from typing import TYPE_CHECKING, Union, List, Callable, Optional, Tuple
 
-import whisper
-from whisper.audio import (
-    SAMPLE_RATE, N_FRAMES, N_SAMPLES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH
-)
-
 from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable, split_word_tokens
-from .audio import prep_audio
+from .audio import prep_audio, AudioLoader, audioloader_not_supported, convert_demucs_kwargs
 from .utils import safe_print, format_timestamp
 from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
-from .stabilization import get_vad_silence_func, wav2mask, mask2timing
+from .stabilization import NonSpeechPredictor
+from .stabilization.silero_vad import VAD_WINDOWS
+from .default import get_min_word_dur, get_prepend_punctuations, get_append_punctuations
+
+import whisper
+from whisper.audio import (
+    SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES
+)
+from whisper.timing import median_filter
+from whisper.decoding import DecodingTask, DecodingOptions, SuppressTokens
 
 if TYPE_CHECKING:
     from whisper.model import Whisper
+    from whisper.tokenizer import Tokenizer
 
 __all__ = ['align', 'refine', 'locate']
 
 
 def align(
         model: "Whisper",
-        audio: Union[str, np.ndarray, torch.Tensor, bytes],
+        audio: Union[str, np.ndarray, torch.Tensor, bytes, AudioLoader],
         text: Union[str, List[int], WhisperResult],
         language: str = None,
         *,
@@ -36,19 +41,20 @@ def align(
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
         use_word_position: bool = True,
-        min_word_dur: bool = 0.1,
-        nonspeech_error: float = 0.3,
+        min_word_dur: Optional[float] = None,
+        nonspeech_error: float = 0.1,
         q_levels: int = 20,
         k_size: int = 5,
         vad: bool = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
+        denoiser: Optional[str] = None,
+        denoiser_options: Optional[dict] = None,
         demucs: Union[bool, torch.nn.Module] = False,
-        demucs_output: str = None,
         demucs_options: dict = None,
         only_voice_freq: bool = False,
-        prepend_punctuations: str = "\"'“¿([{-",
-        append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
+        prepend_punctuations: Optional[str] = None,
+        append_punctuations: Optional[str] = None,
         progress_callback: Callable = None,
         ignore_compatibility: bool = False,
         remove_instant_words: bool = False,
@@ -56,9 +62,11 @@ def align(
         original_split: bool = False,
         word_dur_factor: Optional[float] = 2.0,
         max_word_dur: Optional[float] = 3.0,
-        nonspeech_skip: Optional[float] = 3.0,
+        nonspeech_skip: Optional[float] = 5.0,
         fast_mode: bool = False,
-        tokenizer: "Tokenizer" = None
+        tokenizer: "Tokenizer" = None,
+        stream: Optional[bool] = None,
+        failure_threshold: Optional[float] = None,
 ) -> Union[WhisperResult, None]:
     """
     Align plain text or tokens with audio at word-level.
@@ -70,8 +78,9 @@ def align(
     ----------
     model : "Whisper"
         The Whisper ASR model modified instance
-    audio : str or numpy.ndarray or torch.Tensor or bytes
-        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+    audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
+        Path/URL to the audio file, the audio waveform, or bytes of audio file or
+        instance of :class:`stable_whisper.audio.AudioLoader`.
         If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
     text : str or list of int or stable_whisper.result.WhisperResult
         String of plain-text, list of tokens, or instance of :class:`stable_whisper.result.WhisperResult`.
@@ -88,13 +97,18 @@ def align(
     word_dur_factor : float or None, default 2.0
         Factor to compute the Local maximum word duration, which is ``word_dur_factor`` * local medium word duration.
         Words that need re-alignment, are re-algined with duration <= local/global maximum word duration.
-    nonspeech_skip : float or None, default 3.0
+    nonspeech_skip : float or None, default 5.0
         Skip non-speech sections that are equal or longer than this duration in seconds. Disable skipping if ``None``.
     fast_mode : bool, default False
         Whether to speed up alignment by re-alignment with local/global maximum word duration.
         ``True`` tends produce better timestamps when ``text`` is accurate and there are no large speechless gaps.
     tokenizer : "Tokenizer", default None, meaning a new tokenizer is created according ``language`` and ``model``
         A tokenizer to used tokenizer text and detokenize tokens.
+    stream : bool or None, default None
+        Whether to loading ``audio`` in chunks of 30 seconds until the end of file/stream.
+        If ``None`` and ``audio`` is a string then set to ``True`` else ``False``.
+    failure_threshold : float, optional
+        Abort alignment when percentage of words with zero duration exceeds ``failure_threshold``.
     verbose : bool or None, default False
         Whether to display the text being decoded to the console.
         Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
@@ -115,15 +129,11 @@ def align(
     k_size : int, default 5
         Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_output : str, optional
-        Path to save the vocals isolated by Demucs as WAV file. Ignored if ``demucs = False``.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     vad : bool, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
@@ -131,15 +141,15 @@ def align(
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
-    min_word_dur : float, default 0.1
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
-    nonspeech_error : float, default 0.3
+    nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
-    prepend_punctuations : str, default '"'“¿([{-)'
+    prepend_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Punctuations to prepend to next word.
-    append_punctuations : str, default '.。,，!！?？:：”)]}、)'
+    append_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Punctuations to append to previous word.
     progress_callback : Callable, optional
         A function that will be called when transcription progress is updated.
@@ -173,15 +183,15 @@ def align(
     >>> result.to_srt_vtt('helloword.srt')
     Saved 'helloworld.srt'
     """
+    denoiser, denoiser_options = convert_demucs_kwargs(
+        denoiser, denoiser_options, demucs=demucs, demucs_options=demucs_options
+    )
+    prepend_punctuations = get_prepend_punctuations(prepend_punctuations)
+    append_punctuations = get_append_punctuations(append_punctuations)
+    min_word_dur = get_min_word_dur(min_word_dur)
+    if failure_threshold is not None and (failure_threshold < 0 or failure_threshold > 1):
+        raise ValueError(f'``failure_threshold`` ({failure_threshold}) must be between 0 and 1.')
     is_faster_model = model.__module__.startswith('faster_whisper.')
-    if demucs_options is None:
-        demucs_options = {}
-    if demucs_output:
-        if 'save_path' not in demucs_options:
-            demucs_options['save_path'] = demucs_output
-        warnings.warn('``demucs_output`` is deprecated. Use ``demucs_options`` with ``save_path`` instead. '
-                      'E.g. demucs_options=dict(save_path="demucs_output.mp3")',
-                      DeprecationWarning, stacklevel=2)
     max_token_step = (model.max_length if is_faster_model else model.dims.n_text_ctx) - 6
     if token_step < 1:
         token_step = max_token_step
@@ -217,18 +227,30 @@ def align(
     tokens = [t for t in tokens if t < tokenizer.eot]
     _, (words, word_tokens), _ = split_word_tokens([dict(tokens=tokens)], tokenizer)
 
-    audio = prep_audio(
-        audio,
-        demucs=demucs,
-        demucs_options=demucs_options,
-        only_voice_freq=only_voice_freq,
-        verbose=verbose
-    )
+    if isinstance(audio, AudioLoader):
+        audio.validate_external_args(
+            sr=SAMPLE_RATE,
+            vad=vad,
+            stream=stream,
+            denoiser=denoiser,
+            denoiser_options=denoiser_options,
+            only_voice_freq=only_voice_freq
+        )
+    else:
+        audio = AudioLoader(
+            audio,
+            sr=SAMPLE_RATE,
+            denoiser=denoiser,
+            denoiser_options=denoiser_options,
+            only_voice_freq=only_voice_freq,
+            verbose=verbose,
+            new_chunk_divisor=512,
+            stream=stream
+        )
 
-    sample_padding = int(N_FFT // 2) + 1
+    initial_duration = audio.get_duration(2)
+
     seek_sample = 0
-    total_samples = audio.shape[-1]
-    total_duration = round(total_samples / SAMPLE_RATE, 2)
     total_words = len(words)
 
     if is_faster_model:
@@ -239,7 +261,7 @@ def align(
                 end=round(segment_samples / model.feature_extractor.sampling_rate, 3),
                 tokens=[t for wt in curr_word_tokens for t in wt],
             )
-            features = model.feature_extractor(audio_segment.numpy())
+            features = model.feature_extractor(audio_segment.cpu().numpy())
             encoder_output = model.encode(features[:, : model.feature_extractor.nb_max_frames])
 
             model.add_word_timestamps(
@@ -272,7 +294,7 @@ def align(
                 seek=time_offset,
                 tokens=(curr_words, curr_word_tokens)
             )
-
+            sample_padding = max(N_SAMPLES - audio_segment.shape[-1], 0)
             mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
             mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
 
@@ -304,19 +326,33 @@ def align(
         return w, wt
     result = []
 
-    nonspeech_timings = [[], []]
-    nonspeech_vad_timings = None
-    if (suppress_silence or nonspeech_skip is not None) and vad:
-        nonspeech_vad_timings = (
-            get_vad_silence_func(onnx=vad_onnx, verbose=verbose)(audio, speech_threshold=vad_threshold)
-        )
-        if nonspeech_vad_timings is not None:
-            nonspeech_timings = nonspeech_vad_timings[0].copy(), nonspeech_vad_timings[1].copy()
+    nonspeech_predictor = NonSpeechPredictor(
+        vad=vad if suppress_silence else None,
+        mask_pad_func=pad_or_trim,
+        get_mask=False,
+        min_word_dur=min_word_dur,
+        q_levels=q_levels,
+        k_size=k_size,
+        vad_threshold=vad_threshold,
+        vad_onnx=vad_onnx,
+        vad_window=audio.new_chunk_divisor,
+        sampling_rate=SAMPLE_RATE,
+        verbose=None if audio.stream else verbose,
+        store_timings=True,
+        ignore_is_silent=True
+    )
+    audio.update_post_prep_callback(nonspeech_predictor.get_on_prep_callback(audio.stream))
+    failure_count, max_fail = 0, total_words * (failure_threshold or 1)
 
-    with tqdm(total=total_duration, unit='sec', disable=verbose is not False, desc='Align') as tqdm_pbar:
+    with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc='Align') as tqdm_pbar:
 
         def update_pbar(finish: bool = False):
-            tqdm_pbar.update((total_duration if finish else min(round(last_ts, 2), total_duration)) - tqdm_pbar.n)
+            curr_total = audio.get_duration(2)
+            if need_refresh := curr_total != tqdm_pbar.total:
+                tqdm_pbar.total = curr_total
+            tqdm_pbar.update((curr_total if finish else min(round(last_ts, 2), curr_total)) - tqdm_pbar.n)
+            if need_refresh:
+                tqdm_pbar.refresh()
             if progress_callback is not None:
                 progress_callback(seek=tqdm_pbar.n, total=tqdm_pbar.total)
 
@@ -346,43 +382,25 @@ def align(
                     curr_words[0] = temp_word
                     temp_word = None
 
-        n_samples = model.feature_extractor.n_samples if is_faster_model else N_SAMPLES
-
         temp_word = None
 
-        while words and seek_sample < total_samples:
+        while words:
 
             time_offset = seek_sample / SAMPLE_RATE
-            seek_sample_end = seek_sample + n_samples
-            audio_segment = audio[seek_sample:seek_sample_end]
+            audio_segment = audio.next_chunk(seek_sample, N_SAMPLES)
+            if audio_segment is None:
+                break
+
             segment_samples = audio_segment.shape[-1]
+            curr_total_samples = audio.get_total_samples()
+
+            nonspeech_preds = nonspeech_predictor.predict(audio=audio_segment, offset=time_offset)
 
             if nonspeech_skip is not None:
-                segment_nonspeech_timings = None
-                if not vad:
-                    ts_token_mask = wav2mask(audio_segment, q_levels=q_levels, k_size=k_size)
-                    segment_nonspeech_timings = mask2timing(ts_token_mask, time_offset=time_offset)
-                    if segment_nonspeech_timings is not None:
-                        nonspeech_timings[0].extend(segment_nonspeech_timings[0])
-                        nonspeech_timings[1].extend(segment_nonspeech_timings[1])
-                elif nonspeech_vad_timings:
-                    timing_indices = np.logical_and(
-                        nonspeech_vad_timings[1] > time_offset,
-                        nonspeech_vad_timings[0] < time_offset + 30.0
-                    )
-
-                    if timing_indices.any():
-                        segment_nonspeech_timings = (
-                            nonspeech_vad_timings[0][timing_indices], nonspeech_vad_timings[1][timing_indices]
-                        )
-                    else:
-                        segment_nonspeech_timings = None
-
-                    if mn := timing_indices.argmax():
-                        nonspeech_vad_timings = (nonspeech_vad_timings[0][mn:], nonspeech_vad_timings[1][mn:])
+                segment_nonspeech_timings = nonspeech_preds['timings']
 
                 if segment_nonspeech_timings is not None and len(segment_nonspeech_timings[0]):
-                    # segment has no detectable speech
+
                     if (
                             (segment_nonspeech_timings[0][0] <= time_offset + min_word_dur) and
                             (segment_nonspeech_timings[1][0] >= time_offset + segment_samples - min_word_dur)
@@ -391,22 +409,25 @@ def align(
                         continue
 
                     timing_indices = (segment_nonspeech_timings[1] - segment_nonspeech_timings[0]) >= nonspeech_skip
-                    if any(timing_indices):
+                    if timing_indices.any():
                         nonspeech_starts = segment_nonspeech_timings[0][timing_indices]
                         nonspeech_ends = segment_nonspeech_timings[1][timing_indices]
 
-                        if round(time_offset, 3) >= nonspeech_starts[0]:
+                        if nonspeech_ends[0] > round(time_offset, 3) >= nonspeech_starts[0]:
                             seek_sample = round(nonspeech_ends[0] * SAMPLE_RATE)
-                            if seek_sample + (min_word_dur * SAMPLE_RATE) >= total_samples:
-                                seek_sample = total_samples
+                            if seek_sample + (min_word_dur * SAMPLE_RATE) >= curr_total_samples:
+                                seek_sample = curr_total_samples
                                 continue
                             time_offset = seek_sample / SAMPLE_RATE
 
+                            audio_segment = audio.next_chunk(seek_sample, N_SAMPLES)
+                            if audio_segment is None:
+                                break
                             if len(nonspeech_starts) > 1:
-                                seek_sample_end = (
-                                        seek_sample + round((nonspeech_starts[1] - nonspeech_ends[0]) * SAMPLE_RATE)
-                                )
-                            audio_segment = audio[seek_sample:seek_sample_end]
+                                new_sample_count = round((nonspeech_starts[1] - nonspeech_ends[0]) * SAMPLE_RATE)
+                            else:
+                                new_sample_count = None
+                            audio_segment = audio_segment[:new_sample_count]
                             segment_samples = audio_segment.shape[-1]
 
             curr_words, curr_word_tokens = get_curr_words()
@@ -467,7 +488,7 @@ def align(
                     redo_words()
                 seek_sample = round(last_ts * SAMPLE_RATE)
             else:
-                seek_sample += audio_segment.shape[-1]
+                seek_sample += segment_samples
                 last_ts = round(seek_sample / SAMPLE_RATE, 2)
                 redo_words()
 
@@ -482,35 +503,49 @@ def align(
                     for word in curr_words
                 )
                 safe_print(line)
-        update_pbar(True)
+
+            if failure_threshold is not None:
+                failure_count += sum(1 for w in curr_words if w['end'] - w['start'] == 0)
+                if failure_count > max_fail:
+                    break
+
+        update_pbar(failure_count <= max_fail)
 
     if temp_word is not None:
         result.append(temp_word)
     if not result:
         warnings.warn('Failed to align text.', stacklevel=2)
+    if failure_count > max_fail:
+        warnings.warn(f'Alignment aborted. Failed word percentage exceeded {failure_threshold * 100}% at '
+                      f'{format_timestamp(seek_sample / SAMPLE_RATE)}.',
+                      stacklevel=2)
     elif words:
         warnings.warn(f'Failed to align the last {len(words)}/{total_words} words after '
                       f'{format_timestamp(result[-1]["end"])}.', stacklevel=2)
 
     if words and not remove_instant_words:
+        final_total_duration = audio.get_duration(3)
         result.extend(
             [
-                dict(word=w, start=total_duration, end=total_duration, probability=0.0, tokens=wt)
+                dict(word=w, start=final_total_duration, end=final_total_duration, probability=0.0, tokens=wt)
                 for w, wt in zip(words, word_tokens)
             ]
         )
+
+    audio.terminate()
+    nonspeech_predictor.finalize_timings()
 
     if not result:
         return
 
     if len(split_indices_by_char):
         word_lens = np.cumsum([[len(w['word']) for w in result]])
-        split_indices = [(word_lens >= i).nonzero()[0][0]+1 for i in split_indices_by_char]
+        split_indices = [np.flatnonzero(word_lens >= i)[0]+1 for i in split_indices_by_char]
         result = WhisperResult([result[i:j] for i, j in zip([0]+split_indices[:-1], split_indices) if i != j])
     else:
         result = WhisperResult([result])
 
-    if suppress_silence:
+    if suppress_silence and (nonspeech_timings := nonspeech_predictor.nonspeech_timings) is not None:
         result.suppress_silence(
             *nonspeech_timings,
             min_word_dur=min_word_dur,
@@ -544,6 +579,8 @@ def refine(
         precision: float = None,
         single_batch: bool = False,
         inplace: bool = True,
+        denoiser: Optional[str] = None,
+        denoiser_options: Optional[dict] = None,
         demucs: Union[bool, torch.nn.Module] = False,
         demucs_options: dict = None,
         only_voice_freq: bool = False,
@@ -591,12 +628,11 @@ def refine(
         Whether to process in only batch size of one to reduce memory usage.
     inplace : bool, default True, meaning return a deepcopy of ``result``
         Whether to alter timestamps in-place.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
     verbose : bool or None, default False
@@ -621,6 +657,7 @@ def refine(
     >>> result.to_srt_vtt('audio.srt')
     Saved 'audio.srt'
     """
+    audioloader_not_supported(audio)
     if not steps:
         steps = 'se'
     if precision is None:
@@ -635,6 +672,8 @@ def refine(
 
     audio = prep_audio(
         audio,
+        denoiser=denoiser,
+        denoiser_options=denoiser_options,
         demucs=demucs,
         demucs_options=demucs_options,
         only_voice_freq=only_voice_freq,
@@ -928,6 +967,8 @@ def locate(
         verbose: bool = False,
         initial_prompt: str = None,
         suppress_tokens: Union[str, List[int]] = '-1',
+        denoiser: Optional[str] = None,
+        denoiser_options: Optional[dict] = None,
         demucs: Union[bool, torch.nn.Module] = False,
         demucs_options: dict = None,
         only_voice_freq: bool = False,
@@ -993,12 +1034,11 @@ def locate(
         to make it more likely to predict those word correctly.
     suppress_tokens : str or list of int, default '-1', meaning suppress special characters except common punctuations
         List of tokens to suppress.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
 
@@ -1022,16 +1062,14 @@ def locate(
     --------
     >>> import stable_whisper
     >>> model = stable_whisper.load_model('base')
-    >>> matches = model.locate('audio.mp3', 'are', 'English', verbose=True)
+    >>> matches = model.locate('audio.mp3', 'are', language='English', verbose=True)
 
     Some words can sound the same but have different spellings to increase of the chance of finding such words use
     ``initial_prompt``.
 
     >>> matches = model.locate('audio.mp3', ' Nickie', 'English', verbose=True, initial_prompt='Nickie')
     """
-    from whisper.timing import median_filter
-    from whisper.decoding import DecodingTask, DecodingOptions, SuppressTokens
-    from .timing import split_word_tokens
+    audioloader_not_supported(audio)
 
     sample_padding = int(N_FFT // 2) + 1
     sec_per_emb = model.dims.n_audio_ctx / CHUNK_LENGTH
@@ -1060,6 +1098,8 @@ def locate(
 
     audio = prep_audio(
         audio,
+        denoiser=denoiser,
+        denoiser_options=denoiser_options,
         demucs=demucs,
         demucs_options=demucs_options,
         only_voice_freq=only_voice_freq,

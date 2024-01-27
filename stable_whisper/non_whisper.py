@@ -6,15 +6,25 @@ import torchaudio
 import numpy as np
 from typing import Union, Callable, Optional
 
-from .audio import load_audio
+from .audio import AudioLoader, get_denoiser_func, convert_demucs_kwargs
+from .audio.utils import load_source, load_audio, voice_freq_filter, get_samplerate, resample
 from .result import WhisperResult
+from .utils import update_options
 
 AUDIO_TYPES = ('str', 'byte', 'torch', 'numpy')
+
+AUDIO_TYPE_BY_CLASS = {
+    str: 'str',
+    bytes: 'bytes',
+    np.ndarray: 'numpy',
+    torch.Tensor: 'pytorch',
+    AudioLoader: None
+}
 
 
 def transcribe_any(
         inference_func: Callable,
-        audio: Union[str, np.ndarray, torch.Tensor, bytes],
+        audio: Union[str, np.ndarray, torch.Tensor, bytes, AudioLoader],
         audio_type: str = None,
         input_sr: int = None,
         model_sr: int = None,
@@ -26,15 +36,15 @@ def transcribe_any(
         suppress_word_ts: bool = True,
         q_levels: int = 20,
         k_size: int = 5,
+        denoiser: Optional[str] = None,
+        denoiser_options: Optional[dict] = None,
         demucs: bool = False,
-        demucs_device: str = None,
-        demucs_output: str = None,
         demucs_options: dict = None,
         vad: bool = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
-        min_word_dur: float = 0.1,
-        nonspeech_error: float = 0.3,
+        min_word_dur: Optional[float] = None,
+        nonspeech_error: float = 0.1,
         use_word_position: bool = True,
         only_voice_freq: bool = False,
         only_ffmpeg: bool = False,
@@ -49,8 +59,9 @@ def transcribe_any(
     inference_func : Callable
         Function that runs ASR when provided the [audio] and return data in the appropriate format.
         For format examples see, https://github.com/jianfch/stable-ts/blob/main/examples/non-whisper.ipynb.
-    audio : str or numpy.ndarray or torch.Tensor or bytes
-        Path/URL to the audio file, the audio waveform, or bytes of audio file.
+    audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
+        Path/URL to the audio file, the audio waveform, bytes of audio file or
+        instance of :class:`stable_whisper.audio.AudioLoader`.
     audio_type : {'str', 'byte', 'torch', 'numpy', None}, default None, meaning same type as ``audio``
         The type that ``audio`` needs to be for ``inference_func``.
         'str' is a path to the file.
@@ -82,17 +93,11 @@ def transcribe_any(
     k_size : int, default 5
         Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_output : str, optional
-        Path to save the vocals isolated by Demucs as WAV file. Ignored if ``demucs = False``.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
-    demucs_device : str, default None, meaning 'cuda' if cuda is available with ``torch`` else 'cpu'
-        Device to use for demucs.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     vad : bool, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
@@ -100,9 +105,9 @@ def transcribe_any(
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
     vad_onnx : bool, default False
         Whether to use ONNX for Silero VAD.
-    min_word_dur : float, default 0.1
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
-    nonspeech_error : float, default 0.3
+    nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
@@ -127,7 +132,7 @@ def transcribe_any(
     For ``audio_type = 'str'``:
         If ``audio`` is a file and no audio preprocessing is set, ``audio`` will be directly passed into
             ``inference_func``.
-        If audio preprocessing is ``demucs`` or ``only_voice_freq``, the processed audio will be encoded into
+        If audio preprocessing is ``denoiser`` or ``only_voice_freq``, the processed audio will be encoded into
             ``temp_file`` and then passed into ``inference_func``.
 
     For ``audio_type = 'byte'``:
@@ -137,55 +142,40 @@ def transcribe_any(
 
     Resampling is only performed on ``audio`` when ``model_sr`` does not match the sample rate of the ``audio`` before
         passing into ``inference_func`` due to ``input_sr`` not matching ``model_sr``, or sample rate changes due to
-        audio preprocessing from ``demucs = True``.
+        audio preprocessing from ``denoiser``.
     """
-    if demucs_options is None:
-        demucs_options = {}
-    if demucs_output:
-        if 'save_path' not in demucs_options:
-            demucs_options['save_path'] = demucs_output
-        warnings.warn('``demucs_output`` is deprecated. Use ``demucs_options`` with ``save_path`` instead. '
-                      'E.g. demucs_options=dict(save_path="demucs_output.mp3")',
-                      DeprecationWarning, stacklevel=2)
-    if demucs_device:
-        if 'device' not in demucs_options:
-            demucs_options['device'] = demucs_device
-        warnings.warn('``demucs_device`` is deprecated. Use ``demucs_options`` with ``device`` instead. '
-                      'E.g. demucs_options=dict(device="cpu")',
-                      DeprecationWarning, stacklevel=2)
-
+    denoiser, denoiser_options = convert_demucs_kwargs(
+        denoiser, denoiser_options, demucs=demucs, demucs_options=demucs_options
+    )
     if audio_type is not None and (audio_type := audio_type.lower()) not in AUDIO_TYPES:
-        raise NotImplementedError(f'[audio_type]={audio_type} is not supported. Types: {AUDIO_TYPES}')
+        raise NotImplementedError(f'``audio_type="{audio_type}"`` is not supported. Types: {AUDIO_TYPES}')
+
+    if isinstance(audio, AudioLoader) and audio_type is not None:
+        raise ValueError(f'``audio_type`` can only be ``None`` when ``audio`` is an AudioLoader instance,'
+                         f'but got {audio_type}')
 
     if audio_type is None:
-        if isinstance(audio, str):
-            audio_type = 'str'
-        elif isinstance(audio, bytes):
-            audio_type = 'byte'
-        elif isinstance(audio, torch.Tensor):
-            audio_type = 'pytorch'
-        elif isinstance(audio, np.ndarray):
-            audio_type = 'numpy'
+        if type(audio) in AUDIO_TYPE_BY_CLASS:
+            audio_type = AUDIO_TYPE_BY_CLASS[type(audio)]
         else:
-            raise TypeError(f'{type(audio)} is not supported for [audio].')
+            raise TypeError(f'{type(audio)} is not supported for ``audio``.')
 
     if (
             input_sr is None and
             isinstance(audio, (np.ndarray, torch.Tensor)) and
-            (demucs or only_voice_freq or suppress_silence or model_sr)
+            (denoiser or only_voice_freq or suppress_silence or model_sr)
     ):
-        raise ValueError('[input_sr] is required when [audio] is a PyTorch tensor or NumPy array.')
+        raise ValueError('``input_sr`` is required when ``audio`` is a PyTorch tensor or NumPy array.')
 
     if (
             model_sr is None and
             isinstance(audio, (str, bytes)) and
             audio_type in ('torch', 'numpy')
     ):
-        raise ValueError('[model_sr] is required when [audio_type] is a "pytorch" or "numpy".')
+        raise ValueError('``model_sr`` is required when ``audio_type`` is a "pytorch" or "numpy".')
 
     if isinstance(audio, str):
-        from .audio import _load_file
-        audio = _load_file(audio, verbose=verbose, only_ffmpeg=only_ffmpeg)
+        audio = load_source(audio, verbose=verbose, only_ffmpeg=only_ffmpeg)
 
     if inference_kwargs is None:
         inference_kwargs = {}
@@ -193,64 +183,78 @@ def transcribe_any(
     temp_file = os.path.abspath(temp_file or './_temp_stable-ts_audio_.wav')
     temp_audio_file = None
 
-    curr_sr = input_sr
+    if isinstance(audio, AudioLoader):
+        if denoiser and not audio._denoiser:
+            warnings.warn(
+                '``denoiser`` will have no affect unless specified at AudioLoader initialization.',
+                stacklevel=2
+            )
+        denoiser = None
 
-    if demucs:
-        if demucs is True:
-            from .audio import load_demucs_model
-            demucs_model = load_demucs_model()
-        else:
-            demucs_model = demucs
-            demucs = True
+        if only_voice_freq and not audio._only_voice_freq:
+            warnings.warn(
+                '``only_voice_freq=True`` will have no affect unless specified at AudioLoader initialization.',
+                stacklevel=2
+            )
+        only_voice_freq = False
+
+        if input_sr is not None and input_sr != audio.sr:
+            warnings.warn(
+                f'``input_sr`` ({input_sr}) does not match ``sr`` of AudioLoader ({audio.sr})',
+                stacklevel=2
+            )
+        input_sr = audio.sr
+
+    audio_sr = input_sr
+
+    def set_audio_sr(_sr):
+        nonlocal audio_sr
+        audio_sr = _sr
+
+    def get_sr(_audio, _sr, setter=None):
+        if _sr is not None:
+            return _sr
+        assert isinstance(audio, (str, bytes)), f'No ``input_sr`` specified.'
+        _sr = get_samplerate(audio)
+        assert _sr is not None, 'Failed to get samplerate from ``audio``'
+        if setter is not None:
+            setter(_sr)
+        return _sr
+
+    if denoiser:
+        denoise_model = denoiser_options.pop('model', None)
+        if denoise_model is None:
+            denoise_model = get_denoiser_func(denoiser, 'load')(True)
     else:
-        demucs_model = None
-
-    def get_input_sr():
-        nonlocal input_sr
-        if not input_sr and isinstance(audio, (str, bytes)):
-            from .audio import get_samplerate
-            input_sr = get_samplerate(audio)
-        return input_sr
+        denoise_model = None
 
     if only_voice_freq:
-        from .audio import voice_freq_filter
-        if demucs_model is None:
-            curr_sr = model_sr or get_input_sr()
-        else:
-            curr_sr = demucs_model.samplerate
-            if model_sr is None:
-                model_sr = get_input_sr()
-        audio = load_audio(audio, sr=curr_sr, verbose=verbose, only_ffmpeg=only_ffmpeg)
-        audio = voice_freq_filter(audio, curr_sr)
+        audio_sr = get_sr(audio, audio_sr) if denoise_model is None else denoise_model.samplerate
+        audio = load_audio(audio, sr=audio_sr, verbose=verbose, only_ffmpeg=only_ffmpeg)
+        audio = voice_freq_filter(audio, audio_sr)
 
-    if demucs:
-        from .audio import demucs_audio
-        if demucs_device is None:
-            demucs_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        demucs_kwargs = dict(
+    if denoiser:
+        denoiser_options = update_options(
+            denoiser_options,
+            True,
             audio=audio,
-            input_sr=curr_sr,
-            model=demucs_model,
-            save_path=demucs_output,
-            device=demucs_device,
+            input_sr=audio_sr,
+            model=denoise_model,
             verbose=verbose
         )
-        demucs_kwargs.update(demucs_options or {})
-        audio = demucs_audio(
-            **demucs_kwargs
-        )
-        curr_sr = demucs_model.samplerate
-        if demucs_output and audio_type == 'str':
-            audio = demucs_output
+        denoise_run = get_denoiser_func(denoiser, 'run')
+        audio = denoise_run(**denoiser_options)
+        audio_sr = denoise_model.samplerate
+        if (denoise_output := denoiser_options.get('save_path')) and audio_type == 'str':
+            audio = denoise_output
 
     final_audio = audio
+    # final_audio_sr = audio_sr
 
     if model_sr is not None:
+        final_audio_sr = get_sr(audio, audio_sr, set_audio_sr)
 
-        if curr_sr is None:
-            curr_sr = get_input_sr()
-
-        if curr_sr != model_sr:
+        if final_audio_sr != model_sr:
             if isinstance(final_audio, (str, bytes)):
                 final_audio = load_audio(
                     final_audio,
@@ -258,16 +262,13 @@ def transcribe_any(
                     verbose=verbose,
                     only_ffmpeg=only_ffmpeg
                 )
+                # final_audio_sr = model_sr
             else:
                 if isinstance(final_audio, np.ndarray):
                     final_audio = torch.from_numpy(final_audio)
                 if isinstance(final_audio, torch.Tensor):
-                    final_audio = torchaudio.functional.resample(
-                        final_audio,
-                        orig_freq=curr_sr,
-                        new_freq=model_sr,
-                        resampling_method="kaiser_window"
-                    )
+                    final_audio = resample(final_audio, audio_sr, model_sr,)
+                    # final_audio_sr = model_sr
 
     if audio_type in ('torch', 'numpy'):
 
@@ -278,12 +279,13 @@ def transcribe_any(
                 verbose=verbose,
                 only_ffmpeg=only_ffmpeg
             )
+            # final_audio_sr = model_sr
 
-        else:
+        if not isinstance(final_audio, AudioLoader):
             if audio_type == 'torch':
                 if isinstance(final_audio, np.ndarray):
                     final_audio = torch.from_numpy(final_audio)
-            elif audio_type == 'numpy' and isinstance(final_audio, torch.Tensor):
+            elif isinstance(final_audio, torch.Tensor):
                 final_audio = final_audio.cpu().numpy()
 
     elif audio_type == 'str':
@@ -301,7 +303,7 @@ def transcribe_any(
                 f.write(final_audio)
             final_audio = temp_audio_file = temp_file
 
-    else:  # audio_type == 'byte'
+    elif audio_type == 'byte':
 
         if isinstance(final_audio, (torch.Tensor, np.ndarray)):
             if isinstance(final_audio, np.ndarray):
@@ -329,7 +331,7 @@ def transcribe_any(
                 audio, vad,
                 vad_onnx=vad_onnx, vad_threshold=vad_threshold,
                 q_levels=q_levels, k_size=k_size,
-                sample_rate=curr_sr, min_word_dur=min_word_dur,
+                sample_rate=get_sr(audio, audio_sr, set_audio_sr), min_word_dur=min_word_dur,
                 word_level=suppress_word_ts, verbose=True,
                 nonspeech_error=nonspeech_error,
                 use_word_position=use_word_position

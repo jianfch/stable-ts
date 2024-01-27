@@ -3,7 +3,7 @@ import os
 import warnings
 from typing import List, Tuple, Union, Callable
 from itertools import chain
-from .stabilization import valid_ts
+from .stabilization.utils import valid_ts
 
 __all__ = ['result_to_srt_vtt', 'result_to_ass', 'result_to_tsv', 'result_to_txt', 'save_as_json', 'load_result']
 SUPPORTED_FORMATS = ('srt', 'vtt', 'ass', 'tsv', 'txt')
@@ -18,7 +18,7 @@ def _save_as_file(content: str, path: str):
 def _get_segments(result: (dict, list), min_dur: float, reverse_text: Union[bool, tuple] = False):
     if isinstance(result, dict):
         if reverse_text:
-            warnings.warn(f'[reverse_text]=True only applies to WhisperResult but result is {type(result)}')
+            warnings.warn(f'``reverse_text=True`` only applies to WhisperResult but result is {type(result)}')
         return result.get('segments')
     elif not isinstance(result, list) and callable(getattr(result, 'segments_to_dicts', None)):
         return result.apply_min_dur(min_dur, inplace=False).segments_to_dicts(reverse_text=reverse_text)
@@ -181,7 +181,7 @@ def to_word_level(segments: List[dict]) -> List[dict]:
 def _confirm_word_level(segments: List[dict]) -> bool:
     if not all(bool(s.get('words')) for s in segments):
         warnings.warn('Result is missing word timestamps. Word-level timing cannot be exported. '
-                      'Use "word_level=False" to avoid this warning')
+                      'Use ``word_level=False`` to avoid this warning')
         return False
     return True
 
@@ -502,7 +502,7 @@ def result_to_ass(result: (dict, list),
         return sub_str
 
     if tag is not None and karaoke:
-        warnings.warn(f'[tag] is not support for [karaoke]=True; [tag] will be ignored.')
+        warnings.warn(f'``tag`` is not support for ``karaoke=True``; ``tag`` will be ignored.')
 
     return result_to_any(
         result=result,

@@ -1,7 +1,6 @@
 import inspect
 import sys
 
-
 system_encoding = sys.getdefaultencoding()
 
 if system_encoding != "utf-8":
@@ -76,3 +75,12 @@ class UnsortedException(Exception):
 
     def get_data(self):
         return self.data
+
+
+def update_options(_options: dict = None, _reversed: bool = False, **kwargs) -> dict:
+    if _options is None:
+        _options = {}
+    if _reversed:
+        _options, kwargs = kwargs, _options
+    _options.update(kwargs)
+    return _options
