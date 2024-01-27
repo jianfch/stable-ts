@@ -151,12 +151,12 @@ def get_metadata(audiofile: Union[str, bytes, np.ndarray, torch.Tensor]) -> dict
     if isinstance(audiofile, str):
         cmd.append(audiofile)
         metadata = subprocess.run(
-            cmd, capture_output=True, shell=True,
+            cmd, capture_output=True,
         ).stderr.decode(errors="ignore")
     else:
         cmd.append('-')
         p = subprocess.Popen(
-            cmd,  stderr=subprocess.PIPE, stdin=subprocess.PIPE, shell=True
+            cmd,  stderr=subprocess.PIPE, stdin=subprocess.PIPE,
         )
         try:
             p.stdin.write(audiofile)
