@@ -97,8 +97,8 @@ def timing2mask(
     if time_offset:
         silent_starts = (silent_starts - time_offset).clip(min=0)
         silent_ends = (silent_ends - time_offset).clip(min=0)
-    mask_i = (silent_starts * units_per_second).round().astype(np.int)
-    mask_e = (silent_ends * units_per_second).round().astype(np.int)
+    mask_i = (silent_starts * units_per_second).round().astype(np.int32)
+    mask_e = (silent_ends * units_per_second).round().astype(np.int32)
     for mi, me in zip(mask_i, mask_e):
         ts_token_mask[mi:me+1] = True
 

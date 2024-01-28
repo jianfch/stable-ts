@@ -688,7 +688,7 @@ def refine(
     def ts_to_frames(timestamps: Union[np.ndarray, list]) -> np.ndarray:
         if isinstance(timestamps, list):
             timestamps = np.array(timestamps)
-        return (timestamps * FRAMES_PER_SECOND).round().astype(int)
+        return (timestamps * FRAMES_PER_SECOND).round().astype(np.int32)
 
     def curr_segments():
         all_words = result.all_words()
@@ -753,8 +753,8 @@ def refine(
             min_starts = ts_to_frames(np.array(min_starts) - time_offset)
             max_ends = ts_to_frames(np.array(max_ends) - time_offset)
 
-            mid_starts = min_starts + ((max_starts - min_starts) / 2).round().astype(int)
-            mid_ends = min_ends + ((max_ends - min_ends) / 2).round().astype(int)
+            mid_starts = min_starts + ((max_starts - min_starts) / 2).round().astype(np.int32)
+            mid_ends = min_ends + ((max_ends - min_ends) / 2).round().astype(np.int32)
 
             text_tokens = [t for w in words for t in w.tokens if t < tokenizer.eot]
             word_tokens = [[t for t in w.tokens if t < tokenizer.eot] for w in words]
@@ -854,7 +854,7 @@ def refine(
                     _p = 0 if idx == 0 else mid_starts[idx-1]
                     mel_segment[row, :, _p:_i] = 0
             orig_probs, orig_tk_poss = get_prob()
-            changes = np.zeros((orig_probs.shape[-1], 3), dtype=int)
+            changes = np.zeros((orig_probs.shape[-1], 3), dtype=np.int32)
             changes[:, -1] = -1
             frame_indices = (mid_ends, max_starts) if is_end_ts else (min_ends, mid_starts)
             for idx, (_s, _e) in enumerate(zip(*frame_indices)):

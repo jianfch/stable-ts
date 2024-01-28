@@ -166,8 +166,8 @@ class NonSpeechPredictor:
         if self._default_probs:
             assert offset is not None, 'offset is required for default probs'
             sample_offset = offset * self.sampling_rate
-            s = np.floor(sample_offset / self.vad_window).astype(np.int)
-            e = np.ceil((sample_offset + audio.shape[-1]) / self.vad_window).astype(np.int)
+            s = np.floor(sample_offset / self.vad_window).astype(np.int32)
+            e = np.ceil((sample_offset + audio.shape[-1]) / self.vad_window).astype(np.int32)
             new_offset = s * self.vad_window / self.sampling_rate
             return self._default_probs[s:e], new_offset
 
