@@ -7,7 +7,7 @@ import numpy as np
 from typing import Union, Callable, Optional
 
 from .audio import AudioLoader, get_denoiser_func, convert_demucs_kwargs
-from .audio.utils import load_source, load_audio, voice_freq_filter, get_samplerate, resample
+from .audio.utils import load_source, load_audio, voice_freq_filter, get_samplerate, resample, audio_to_tensor_resample
 from .result import WhisperResult
 from .utils import update_options
 
@@ -198,6 +198,13 @@ def transcribe_any(
             )
         only_voice_freq = False
 
+        if suppress_silence:
+            warnings.warn(
+                '``suppress_silence=True`` is not yet supported when ``audio`` is an AudioLoader.',
+                stacklevel=2
+            )
+        suppress_silence = False
+
         if input_sr is not None and input_sr != audio.sr:
             warnings.warn(
                 f'``input_sr`` ({input_sr}) does not match ``sr`` of AudioLoader ({audio.sr})',
@@ -205,21 +212,20 @@ def transcribe_any(
             )
         input_sr = audio.sr
 
+    is_audio_encoded = isinstance(audio, (str, bytes))
+
     audio_sr = input_sr
 
-    def set_audio_sr(_sr):
+    def curr_audio_sr(is_optional: bool = False):
         nonlocal audio_sr
-        audio_sr = _sr
-
-    def get_sr(_audio, _sr, setter=None):
-        if _sr is not None:
-            return _sr
+        if is_optional and is_audio_encoded:
+            return None
+        if audio_sr is not None:
+            return audio_sr
         assert isinstance(audio, (str, bytes)), f'No ``input_sr`` specified.'
-        _sr = get_samplerate(audio)
-        assert _sr is not None, 'Failed to get samplerate from ``audio``'
-        if setter is not None:
-            setter(_sr)
-        return _sr
+        audio_sr = get_samplerate(audio)
+        assert audio_sr is not None, 'Failed to get samplerate from ``audio``'
+        return audio_sr
 
     if denoiser:
         denoise_model = denoiser_options.pop('model', None)
@@ -228,31 +234,40 @@ def transcribe_any(
     else:
         denoise_model = None
 
-    if only_voice_freq:
-        audio_sr = get_sr(audio, audio_sr) if denoise_model is None else denoise_model.samplerate
-        audio = load_audio(audio, sr=audio_sr, verbose=verbose, only_ffmpeg=only_ffmpeg)
-        audio = voice_freq_filter(audio, audio_sr)
-
     if denoiser:
         denoiser_options = update_options(
             denoiser_options,
             True,
-            audio=audio,
-            input_sr=audio_sr,
+            audio=torch.from_numpy(audio) if isinstance(audio, np.ndarray) else audio,
+            input_sr=curr_audio_sr(True),
             model=denoise_model,
             verbose=verbose
         )
         denoise_run = get_denoiser_func(denoiser, 'run')
         audio = denoise_run(**denoiser_options)
         audio_sr = denoise_model.samplerate
+        is_audio_encoded = False
         if (denoise_output := denoiser_options.get('save_path')) and audio_type == 'str':
             audio = denoise_output
 
-    final_audio = audio
-    # final_audio_sr = audio_sr
+    if only_voice_freq:
+        if is_audio_encoded and audio_sr and model_sr:
+            audio_sr = max(audio_sr, model_sr)
+        audio = audio_to_tensor_resample(
+            audio,
+            original_sample_rate=curr_audio_sr(),
+            verbose=verbose,
+            only_ffmpeg=only_ffmpeg
+        )
+        audio = voice_freq_filter(audio, audio_sr)
+        is_audio_encoded = False
 
-    if model_sr is not None:
-        final_audio_sr = get_sr(audio, audio_sr, set_audio_sr)
+    final_audio = audio
+
+    if model_sr is None:
+        final_audio_sr = audio_sr
+    else:
+        final_audio_sr = curr_audio_sr()
 
         if final_audio_sr != model_sr:
             if isinstance(final_audio, (str, bytes)):
@@ -262,13 +277,13 @@ def transcribe_any(
                     verbose=verbose,
                     only_ffmpeg=only_ffmpeg
                 )
-                # final_audio_sr = model_sr
+                final_audio_sr = model_sr
             else:
                 if isinstance(final_audio, np.ndarray):
                     final_audio = torch.from_numpy(final_audio)
                 if isinstance(final_audio, torch.Tensor):
-                    final_audio = resample(final_audio, audio_sr, model_sr,)
-                    # final_audio_sr = model_sr
+                    final_audio = resample(final_audio, audio_sr, model_sr)
+                    final_audio_sr = model_sr
 
     if audio_type in ('torch', 'numpy'):
 
@@ -279,7 +294,6 @@ def transcribe_any(
                 verbose=verbose,
                 only_ffmpeg=only_ffmpeg
             )
-            # final_audio_sr = model_sr
 
         if not isinstance(final_audio, AudioLoader):
             if audio_type == 'torch':
@@ -295,7 +309,7 @@ def transcribe_any(
                 final_audio = torch.from_numpy(final_audio)
             if final_audio.ndim < 2:
                 final_audio = final_audio[None]
-            torchaudio.save(temp_file, final_audio, model_sr)
+            torchaudio.save(temp_file, final_audio.cpu(), final_audio_sr)
             final_audio = temp_audio_file = temp_file
 
         elif isinstance(final_audio, bytes):
@@ -311,7 +325,7 @@ def transcribe_any(
             if final_audio.ndim < 2:
                 final_audio = final_audio[None]
             with io.BytesIO() as f:
-                torchaudio.save(f, final_audio, model_sr, format="wav")
+                torchaudio.save(f, final_audio.cpu(), final_audio_sr, format="wav")
                 f.seek(0)
                 final_audio = f.read()
 
@@ -331,7 +345,7 @@ def transcribe_any(
                 audio, vad,
                 vad_onnx=vad_onnx, vad_threshold=vad_threshold,
                 q_levels=q_levels, k_size=k_size,
-                sample_rate=get_sr(audio, audio_sr, set_audio_sr), min_word_dur=min_word_dur,
+                sample_rate=curr_audio_sr(True), min_word_dur=min_word_dur,
                 word_level=suppress_word_ts, verbose=True,
                 nonspeech_error=nonspeech_error,
                 use_word_position=use_word_position

@@ -10,7 +10,6 @@ from ..utils import safe_print, isolate_useful_options
 from ..audio import audioloader_not_supported, convert_demucs_kwargs
 
 from whisper.tokenizer import LANGUAGES
-from whisper.audio import SAMPLE_RATE
 
 
 def faster_transcribe(
@@ -129,11 +128,15 @@ def faster_transcribe(
     denoiser, denoiser_options = convert_demucs_kwargs(
         denoiser, denoiser_options, demucs=demucs, demucs_options=demucs_options
     )
+    if not isinstance(audio, (str, bytes)):
+        if 'input_sr' not in extra_options:
+            extra_options['input_sr'] = model.feature_extractor.sampling_rate
+
     if denoiser or only_voice_freq:
         if 'audio_type' not in extra_options:
             extra_options['audio_type'] = 'numpy'
         if 'model_sr' not in extra_options:
-            extra_options['model_sr'] = SAMPLE_RATE
+            extra_options['model_sr'] = model.feature_extractor.sampling_rate
     faster_whisper_options = options
     faster_whisper_options['model'] = model
     faster_whisper_options['audio'] = audio

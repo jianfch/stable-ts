@@ -11,7 +11,7 @@ from .stabilization import suppress_silence, get_vad_silence_func, VAD_SAMPLE_RA
 from .stabilization.nonvad import audio2timings
 from .text_output import *
 from .utils import str_to_valid_type, format_timestamp, UnsortedException
-from .audio.utils import standardize_audio
+from .audio.utils import audio_to_tensor_resample
 from .default import get_min_word_dur, get_append_punctuations, get_prepend_punctuations
 
 
@@ -916,7 +916,7 @@ class WhisperResult:
         """
         min_word_dur = get_min_word_dur(min_word_dur)
         if vad:
-            audio = standardize_audio(audio, (sample_rate, VAD_SAMPLE_RATES[0]))
+            audio = audio_to_tensor_resample(audio, sample_rate, VAD_SAMPLE_RATES[0])
             sample_rate = VAD_SAMPLE_RATES[0]
             silent_timings = get_vad_silence_func(
                 onnx=vad_onnx,

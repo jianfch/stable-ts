@@ -1,6 +1,6 @@
 import subprocess
 import warnings
-from typing import Union, Optional, BinaryIO, Tuple
+from typing import Union, Optional, BinaryIO, Tuple, Iterable
 
 import numpy as np
 import torch
@@ -180,24 +180,38 @@ def get_samplerate(audiofile: Union[str, bytes]) -> Union[int, None]:
     return get_metadata(audiofile).get('sr')
 
 
+def audio_to_tensor_resample(
+        audio: Union[torch.Tensor, np.ndarray, str, bytes],
+        original_sample_rate: Optional[int] = None,
+        target_sample_rates: Optional[Union[int, Iterable[int]]] = None,
+        **kwargs
+) -> torch.Tensor:
+    """
+    Return ``audio`` as Tensor and resample as needed.
+    """
+    if target_sample_rates and isinstance(target_sample_rates, int):
+        target_sample_rates = [target_sample_rates]
+
+    if isinstance(audio, (str, bytes)):
+        if target_sample_rates:
+            original_sample_rate = target_sample_rates[0]
+        audio = load_audio(audio, sr=original_sample_rate,**kwargs)
+    elif not original_sample_rate:
+        original_sample_rate = SAMPLE_RATE
+    if isinstance(audio, np.ndarray):
+        audio = torch.from_numpy(audio)
+    audio = audio.float()
+
+    if target_sample_rates and original_sample_rate not in target_sample_rates:
+        audio = resample(audio, original_sample_rate, target_sample_rates[0])
+
+    return audio
+
+
 def standardize_audio(
         audio: Union[torch.Tensor, np.ndarray, str, bytes],
         resample_sr: Tuple[Optional[int], Union[int, Tuple[int]]] = None,
 ) -> torch.Tensor:
-    """
-    Return ``audio`` as Tensor.
-    """
-    if isinstance(audio, (str, bytes)):
-        audio = load_audio(audio)
-    if isinstance(audio, np.ndarray):
-        audio = torch.from_numpy(audio)
-    audio = audio.float()
-    if resample_sr:
-        in_sr, out_sr = resample_sr
-        if in_sr:
-            if isinstance(out_sr, int):
-                out_sr = [out_sr]
-            if in_sr not in out_sr:
-                audio = resample(audio, in_sr, out_sr[0])
-
-    return audio
+    warnings.warn('This `standardize_audio()` is deprecated and will be removed. '
+                  'Use `stable_whisper.audio.utils.audio_to_tensor_resample()` instead.')
+    return audio_to_tensor_resample(audio, *(resample_sr or ()))

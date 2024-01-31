@@ -435,6 +435,26 @@ Docstring:
 
 </details>
 
+
+<details>
+<summary>Hugging Face Transformers (~9x faster)</summary>
+
+Run Whisper up to 9x faster with [Hugging Face Transformer](https://huggingface.co/openai/whisper-large-v3):
+```python
+model = stable_whisper.load_hf_whisper('base')
+result = model.transcribe('audio.mp3')
+```
+
+<details>
+<summary>CLI</summary>
+
+```commandline
+NOT IMPLEMETED YET
+```
+</details>
+
+</details>
+
 ### Output
 
 https://github.com/jianfch/stable-ts/assets/28970749/c22dcdf9-79cb-485a-ae38-184d006e513e

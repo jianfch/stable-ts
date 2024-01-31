@@ -5,7 +5,7 @@ import torch
 from torch.nn import functional as F
 
 from .utils import mask2timing, timing2mask
-from ..audio.utils import standardize_audio
+from ..audio.utils import audio_to_tensor_resample
 
 from whisper.audio import N_SAMPLES_PER_TOKEN
 
@@ -49,7 +49,7 @@ def wav2mask(
     """
     Generate 1D mask from waveform for suppressing timestamp tokens.
     """
-    audio = standardize_audio(audio, (sr, NONVAD_SAMPLE_RATES))
+    audio = audio_to_tensor_resample(audio, sr, NONVAD_SAMPLE_RATES)
     loudness_tensor = audio2loudness(audio)
     if loudness_tensor is None:
         return

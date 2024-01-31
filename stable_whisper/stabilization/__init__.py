@@ -7,7 +7,7 @@ import numpy as np
 from .nonvad import NONVAD_SAMPLE_RATES, audio2loudness, wav2mask, visualize_mask
 from .silero_vad import VAD_SAMPLE_RATES, load_silero_vad_model, compute_vad_probs, assert_sr_window
 from .utils import is_ascending_sequence, valid_ts, mask2timing, timing2mask
-from ..audio.utils import standardize_audio
+from ..audio.utils import audio_to_tensor_resample
 from ..default import get_min_word_dur
 
 from whisper.audio import SAMPLE_RATE, FRAMES_PER_SECOND, N_SAMPLES_PER_TOKEN
@@ -385,7 +385,7 @@ def visualize_suppression(
     audio = loader.next_chunk(0) if max_width != -1 else loader._buffered_samples
     loader.terminate()
 
-    audio = standardize_audio(audio)
+    audio = audio_to_tensor_resample(audio)
     if max_n_samples is None:
         max_width = audio.shape[-1]
     else:

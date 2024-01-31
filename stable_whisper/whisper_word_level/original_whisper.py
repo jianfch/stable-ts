@@ -771,6 +771,9 @@ def transcribe_minimal(
     denoiser, denoiser_options = convert_demucs_kwargs(
         denoiser, denoiser_options, demucs=demucs, demucs_options=demucs_options
     )
+    if not isinstance(audio, (str, bytes)):
+        if 'input_sr' not in extra_options:
+            extra_options['input_sr'] = SAMPLE_RATE
 
     if denoiser or only_voice_freq:
         if 'audio_type' not in extra_options:
