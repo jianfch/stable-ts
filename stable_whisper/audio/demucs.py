@@ -3,6 +3,8 @@ from typing import Union, Optional
 
 import torch
 
+from .utils import load_audio
+from ..audio.utils import resample
 from ..default import cached_model_instances
 
 
@@ -163,12 +165,10 @@ def demucs_audio(
         model = load_demucs_model()
 
     if isinstance(audio, (str, bytes)):
-        from .utils import load_audio
         audio = torch.from_numpy(load_audio(audio, model.samplerate))
     elif input_sr != model.samplerate:
         if input_sr is None:
             raise ValueError('No ``input_sr`` specified for audio tensor.')
-        from ..audio.utils import resample
         audio = resample(audio, input_sr, model.samplerate)
     audio_dims = audio.dim()
     assert audio_dims <= 3
@@ -176,9 +176,6 @@ def demucs_audio(
         audio = audio[[None]*dims_missing]
     if audio.shape[-2] == 1:
         audio = audio.repeat_interleave(2, -2)
-
-    if 'mix' in demucs_options:
-        audio = demucs_options.pop('mix')
 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -200,7 +197,6 @@ def demucs_audio(
         torch.cuda.empty_cache()
 
     if output_sr is not None and model.samplerate != output_sr:
-        from ..audio.utils import resample
         vocals = resample(vocals, model.samplerate, output_sr)
 
     if save_path is not None:

@@ -66,6 +66,12 @@ def cli():
             return extra_options
         options.update(extra_options)
 
+    def url_to_path(url: str):
+        if '://' in url:
+            from urllib.parse import urlparse
+            return urlparse(url).path.strip('/')
+        return url
+
     OUTPUT_FORMATS_METHODS = {
         "srt": "to_srt_vtt",
         "ass": "to_ass",
@@ -323,6 +329,11 @@ def cli():
     parser.add_argument('--faster_whisper', '-fw', action='store_true',
                         help='whether to use faster-whisper (https://github.com/guillaumekln/faster-whisper); '
                              'note: some features may not be available')
+    parser.add_argument('--huggingface_whisper', '-hw', action='store_true',
+                        help='whether to run Whisper on Hugging Face Transformers for more speed than faster-whisper'
+                             ' and even more speed with Flash Attention enabled on supported GPUs'
+                             '(https://huggingface.co/openai/whisper-large-v3); '
+                             'note: some features may not be available')
 
     args = parser.parse_args().__dict__
     debug = args.pop('debug')
@@ -330,6 +341,9 @@ def cli():
         raise ValueError('langauge is required for --align / --locate')
 
     is_faster_whisper = args.pop('faster_whisper')
+    is_hf_whisper = args.pop('huggingface_whisper')
+    assert not (is_faster_whisper and is_hf_whisper), f'--huggingface_whisper cannot be used with --faster_whisper'
+    is_original_whisper = not (is_faster_whisper or is_hf_whisper)
     model_name: str = args.pop("model")
     model_dir: str = args.pop("model_dir")
     inputs: List[Union[str, torch.Tensor]] = args.pop("inputs")
@@ -357,13 +371,29 @@ def cli():
     if args['reverse_text']:
         args['reverse_text'] = (args.get('prepend_punctuations'), args.get('append_punctuations'))
 
-    if is_faster_whisper:
+    if is_original_whisper:
+        model_type_name = 'Whisper'
+        from .original_whisper import load_model as load_model_func
+        model_name_kwarg = dict(name=model_name)
+    else:
+        if is_faster_whisper:
+            model_type_name = 'Faster-Whisper'
+            from .faster_whisper import load_faster_whisper as load_model_func
+            model_name_kwarg = dict(model_size_or_path=model_name)
+        else:
+            model_type_name = 'Hugging Face Whisper'
+            from .hf_whisper import load_hf_whisper as load_model_func
+            model_name_kwarg = dict(model_name=model_name)
+
         if args.get('transcribe_method') == 'transcribe_minimal':
-            warnings.warn('Faster-Whisper models already run on a version of transcribe_minimal. '
+            warnings.warn(f'{model_type_name} models already run on a version of transcribe_minimal. '
                           '--transcribe_method "transcribe_minimal" will be ignored.')
-            args['transcribe_method'] = 'transcribe'
         if args.get('refine'):
-            raise NotImplementedError('--refine is not supported for Faster-Whisper models.')
+            raise NotImplementedError(f'--refine is not supported for {model_type_name} models.')
+        if strings_to_locate:
+            raise NotImplementedError(f'--locate is not supported for {model_type_name} models.')
+        if is_faster_whisper:
+            args['transcribe_method'] = 'transcribe_stable'
 
     if regroup:
         try:
@@ -437,7 +467,7 @@ def cli():
 
     def finalize_outputs(input_file: str, _output: str = None, _alignment: str = None) -> List[str]:
         _curr_output_formats = curr_output_formats.copy()
-        basename, ext = splitext(_output or input_file)
+        basename, ext = splitext(_output or url_to_path(input_file))
         ext = ext[1:]
         if _output:
             if ext.lower() in OUTPUT_FORMATS:
@@ -498,8 +528,7 @@ def cli():
     if show_curr_task:
         model_from_str = '' if model_dir is None else f' from {model_dir}'
         model_loading_str = (
-            f'{"Faster-Whisper" if is_faster_whisper else "Whisper"} '
-            f'{model_name} model {model_from_str}'
+            f'{model_type_name} {model_name} model {model_from_str}'
         )
         print(f'Loading {model_loading_str}\r', end='\n' if debug else '')
     else:
@@ -512,16 +541,11 @@ def cli():
         nonlocal model
         if model is None:
             model_options = dict(
-                name=model_name,
-                model_size_or_path=model_name,
                 device=args.get('device'),
                 download_root=model_dir,
                 dq=dq,
             )
-            if is_faster_whisper:
-                from .faster_whisper import load_faster_whisper as load_model_func
-            else:
-                from .original_whisper import load_model as load_model_func
+            model_options.update(model_name_kwarg)
             model_options = isolate_useful_options(model_options, load_model_func)
             update_options_with_args('model_option', model_options)
             model = call_method_with_options(load_model_func, model_options)
@@ -549,15 +573,13 @@ def cli():
                         text = f.read()
                 args['text'] = text
                 transcribe_method = 'align'
-            if is_faster_whisper and transcribe_method == 'transcribe':
-                transcribe_method = 'transcribe_stable'
             if strings_to_locate and (text := strings_to_locate[i]):
                 args['text'] = text
                 transcribe_method = 'locate'
                 skip_output = args['verbose'] = True
             transcribe_method = getattr(model, transcribe_method)
             transcribe_options = isolate_useful_options(args, transcribe_method)
-            if not text:
+            if not text and not is_hf_whisper:
                 decoding_options = (
                     isolate_useful_options(args, model.transcribe if is_faster_whisper else DecodingOptions)
                 )

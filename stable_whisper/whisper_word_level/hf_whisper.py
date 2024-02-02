@@ -3,7 +3,7 @@ from typing import Optional, Union
 import numpy as np
 import torch
 
-from ..audio import convert_demucs_kwargs
+from ..audio import convert_demucs_kwargs, prep_audio
 from ..non_whisper import transcribe_any
 
 
@@ -122,9 +122,12 @@ class WhisperHF:
             demucs=options.pop('demucs', None), demucs_options=options.pop('demucs_options', None)
         )
 
-        if not isinstance(audio, (str, bytes)):
-            if 'input_sr' not in options:
-                options['input_sr'] = self.sampling_rate
+        if isinstance(audio, (str, bytes)):
+            audio = prep_audio(audio, sr=self.sampling_rate).numpy()
+            options['input_sr'] = self.sampling_rate
+
+        if 'input_sr' not in options:
+            options['input_sr'] = self.sampling_rate
 
         if denoiser or only_voice_freq:
             if 'audio_type' not in options:

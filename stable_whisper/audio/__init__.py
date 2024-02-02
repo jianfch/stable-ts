@@ -8,6 +8,7 @@ from .utils import (
     is_ytdlp_available, load_source, load_audio, voice_freq_filter, get_samplerate, get_metadata
 )
 from .demucs import is_demucs_available, load_demucs_model, demucs_audio
+from .dfnet import is_dfnet_available, load_dfnet_model, dfnet_audio
 from .output import save_audio_tensor
 from ..utils import update_options
 
@@ -15,7 +16,8 @@ from whisper.audio import SAMPLE_RATE
 
 
 SUPPORTED_DENOISERS = {
-    'demucs': {'run': demucs_audio, 'load': load_demucs_model, 'access': is_demucs_available}
+    'demucs': {'run': demucs_audio, 'load': load_demucs_model, 'access': is_demucs_available},
+    'dfnet': {'run': dfnet_audio, 'load': load_dfnet_model, 'access': is_dfnet_available}
 }
 
 
@@ -248,7 +250,7 @@ class AudioLoader:
         if not self._denoiser:
             return None, None
         model = get_denoiser_func(self._denoiser, 'load')(True)
-        length = int(model.segment * self._sr)
+        length = int(getattr(model, 'segment', 5) * self._sr)
         return model, length
 
     def check_min_chunk_requirement(self):
@@ -384,11 +386,11 @@ class AudioLoader:
                 if self._final_save_path:
                     warnings.warn('Both ``save_path`` in AudioLoad and ``denoiser_options`` were specified, '
                                   'but only the final audio will be saved for ``stream=True`` in either case. '
-                                  'So AudioLoad will take priority over ``denoiser_options`` for ``save_path``.',
+                                  '``denoiser_options`` will be prioritized for ``save_path``.',
                                   stacklevel=2)
-                    self._denoised_save_path = None
                 else:
                     self._final_save_path = self._denoised_save_path
+                self._denoised_save_path = None
 
             denoise_func = get_denoiser_func(self._denoiser, 'run')
 

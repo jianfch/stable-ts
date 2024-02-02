@@ -16,6 +16,9 @@ cached_model_instances = dict(
     silero_vad={
         True: None,
         False: None
+    },
+    dfnet={
+        'dfnet': None
     }
 )
 
