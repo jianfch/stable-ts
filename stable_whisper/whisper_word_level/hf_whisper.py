@@ -34,14 +34,36 @@ def get_device(device: str = None) -> str:
 
 
 def load_hf_pipe(model_name: str, device: str = None, flash: bool = False):
-    from transformers import pipeline
-    model_kwargs = {'attn_implementation': 'flash_attention_2'} if flash else {'attn_implementation': 'sdpa'}
+    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
+    device = get_device(device)
+    is_cpu = (device if isinstance(device, str) else getattr(device, 'type', None)) == 'cpu'
+    dtype = torch.float32 if is_cpu or not torch.cuda.is_available() else torch.float16
+    model_id = HF_MODELS.get(model_name, model_name)
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_id,
+        torch_dtype=dtype,
+        low_cpu_mem_usage=True,
+        use_safetensors=True,
+        use_flash_attention_2=flash
+    ).to(device)
+
+    processor = AutoProcessor.from_pretrained(model_id)
+
+    if not flash:
+        try:
+            model = model.to_bettertransformer()
+        except ValueError:
+            pass
+
     pipe = pipeline(
-        'automatic-speech-recognition',
-        model=HF_MODELS.get(model_name, model_name),
-        torch_dtype=torch.float16,
-        device=get_device(device),
-        model_kwargs=model_kwargs,
+        "automatic-speech-recognition",
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor,
+        max_new_tokens=128,
+        chunk_length_s=30,
+        torch_dtype=dtype,
+        device=device,
     )
 
     return pipe
@@ -71,7 +93,6 @@ class WhisperHF:
             print(f'Transcribing with Hugging Face Whisper ({self._model_name})...')
         result = self._pipe(
             audio,
-            chunk_length_s=30,
             batch_size=batch_size,
             generate_kwargs=generate_kwargs,
             return_timestamps='word' if word_timestamps else True,
