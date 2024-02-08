@@ -5,6 +5,7 @@ import torch
 
 from ..audio import convert_demucs_kwargs, prep_audio
 from ..non_whisper import transcribe_any
+from ..utils import isolate_useful_options
 
 
 HF_MODELS = {
@@ -86,9 +87,11 @@ class WhisperHF:
             task: str = None,
             batch_size: int = 24,
             word_timestamps=True,
-            verbose: Optional[bool] = False
+            verbose: Optional[bool] = False,
+            **kwargs
     ):
         generate_kwargs = {'task': task or 'transcribe', 'language': language}
+        generate_kwargs.update(kwargs)
         if verbose is not None:
             print(f'Transcribing with Hugging Face Whisper ({self._model_name})...')
         result = self._pipe(
@@ -186,23 +189,25 @@ class WhisperHF:
             check_sorted: bool = True,
             **options
     ):
+        transcribe_any_options = isolate_useful_options(options, transcribe_any, pop=True)
         denoiser, denoiser_options = convert_demucs_kwargs(
             denoiser, denoiser_options,
-            demucs=options.pop('demucs', None), demucs_options=options.pop('demucs_options', None)
+            demucs=transcribe_any_options.pop('demucs', None),
+            demucs_options=transcribe_any_options.pop('demucs_options', None)
         )
 
         if isinstance(audio, (str, bytes)):
             audio = prep_audio(audio, sr=self.sampling_rate).numpy()
-            options['input_sr'] = self.sampling_rate
+            transcribe_any_options['input_sr'] = self.sampling_rate
 
-        if 'input_sr' not in options:
-            options['input_sr'] = self.sampling_rate
+        if 'input_sr' not in transcribe_any_options:
+            transcribe_any_options['input_sr'] = self.sampling_rate
 
         if denoiser or only_voice_freq:
-            if 'audio_type' not in options:
-                options['audio_type'] = 'numpy'
-            if 'model_sr' not in options:
-                options['model_sr'] = self.sampling_rate
+            if 'audio_type' not in transcribe_any_options:
+                transcribe_any_options['audio_type'] = 'numpy'
+            if 'model_sr' not in transcribe_any_options:
+                transcribe_any_options['model_sr'] = self.sampling_rate
 
         inference_kwargs = dict(
             audio=audio,
@@ -210,7 +215,8 @@ class WhisperHF:
             task=task,
             batch_size=batch_size,
             word_timestamps=word_timestamps,
-            verbose=verbose
+            verbose=verbose,
+            **options
         )
         return transcribe_any(
             inference_func=self._inner_transcribe,
@@ -234,7 +240,7 @@ class WhisperHF:
             only_ffmpeg=only_ffmpeg,
             force_order=True,
             check_sorted=check_sorted,
-            **options
+            **transcribe_any_options
         )
 
 
