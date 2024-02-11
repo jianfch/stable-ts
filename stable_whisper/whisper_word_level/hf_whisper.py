@@ -29,8 +29,8 @@ def get_device(device: str = None) -> str:
         return device
     if torch.cuda.is_available():
         return 'cuda:0'
-    if (mps := getattr(torch.backends, 'mps', None)) is not None:
-        return mps.is_available()
+    if (mps := getattr(torch.backends, 'mps', None)) is not None and mps.is_available():
+        return 'mps'
     return 'cpu'
 
 
