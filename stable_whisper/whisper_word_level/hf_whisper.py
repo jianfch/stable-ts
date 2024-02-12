@@ -72,34 +72,49 @@ def load_hf_pipe(model_name: str, device: str = None, flash: bool = False):
 
 class WhisperHF:
 
-    def __init__(self, model_name: str, device: str = None, flash: bool = False):
+    def __init__(self, model_name: str, device: str = None, flash: bool = False, pipeline=None):
         self._model_name = model_name
-        self._pipe = load_hf_pipe(self._model_name, device, flash=flash)
+        self._pipe = load_hf_pipe(self._model_name, device, flash=flash) if pipeline is None else pipeline
+        self._model_name = getattr(self._pipe.model, 'name_or_path', self._model_name)
 
     @property
     def sampling_rate(self):
         return self._pipe.feature_extractor.sampling_rate
 
+    @property
+    def model_name(self):
+        if self._model_name is None:
+            return getattr(self._pipe.model, 'name_or_path', 'n/a')
+        return self._model_name
+
     def _inner_transcribe(
             self,
             audio: Union[str, bytes, np.ndarray],
-            language: str = None,
-            task: str = None,
-            batch_size: int = 24,
+            language: Optional[str] = None,
+            task: Optional[str] = 'transcribe',
+            batch_size: Optional[int] = 24,
             word_timestamps=True,
             verbose: Optional[bool] = False,
             **kwargs
     ):
-        generate_kwargs = {'task': task or 'transcribe', 'language': language}
+        generate_kwargs = {}
+        if self.model_name.endswith('en'):
+            language = task = None
+        if task is not None:
+            generate_kwargs['task'] = task
+        if language is not None:
+            generate_kwargs['language'] = language
         generate_kwargs.update(kwargs)
         if verbose is not None:
-            print(f'Transcribing with Hugging Face Whisper ({self._model_name})...')
-        result = self._pipe(
-            audio,
-            batch_size=batch_size,
+            print(f'Transcribing with Hugging Face Whisper ({self.model_name})...')
+        pipe_kwargs = dict(
             generate_kwargs=generate_kwargs,
-            return_timestamps='word' if word_timestamps else True,
-        )['chunks']
+            return_timestamps='word' if word_timestamps else True
+        )
+        if batch_size is not None:
+            pipe_kwargs['batch_size'] = batch_size
+        output = self._pipe(audio, **pipe_kwargs)
+        result = output['chunks']
         if verbose is not None:
             print(f'Transcription completed.')
 
@@ -166,9 +181,9 @@ class WhisperHF:
             self,
             audio: Union[str, bytes, np.ndarray],
             *,
-            language: str = None,
-            task: str = None,
-            batch_size: int = 24,
+            language: Optional[str] = None,
+            task: Optional[str] = 'transcribe',
+            batch_size: Optional[int] = 24,
             word_timestamps: bool = True,
             verbose: Optional[bool] = False,
             regroup: Union[bool, str] = True,
@@ -244,5 +259,5 @@ class WhisperHF:
         )
 
 
-def load_hf_whisper(model_name: str, device: str = None, flash: bool = False):
-    return WhisperHF(model_name, device, flash=flash)
+def load_hf_whisper(model_name: str, device: str = None, flash: bool = False, pipeline=None):
+    return WhisperHF(model_name, device, flash=flash, pipeline=pipeline)
