@@ -199,7 +199,7 @@ def _inner_transcribe(model, audio, verbose, **faster_transcribe_options):
             else:
                 del segment['words']
             if verbose:
-                safe_print(Segment(**segment).to_display_str())
+                safe_print(Segment(**segment, ignore_unused_args=True).to_display_str())
             final_segments.append(segment)
             update_pbar(segment["end"])
         update_pbar(tqdm_pbar.total)

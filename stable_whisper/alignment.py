@@ -13,7 +13,6 @@ from .audio import prep_audio, AudioLoader, audioloader_not_supported, convert_d
 from .utils import safe_print, format_timestamp
 from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
 from .stabilization import NonSpeechPredictor
-from .stabilization.silero_vad import VAD_WINDOWS
 from .default import get_min_word_dur, get_prepend_punctuations, get_append_punctuations
 
 import whisper
@@ -551,7 +550,8 @@ def align(
             min_word_dur=min_word_dur,
             word_level=suppress_word_ts,
             nonspeech_error=nonspeech_error,
-            use_word_position=use_word_position
+            use_word_position=use_word_position,
+            verbose=verbose is not None
         )
         result.update_nonspeech_sections(*nonspeech_timings)
     if not original_split:
@@ -1286,8 +1286,7 @@ def locate(
                     num_samples=round(curr_end*SAMPLE_RATE),
                     gap_padding=None
                 )
-                segment = Segment(0, 0, '', words=segment['words'])
-                segment.update_seg_with_words()
+                segment = Segment(words=segment['words'])
                 seek_sample += round(segment.words[-1].end * SAMPLE_RATE)
                 segment.offset_time(seek)
                 segment.seek = curr_start

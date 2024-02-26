@@ -3,9 +3,10 @@ import re
 import torch
 import numpy as np
 from typing import Union, List, Tuple, Optional, Callable
-from dataclasses import dataclass
 from copy import deepcopy
 from itertools import chain
+
+from tqdm import tqdm
 
 from .stabilization import suppress_silence, get_vad_silence_func, VAD_SAMPLE_RATES
 from .stabilization.nonvad import audio2timings
@@ -36,67 +37,138 @@ def _increment_attr(obj: object, attr: str, val: Union[int, float]):
         setattr(obj, attr, curr_val + val)
 
 
-@dataclass
+def _round_timestamp(ts: Union[float, None]):
+    if not ts:
+        return ts
+    return round(ts, 3)
+
+
 class WordTiming:
-    word: str
-    start: float
-    end: float
-    probability: float = None
-    tokens: List[int] = None
-    left_locked: bool = False
-    right_locked: bool = False
-    segment_id: Optional[int] = None
-    id: Optional[int] = None
+
+    def __init__(
+            self,
+            word: str,
+            start: float,
+            end: float,
+            probability: Optional[float] = None,
+            tokens: Optional[List[int]] = None,
+            left_locked: bool = False,
+            right_locked: bool = False,
+            segment_id: Optional[int] = None,
+            id: Optional[int] = None,
+            segment: Optional['Segment'] = None,
+            round_ts: bool = True,
+            ignore_unused_args: bool = False
+    ):
+        if not ignore_unused_args and segment_id is not None:
+            warnings.warn('The parameter ``segment_id`` is ignored. '
+                          'Specify the current segment instance with ``segment``.',
+                          stacklevel=2)
+        self.round_ts = round_ts
+        self.word = word
+        self._start = self.round(start)
+        self._end = self.round(end)
+        self.probability = probability
+        self.tokens = tokens
+        self.left_locked = left_locked
+        self.right_locked = right_locked
+        self.segment = segment
+        self.id = id
+
+    def __repr__(self):
+        return f'WordTiming(start={self.start}, end={self.end}, word="{self.word}")'
 
     def __len__(self):
         return len(self.word)
 
     def __add__(self, other: 'WordTiming'):
-        self_copy = deepcopy(self)
-
-        self_copy.start = min(self_copy.start, other.start)
-        self_copy.end = max(other.end, self_copy.end)
-        self_copy.word += other.word
-        self_copy.left_locked = self_copy.left_locked or other.left_locked
-        self_copy.right_locked = self_copy.right_locked or other.right_locked
+        self_copy = WordTiming(
+            word=self.word + other.word,
+            start=min(self.start, other.start),
+            end=max(self.end, other.end),
+            probability=self.probability,
+            tokens=None if self.tokens is None else self.tokens.copy(),
+            left_locked=self.left_locked or other.left_locked,
+            right_locked=self.right_locked or other.right_locked,
+            id=self.id,
+            segment=self.segment
+        )
         _combine_attr(self_copy, other, 'probability')
         _combine_attr(self_copy, other, 'tokens')
 
         return self_copy
 
     def __deepcopy__(self, memo=None):
+        return self.copy(copy_tokens=True)
+
+    def __copy__(self):
         return self.copy()
 
-    def copy(self):
+    def copy(
+            self,
+            keep_segment: bool = False,
+            copy_tokens: bool = False
+    ):
         return WordTiming(
             word=self.word,
             start=self.start,
             end=self.end,
             probability=self.probability,
-            tokens=None if self.tokens is None else self.tokens.copy(),
+            tokens=None if (self.tokens is None) else (self.tokens.copy() if copy_tokens else self.tokens),
             left_locked=self.left_locked,
             right_locked=self.right_locked,
-            segment_id=self.segment_id,
-            id=self.id
+            id=self.id,
+            segment=self.segment if keep_segment else None,
+            round_ts=self.round_ts
         )
+
+    def round(self, timestamp: float) -> float:
+        if not self.round_ts:
+            return timestamp
+        return _round_timestamp(timestamp)
+
+    @property
+    def start(self):
+        return self._start
+
+    @property
+    def end(self):
+        return self._end
+
+    @start.setter
+    def start(self, val):
+        self._start = self.round(val)
+
+    @end.setter
+    def end(self, val):
+        self._end = self.round(val)
+
+    @property
+    def segment_id(self):
+        return None if self.segment is None else self.segment.id
 
     @property
     def duration(self):
-        return round(self.end - self.start, 3)
+        return self.round(self.end - self.start)
 
     def round_all_timestamps(self):
-        self.start = round(self.start, 3)
-        self.end = round(self.end, 3)
+        warnings.warn('``.round_all_timestamps()`` is deprecated and will be removed in future versions. '
+                      'Use ``.round_ts=True`` to round timestamps by default instead.',
+                      stacklevel=2)
+        self.round_ts = True
 
     def offset_time(self, offset_seconds: float):
-        self.start = round(self.start + offset_seconds, 3)
-        self.end = round(self.end + offset_seconds, 3)
+        self.start = self.start + offset_seconds
+        self.end = self.end + offset_seconds
 
     def to_dict(self):
-        dict_ = deepcopy(self).__dict__
-        dict_.pop('left_locked')
-        dict_.pop('right_locked')
-        return dict_
+        return dict(
+            word=self.word,
+            start=self.start,
+            end=self.end,
+            probability=self.probability,
+            tokens=None if self.tokens is None else self.tokens.copy()
+        )
 
     def lock_left(self):
         self.left_locked = True
@@ -122,8 +194,8 @@ class WordTiming:
         return self
 
     def rescale_time(self, scale_factor: float):
-        self.start = round(self.start * scale_factor, 3)
-        self.end = round(self.end * scale_factor, 3)
+        self.start = self.start * scale_factor
+        self.end = self.end * scale_factor
 
     def clamp_max(self, max_dur: float, clip_start: bool = False, verbose: bool = False):
         if self.duration > max_dur:
@@ -140,13 +212,18 @@ class WordTiming:
                 self.end = new_end
 
     def set_segment(self, segment: 'Segment'):
-        self._segment = segment
+        warnings.warn('``.set_segment(current_segment_instance)`` is deprecated and will be removed in future versions.'
+                      ' Use ``.segment = current_segment`` instead.',
+                      stacklevel=2)
+        self.segment = segment
 
     def get_segment(self) -> Union['Segment', None]:
         """
         Return instance of :class:`stable_whisper.result.Segment` that this instance is a part of.
         """
-        return getattr(self, '_segment', None)
+        warnings.warn('``.get_segment()`` will be removed in future versions. Use ``.segment`` instead.',
+                      stacklevel=2)
+        return self.segment
 
 
 def _words_by_lock(words: List[WordTiming], only_text: bool = False, include_single: bool = False):
@@ -166,20 +243,67 @@ def _words_by_lock(words: List[WordTiming], only_text: bool = False, include_sin
     return all_words
 
 
-@dataclass
 class Segment:
-    start: float
-    end: float
-    text: str
-    seek: float = None
-    tokens: List[int] = None
-    temperature: float = None
-    avg_logprob: float = None
-    compression_ratio: float = None
-    no_speech_prob: float = None
-    words: Union[List[WordTiming], List[dict]] = None
-    ori_has_words: bool = None
-    id: int = None
+
+    def __init__(
+            self,
+            start: Optional[float] = None,
+            end: Optional[float] = None,
+            text: Optional[str] = None,
+            seek: Optional[float] = None,
+            tokens: List[int] = None,
+            temperature: Optional[float] = None,
+            avg_logprob: Optional[float] = None,
+            compression_ratio: Optional[float] = None,
+            no_speech_prob: Optional[float] = None,
+            words: Optional[Union[List[WordTiming], List[dict]]] = None,
+            id: Optional[int] = None,
+            result: Optional["WhisperResult"] = None,
+            round_ts: bool = True,
+            ignore_unused_args: bool = False
+    ):
+        if words:
+            if ignore_unused_args:
+                start = end = text = tokens = None
+            else:
+                if (start or end) is not None:
+                    warnings.warn('Arguments for ``start`` and ``end`` will be ignored '
+                                  'and the ``start`` and ``end`` will taken from the first and last ``words``.',
+                                  stacklevel=2)
+                if text is not None:
+                    warnings.warn('The argument for ``text`` will be ignored '
+                                  'and it will always be the concatenation of text in ``words``',
+                                  stacklevel=2)
+                if tokens is not None:
+                    warnings.warn('The argument for ``tokens`` will be ignored '
+                                  'and it will always be the concatenation of tokens in ``words``',
+                                  stacklevel=2)
+        self.round_ts = round_ts
+        self._default_start = self.round(start) if start else 0.0
+        self._default_end = self.round(end) if end else 0.0
+        self._default_text = text or ''
+        self._default_tokens = tokens or []
+        self.seek = seek
+        self.temperature = temperature
+        self.avg_logprob = avg_logprob
+        self.compression_ratio = compression_ratio
+        self.no_speech_prob = no_speech_prob
+        self.words = words
+        if self.words and isinstance(words[0], dict):
+            self.words = [
+                WordTiming(
+                    **word,
+                    segment=self,
+                    round_ts=self.round_ts,
+                    ignore_unused_args=True
+                ) for word in self.words
+            ]
+        self.id = id
+        self._reversed_text = False
+        self.result = result
+
+    def __repr__(self):
+        return f'Segment(start={self.start}, end={self.end}, text="{self.text}")'
 
     def __getitem__(self, index: int) -> WordTiming:
         if self.words is None:
@@ -190,33 +314,55 @@ class Segment:
         if self.words is None:
             raise ValueError('segment contains no words')
         del self.words[index]
-        self.reassign_ids()
-        self.update_seg_with_words()
+        self.reassign_ids(index)
 
     def __deepcopy__(self, memo=None):
+        return self.copy(copy_words=True, copy_tokens=True)
+
+    def __copy__(self):
         return self.copy()
 
-    def copy(self, new_words: Optional[List[WordTiming]] = None):
+    def copy(
+            self,
+            new_words: Optional[List[WordTiming]] = None,
+            keep_result: bool = False,
+            copy_words: bool = False,
+            copy_tokens: bool = False
+    ):
         if new_words is None:
-            words = None if self.words is None else [w.copy() for w in self.words]
+            if self.has_words:
+                words = [w.copy(copy_tokens=copy_tokens) for w in self.words] if copy_words else self.has_words
+            else:
+                words = None
+            def_start = self._default_start
+            def_end = self._default_end
+            def_text = self._default_text
+            def_tokens = self._default_tokens
         else:
-            words = [w.copy() for w in new_words]
-
+            words = [w.copy(copy_tokens=copy_tokens) for w in new_words] if copy_words else new_words
+            def_start = def_end = def_text = def_tokens = None
         new_seg = Segment(
-            start=self.start,
-            end=self.end,
-            text=self.text,
+            start=def_start,
+            end=def_end,
+            text=def_text,
             seek=self.seek,
-            tokens=self.tokens,
+            tokens=def_tokens,
             temperature=self.temperature,
             avg_logprob=self.avg_logprob,
             compression_ratio=self.compression_ratio,
             no_speech_prob=self.no_speech_prob,
             words=words,
-            id=self.id
+            id=self.id,
+            result=self.result if keep_result else None,
+            round_ts=self.round_ts,
+            ignore_unused_args=True
         )
-        new_seg.update_seg_with_words()
         return new_seg
+
+    def round(self, timestamp: float) -> float:
+        if not self.round_ts:
+            return timestamp
+        return _round_timestamp(timestamp)
 
     def to_display_str(self, only_segment: bool = False):
         line = f'[{format_timestamp(self.start)} --> {format_timestamp(self.end)}] "{self.text}"'
@@ -229,6 +375,53 @@ class Segment:
     @property
     def has_words(self):
         return bool(self.words)
+
+    @property
+    def ori_has_words(self):
+        return self.words is not None
+
+    @property
+    def start(self):
+        if self.has_words:
+            return self.words[0].start
+        return self._default_start
+
+    @property
+    def end(self):
+        if self.has_words:
+            return self.words[-1].end
+        return self._default_end
+
+    @start.setter
+    def start(self, val):
+        if self.end < val:
+            raise ValueError(f'Cannot set start of segment to {val}. '
+                             f'Start must be <= end {self.end} of the segment.')
+        if self.has_words:
+            self.words[0].start = val
+            return
+        self._default_start = self.round(val)
+
+    @end.setter
+    def end(self, val):
+        if self.start > val:
+            raise ValueError(f'Cannot set end of segment to {val}. '
+                             f'End must be >= start ({self.start}) of the segment.')
+        if self.has_words:
+            self.words[-1].end = val
+        self._default_end = self.round(val)
+
+    @property
+    def text(self) -> str:
+        if self.has_words:
+            return ''.join(word.word for word in self.words)
+        return self._default_text
+
+    @property
+    def tokens(self) -> List[int]:
+        if self.has_words and self.words[0].tokens:
+            return list(chain.from_iterable(word.tokens for word in self.words))
+        return self._default_tokens
 
     @property
     def duration(self):
@@ -244,35 +437,24 @@ class Segment:
             return sum(len(w) for w in self.words)
         return len(self.text)
 
-    def __post_init__(self):
-        if self.has_words:
-            self.words: List[WordTiming] = \
-                [WordTiming(**word) if isinstance(word, dict) else word for word in self.words]
-            for w in self.words:
-                w.set_segment(self)
-        if self.ori_has_words is None:
-            self.ori_has_words = self.has_words
-        self.round_all_timestamps()
+    def add(self, other: 'Segment', copy_words: bool = False):
+        if self.ori_has_words == other.ori_has_words:
+            words = (self.words + other.words) if self.ori_has_words else None
+        else:
+            self_state = 'with' if self.ori_has_words else 'without'
+            other_state = 'with' if other.ori_has_words else 'without'
+            raise ValueError(f'Can merge segment {self_state} words and a segment {other_state} words.')
 
-    def __add__(self, other: 'Segment'):
-        self_copy = deepcopy(self)
-
-        self_copy.start = min(self_copy.start, other.start)
-        self_copy.end = max(other.end, self_copy.end)
-        self_copy.text += other.text
-
-        _combine_attr(self_copy, other, 'tokens')
+        self_copy = self.copy(words, copy_words=copy_words)
         _combine_attr(self_copy, other, 'temperature')
         _combine_attr(self_copy, other, 'avg_logprob')
         _combine_attr(self_copy, other, 'compression_ratio')
         _combine_attr(self_copy, other, 'no_speech_prob')
-        if self_copy.has_words:
-            if other.has_words:
-                self_copy.words.extend(other.words)
-            else:
-                self_copy.words = None
 
         return self_copy
+
+    def __add__(self, other: 'Segment'):
+        return self.add(other, copy_words=True)
 
     def _word_operations(self, operation: str, *args, **kwargs):
         if self.has_words:
@@ -280,17 +462,19 @@ class Segment:
                 getattr(w, operation)(*args, **kwargs)
 
     def round_all_timestamps(self):
-        self.start = round(self.start, 3)
-        self.end = round(self.end, 3)
-        if self.has_words:
-            for word in self.words:
-                word.round_all_timestamps()
+        warnings.warn('``.round_all_timestamps()`` is deprecated and will be removed in future versions. '
+                      'Use ``.round_ts=True`` to round timestamps by default instead.',
+                      stacklevel=2)
+        self.round_ts = True
 
     def offset_time(self, offset_seconds: float):
-        self.start = round(self.start + offset_seconds, 3)
-        self.end = round(self.end + offset_seconds, 3)
-        _increment_attr(self, 'seek', offset_seconds)
-        self._word_operations('offset_time', offset_seconds)
+        if self.seek is not None:
+            self.seek += offset_seconds
+        if self.has_words:
+            self._word_operations('offset_time', offset_seconds)
+        else:
+            self.start = self.start + offset_seconds
+            self.end = self.end + offset_seconds
 
     def add_words(self, index0: int, index1: int, inplace: bool = False):
         if self.has_words:
@@ -302,12 +486,13 @@ class Segment:
             return new_word
 
     def rescale_time(self, scale_factor: float):
-        self.start = round(self.start * scale_factor, 3)
-        self.end = round(self.end * scale_factor, 3)
         if self.seek is not None:
-            self.seek = round(self.seek * scale_factor, 3)
-        self._word_operations('rescale_time', scale_factor)
-        self.update_seg_with_words()
+            self.seek *= scale_factor
+        if self.has_words:
+            self._word_operations('rescale_time', scale_factor)
+        else:
+            self.start = self.start * scale_factor
+            self.end = self.end * scale_factor
 
     def apply_min_dur(self, min_dur: float, inplace: bool = False):
         """
@@ -343,11 +528,13 @@ class Segment:
         """
         Return a copy with words reversed order per segment.
         """
+        warnings.warn('``_to_reverse_text()`` is deprecated and will be removed in future versions.',
+                      category=DeprecationWarning, stacklevel=2)
         prepend_punctuations = get_prepend_punctuations(prepend_punctuations)
         if prepend_punctuations and ' ' not in prepend_punctuations:
             prepend_punctuations += ' '
         append_punctuations = get_append_punctuations(append_punctuations)
-        self_copy = deepcopy(self)
+        self_copy = self.copy(copy_words=True)
         has_prepend = bool(prepend_punctuations)
         has_append = bool(append_punctuations)
         if has_prepend or has_append:
@@ -376,28 +563,35 @@ class Segment:
                         else:
                             break
                 word.word = f'{new_prepend}{word.word}{new_append[::-1]}'
-            self_copy.text = ''.join(w.word for w in reversed(word_objs))
+            self_copy._default_text = ''.join(w.word for w in reversed(word_objs))
 
         return self_copy
 
     def to_dict(self, reverse_text: Union[bool, tuple] = False):
         if reverse_text:
-            seg_dict = (
-                (self._to_reverse_text(*reverse_text)
-                 if isinstance(reverse_text, tuple) else
-                 self._to_reverse_text()).__dict__
-            )
+            warnings.warn('``reverse_text=True`` is deprecated and will be removed in future versions. '
+                          'RTL text playback issues are caused by the video player incorrectly parsing tags '
+                          '(note: tags come from ``segment_level=True + word_level=True``).')
+            segment = self._to_reverse_text(*(reverse_text if reverse_text else []))
         else:
-            seg_dict = deepcopy(self).__dict__
-        seg_dict.pop('ori_has_words')
-        if self.has_words:
-            seg_dict['words'] = [w.to_dict() for w in seg_dict['words']]
-        elif self.ori_has_words:
+            segment = self
+
+        seg_dict = dict(
+            start=segment.start,
+            end=segment.end,
+            text=segment.text,
+            seek=segment.seek,
+            tokens=None if segment.tokens is None else segment.tokens.copy(),
+            temperature=segment.temperature,
+            avg_logprob=segment.avg_logprob,
+            compression_ratio=segment.compression_ratio,
+            no_speech_prob=segment.no_speech_prob,
+        )
+
+        if segment.has_words:
+            seg_dict['words'] = [w.to_dict() for w in segment.words]
+        elif segment.ori_has_words:
             seg_dict['words'] = []
-        else:
-            seg_dict.pop('words')
-        if self.id is None:
-            seg_dict.pop('id')
         if reverse_text:
             seg_dict['reversed_text'] = True
         return seg_dict
@@ -432,24 +626,18 @@ class Segment:
     def unlock_all_words(self):
         self._word_operations('unlock_both')
 
-    def reassign_ids(self):
+    def reassign_ids(self, start: Optional[int] = None):
         if self.has_words:
-            for i, w in enumerate(self.words):
-                w.segment_id = self.id
-                w.id = i
+            for i, word in enumerate(self.words[start:], start or 0):
+                word.segment = self
+                word.id = i
 
     def update_seg_with_words(self):
-        if self.has_words:
-            self.start = self.words[0].start
-            self.end = self.words[-1].end
-            self.text = ''.join(w.word for w in self.words)
-            self.tokens = (
-                None
-                if any(w.tokens is None for w in self.words) else
-                [t for w in self.words for t in w.tokens]
-            )
-            for w in self.words:
-                w.set_segment(self)
+        warnings.warn('Attributes that required updating are now properties based on the ``words`` except for ``id``. '
+                      '``update_seg_with_words()`` is deprecated and will be removed in future versions. '
+                      'Use ``.reassign_ids()`` to manually update ids',
+                      stacklevel=2)
+        self.reassign_ids()
 
     def suppress_silence(self,
                          silent_starts: np.ndarray,
@@ -468,7 +656,6 @@ class Segment:
                 else:
                     keep_end = None
                 w.suppress_silence(silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)
-            self.update_seg_with_words()
         else:
             suppress_silence(self,
                              silent_starts,
@@ -607,21 +794,25 @@ class Segment:
         prev_i = 0
         for i in indices:
             i += 1
-            c = deepcopy(self)
-            c.words = c.words[prev_i:i]
-            c.update_seg_with_words()
-            seg_copies.append(c)
+            new_words = self.words[prev_i:i]
+            new_seg = self.copy(new_words, copy_words=False)
+            seg_copies.append(new_seg)
             prev_i = i
         return seg_copies
 
     def set_result(self, result: 'WhisperResult'):
-        self._result = result
+        warnings.warn('``.set_result(current_result_instance)`` is deprecated and will be removed in future versions. '
+                      'Use ``.result = current_result_instance`` instead.',
+                      stacklevel=2)
+        self.result = result
 
     def get_result(self) -> Union['WhisperResult', None]:
         """
         Return outer instance of :class:`stable_whisper.result.WhisperResult` that ``self`` is a part of.
         """
-        return getattr(self, '_result', None)
+        warnings.warn('``.get_result()`` will be removed in future versions. Use ``.result`` instead.',
+                      stacklevel=2)
+        return self.result
 
 
 class WhisperResult:
@@ -638,21 +829,24 @@ class WhisperResult:
         self.language = self.ori_dict.get('language')
         self._regroup_history = result.get('regroup_history', '')
         self._nonspeech_sections = result.get('nonspeech_sections', [])
-        segments = deepcopy(result.get('segments', self.ori_dict.get('segments')))
-        self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
+        segments = (result.get('segments', self.ori_dict.get('segments')) or {}).copy()
+        self.segments = [Segment(**s, ignore_unused_args=True) for s in segments] if segments else []
         self._forced_order = force_order
         if self._forced_order:
             self.force_order()
         self.raise_for_unsorted(check_sorted, show_unsorted)
         self.remove_no_word_segments(any(seg.has_words for seg in self.segments))
-        self.update_all_segs_with_words()
 
     def __getitem__(self, index: int) -> Segment:
         return self.segments[index]
 
     def __delitem__(self, index: int):
         del self.segments[index]
-        self.reassign_ids(True)
+        self.reassign_ids(True, start=index)
+
+    @property
+    def duration(self):
+        return _round_timestamp(self.segments[-1].end - self.segments[0].start)
 
     @staticmethod
     def _standardize_result(result: Union[str, dict, list]):
@@ -703,25 +897,25 @@ class WhisperResult:
                     else:
                         ts.end = ts.start if i == len(timestamps) else timestamps[i].start
             prev_ts_end = ts.end
-        if self.has_words:
-            self.update_all_segs_with_words()
 
     def raise_for_unsorted(self, check_sorted: Union[bool, str] = True, show_unsorted: bool = True):
         if check_sorted is False:
             return
         all_parts = self.all_words_or_segments()
-        has_words = self.has_words
+        if not all_parts:
+            return
+        is_word = isinstance(all_parts[0], WordTiming)
         timestamps = np.array(list(chain.from_iterable((p.start, p.end) for p in all_parts)))
         if len(timestamps) > 1 and (unsorted_mask := timestamps[:-1] > timestamps[1:]).any():
             if show_unsorted:
                 def get_part_info(idx):
                     curr_part = all_parts[idx]
-                    seg_id = curr_part.segment_id if has_words else curr_part.id
-                    word_id_str = f'Word ID: {curr_part.id}\n' if has_words else ''
+                    seg_id = curr_part.segment_id if is_word else curr_part.id
+                    word_id_str = f'Word ID: {curr_part.id}\n' if is_word else ''
                     return (
                         f'Segment ID: {seg_id}\n{word_id_str}'
                         f'Start: {curr_part.start}\nEnd: {curr_part.end}\n'
-                        f'Text: "{curr_part.word if has_words else curr_part.text}"'
+                        f'Text: "{curr_part.word if is_word else curr_part.text}"'
                     ), curr_part.start, curr_part.end
 
                 for i, unsorted in enumerate(unsorted_mask, 2):
@@ -743,9 +937,11 @@ class WhisperResult:
             save_as_json(data, check_sorted)
 
     def update_all_segs_with_words(self):
-        for seg in self.segments:
-            seg.update_seg_with_words()
-            seg.set_result(self)
+        warnings.warn('Attributes that required updating are now properties based on the ``words`` except for ``id``. '
+                      '``update_all_segs_with_words()`` is deprecated and will be removed in future versions. '
+                      'Use ``.reassign_ids()`` to manually update ids',
+                      stacklevel=2)
+        self.reassign_ids()
 
     def update_nonspeech_sections(self, silent_starts, silent_ends):
         self._nonspeech_sections = [
@@ -753,8 +949,7 @@ class WhisperResult:
         ]
 
     def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False):
-        new_seg = self.segments[index0] + self.segments[index1]
-        new_seg.update_seg_with_words()
+        new_seg = self.segments[index0].add(self.segments[index1], copy_words=False)
         if lock and self.segments[index0].has_words:
             lock_idx = len(self.segments[index0].words)
             new_seg.words[lock_idx - 1].lock_right()
@@ -808,7 +1003,8 @@ class WhisperResult:
             min_word_dur: Optional[float] = None,
             word_level: bool = True,
             nonspeech_error: float = 0.3,
-            use_word_position: bool = True
+            use_word_position: bool = True,
+            verbose: bool = True
     ) -> "WhisperResult":
         """
         Move any start/end timestamps in silence parts of audio to the boundaries of the silence.
@@ -828,6 +1024,8 @@ class WhisperResult:
         use_word_position : bool, default True
             Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
             adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
+        verbose : bool, default True
+            Whether to use progressbar to show progress.
 
         Returns
         -------
@@ -835,15 +1033,19 @@ class WhisperResult:
             The current instance after the changes.
         """
         min_word_dur = get_min_word_dur(min_word_dur)
-        for s in self.segments:
-            s.suppress_silence(
-                silent_starts,
-                silent_ends,
-                min_word_dur,
-                word_level=word_level,
-                nonspeech_error=nonspeech_error,
-                use_word_position=use_word_position
-            )
+        with tqdm(total=self.duration, unit='sec', disable=not verbose, desc='Adjustment') as tqdm_pbar:
+            for s in self.segments:
+                s.suppress_silence(
+                    silent_starts,
+                    silent_ends,
+                    min_word_dur,
+                    word_level=word_level,
+                    nonspeech_error=nonspeech_error,
+                    use_word_position=use_word_position
+                )
+                if verbose:
+                    tqdm_pbar.update(s.end - tqdm_pbar.n)
+            tqdm_pbar.update(tqdm_pbar.total - tqdm_pbar.n)
 
         return self
 
@@ -865,7 +1067,7 @@ class WhisperResult:
 
     ) -> "WhisperResult":
         """
-        Adjust timestamps base detected speech gaps.
+        Adjust timestamps base on detected speech gaps.
 
         This is method combines :meth:`stable_whisper.result.WhisperResult.suppress_silence` with silence detection.
 
@@ -877,8 +1079,9 @@ class WhisperResult:
             Whether to use Silero VAD to generate timestamp suppression mask.
             Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
         verbose : bool or None, default False
-            If ``False``, mute messages about hitting local caches. Note that the message about first download cannot be
-            muted. Only applies if ``vad = True``.
+            Whether to use progressbar to show progress.
+            If ``vad = True`` and ``False``, mute messages about hitting local caches.
+            Note that the message about first download cannot be muted.
         sample_rate : int, default None, meaning ``whisper.audio.SAMPLE_RATE``, 16kHZ
             The sample rate of ``audio``.
         vad_onnx : bool, default False
@@ -931,7 +1134,8 @@ class WhisperResult:
             min_word_dur=min_word_dur,
             word_level=word_level,
             nonspeech_error=nonspeech_error,
-            use_word_position=use_word_position
+            use_word_position=use_word_position,
+            verbose=verbose
         )
         self.update_nonspeech_sections(*silent_timings)
         return self
@@ -975,19 +1179,20 @@ class WhisperResult:
                         word.end = new_end
                     if line:
                         print(f'{line}"{word.word}"')
-        self.update_all_segs_with_words()
 
-    def reassign_ids(self, only_segments: bool = False):
-        for i, s in enumerate(self.segments):
+    def reassign_ids(self, only_segments: bool = False, start: Optional[int] = None):
+        for i, s in enumerate(self.segments[start:], start or 0):
             s.id = i
+            s.result = self
             if not only_segments:
                 s.reassign_ids()
 
-    def remove_no_word_segments(self, ignore_ori=False):
+    def remove_no_word_segments(self, ignore_ori=False, reassign_ids: bool = True):
         for i in reversed(range(len(self.segments))):
             if (ignore_ori or self.segments[i].ori_has_words) and not self.segments[i].has_words:
                 del self.segments[i]
-        self.reassign_ids()
+        if reassign_ids:
+            self.reassign_ids()
 
     def get_locked_indices(self):
         locked_indices = [i
@@ -1080,7 +1285,6 @@ class WhisperResult:
                         self.segments[i].words[word_idx].lock_right()
                         if word_idx + 1 < len(self.segments[i].words):
                             self.segments[i].words[word_idx+1].lock_left()
-                self.segments[i].update_seg_with_words()
             else:
                 new_segments = self.segments[i].split(indices)
                 if lock:
@@ -1342,15 +1546,15 @@ class WhisperResult:
         if not self.segments:
             return self
         if self.has_words:
-            self.segments[0].words = self.all_words()
+            new_seg = self.segments[0].copy(self.all_words(), keep_result=True, copy_words=False)
         else:
-            self.segments[0].text += ''.join(s.text for s in self.segments[1:])
+            new_seg = self.segments[0]
+            new_seg._default_text += ''.join(s.text for s in self.segments[1:])
             if all(s.tokens is not None for s in self.segments):
-                self.segments[0].tokens += list(chain.from_iterable(s.tokens for s in self.segments[1:]))
-            self.segments[0].end = self.segments[-1].end
-        self.segments = [self.segments[0]]
+                new_seg._default_tokens += list(chain.from_iterable(s.tokens for s in self.segments[1:]))
+            new_seg.end = self.segments[-1].end
+        self.segments = [new_seg]
         self.reassign_ids()
-        self.update_all_segs_with_words()
         if self._regroup_history:
             self._regroup_history += '_'
         self._regroup_history += 'ms'
@@ -1529,7 +1733,6 @@ class WhisperResult:
                 for i, word in enumerate(seg.words):
                     word.clamp_max(curr_max_dur, clip_start=clip_start, verbose=verbose)
 
-            seg.update_seg_with_words()
         if self._regroup_history:
             self._regroup_history += '_'
         self._regroup_history += f'cm={medium_factor}+{max_dur or ""}+{clip_start or ""}+{int(verbose)}'
@@ -1678,7 +1881,7 @@ class WhisperResult:
         del self.segments[segment]
         if not reassign_ids:
             return self
-        self.reassign_ids(True)
+        self.reassign_ids(True, start=segment)
         return self
 
     def remove_repetition(
@@ -1763,8 +1966,8 @@ class WhisperResult:
             if changes:
                 print('\n'.join(reversed(changes)))
 
-            self.remove_no_word_segments()
-        self.update_all_segs_with_words()
+            self.remove_no_word_segments(reassign_ids=False)
+        self.reassign_ids()
 
         return self
 
@@ -1837,7 +2040,6 @@ class WhisperResult:
         if changes:
             print('\n'.join(reversed(changes)))
         self.remove_no_word_segments()
-        self.update_all_segs_with_words()
 
         return self
 
@@ -1940,7 +2142,6 @@ class WhisperResult:
         if changes:
             print('\n'.join(reversed(changes)))
         self.reassign_ids()
-        self.update_all_segs_with_words()
 
         return self
 
@@ -1981,7 +2182,7 @@ class WhisperResult:
                 cm: clamp_max
                 l: lock
                 us: unlock_all_segments
-                da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                da: default algorithm (cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
                 rw: remove_word
                 rs: remove_segment
                 rp: remove_repetition
@@ -2044,7 +2245,7 @@ class WhisperResult:
 
         calls = regroup_algo.split('_')
         if 'da' in calls:
-            default_calls = 'cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
+            default_calls = 'cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
             calls = chain.from_iterable(default_calls if method == 'da' else [method] for method in calls)
         operations = []
         for method in calls:
@@ -2119,11 +2320,10 @@ class WhisperResult:
         self.language = self.ori_dict.get('language')
         self._regroup_history = ''
         segments = self.ori_dict.get('segments')
-        self.segments: List[Segment] = [Segment(**s) for s in segments] if segments else []
+        self.segments = [Segment(**s, ignore_unused_args=True) for s in segments] if segments else []
         if self._forced_order:
             self.force_order()
         self.remove_no_word_segments(any(seg.has_words for seg in self.segments))
-        self.update_all_segs_with_words()
 
     @property
     def has_words(self):

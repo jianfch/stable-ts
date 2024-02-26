@@ -1034,12 +1034,12 @@ result1 = model.transcribe('audio.mp3', regroup=False)
 (
     result1
     .clamp_max()
-    .split_by_punctuation([('.', ' '), '。', '?', '？', (',', ' '), '，'])
+    .split_by_punctuation([(',', ' '), '，'])
     .split_by_gap(.5)
     .merge_by_gap(.3, max_words=3)
     .split_by_punctuation([('.', ' '), '。', '?', '？'])
 )
-result2 = model.transcribe('audio.mp3', regroup='cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？')
+result2 = model.transcribe('audio.mp3', regroup='cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？')
 
 # To undo all regrouping operations:
 result0.reset()
@@ -1079,7 +1079,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
                 cm: clamp_max
                 l: lock
                 us: unlock_all_segments
-                da: default algorithm (cm_sp=.* /。/?/？/,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                da: default algorithm (cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
                 rw: remove_word
                 rs: remove_segment
                 rp: remove_repetition
@@ -1731,9 +1731,9 @@ and the end is adjusted for the last word of the segment as long as one of the c
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
 - use `vad=True` for more accurate non-speech detection
-- use `demucs=True` to isolate vocals with [Demucs](https://github.com/facebookresearch/demucs); it is also effective at isolating vocals even if there is no music
-- use `demucs=True` and `vad=True` for music
-- set same seed for each transcription (e.g. `random.seed(0)`) for `demucs=True` to produce deterministic outputs
+- use `denoiser="demucs"` to isolate vocals with [Demucs](https://github.com/facebookresearch/demucs); it is also effective at isolating vocals even if there is no music
+- use `denoiser="demucs"` and `vad=True` for music
+- set same seed for each transcription (e.g. `random.seed(0)`) for `denoiser="demucs"` to produce deterministic outputs
 - to enable dynamic quantization for inference on CPU use `--dq true` for CLI or `dq=True` for `stable_whisper.load_model`
 - use `encode_video_comparison()` to encode multiple transcripts into one video for synced comparison; see [Encode Comparison](#encode-comparison) 
 - use `visualize_suppression()` to visualize the differences between non-VAD and VAD options; see [Visualizing Suppression](#visualizing-suppression)

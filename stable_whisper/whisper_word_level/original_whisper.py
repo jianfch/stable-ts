@@ -596,7 +596,7 @@ def transcribe_stable(
 
             if segment_silence_timing is not None:
                 for seg_i, segment in enumerate(current_segments):
-                    segment = Segment(**segment).suppress_silence(
+                    segment = Segment(**segment, ignore_unused_args=True).suppress_silence(
                             *segment_silence_timing,
                             min_word_dur=min_word_dur,
                             word_level=suppress_word_ts,
