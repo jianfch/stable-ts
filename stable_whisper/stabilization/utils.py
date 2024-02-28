@@ -36,8 +36,7 @@ def valid_ts(
     """
     valid = is_ascending_sequence(list(chain.from_iterable([s['start'], s['end']] for s in ts)), False)
     if warn and not valid:
-        warnings.warn(message='Found timestamp(s) jumping backwards in time. '
-                              'Use word_timestamps=True to avoid the issue.')
+        warnings.warn(message='Found timestamp(s) out of order.')
     return valid
 
 

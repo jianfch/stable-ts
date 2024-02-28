@@ -241,7 +241,8 @@ def result_to_any(result: (dict, list),
     elif word_level:
         segments = to_word_level(segments)
 
-    valid_ts(segments)
+    if not valid_ts(segments, warn=False):
+        warnings.warn(message='Result contains out of order timestamp(s). Output file may not playback properly.')
 
     if segments2blocks is None:
         sub_str = '\n\n'.join(segment2srtblock(s, i, strip=strip) for i, s in enumerate(segments))

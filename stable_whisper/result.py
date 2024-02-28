@@ -394,9 +394,6 @@ class Segment:
 
     @start.setter
     def start(self, val):
-        if self.end < val:
-            raise ValueError(f'Cannot set start of segment to {val}. '
-                             f'Start must be <= end {self.end} of the segment.')
         if self.has_words:
             self.words[0].start = val
             return
@@ -404,11 +401,9 @@ class Segment:
 
     @end.setter
     def end(self, val):
-        if self.start > val:
-            raise ValueError(f'Cannot set end of segment to {val}. '
-                             f'End must be >= start ({self.start}) of the segment.')
         if self.has_words:
             self.words[-1].end = val
+            return
         self._default_end = self.round(val)
 
     @property
@@ -2130,12 +2125,12 @@ class WhisperResult:
                 last_word.start = gap_words[-1].end
             new_segments = [other_result[gap_words[0].segment_id].copy([])]
             for j, new_word in enumerate(gap_words):
-                new_word = deepcopy(new_word)
+                new_word_copy = new_word.copy(copy_tokens=True)
                 if j == 0 and first_word is not None and first_word.end > gap_words[0].start:
-                    new_word.start = first_word.end
+                    new_word_copy.start = first_word.end
                 if new_segments[-1].id != new_word.segment_id:
                     new_segments.append(other_result[new_word.segment_id].copy([]))
-                new_segments[-1].words.append(new_word)
+                new_segments[-1].words.append(new_word_copy)
             if verbose:
                 changes.append('\n'.join('Added: ' + s.to_display_str(True) for s in new_segments))
             self.segments = self.segments[:i+1] + new_segments + self.segments[i+1:]
