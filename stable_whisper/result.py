@@ -331,7 +331,7 @@ class Segment:
     ):
         if new_words is None:
             if self.has_words:
-                words = [w.copy(copy_tokens=copy_tokens) for w in self.words] if copy_words else self.has_words
+                words = [w.copy(copy_tokens=copy_tokens) for w in self.words] if copy_words else self.words
             else:
                 words = None
             def_start = self._default_start
@@ -841,34 +841,41 @@ class WhisperResult:
 
     @property
     def duration(self):
+        if not self.segments:
+            return 0.0
         return _round_timestamp(self.segments[-1].end - self.segments[0].start)
 
     @staticmethod
-    def _standardize_result(result: Union[str, dict, list]):
+    def _standardize_result(result: Union[str, dict, List[dict], List[List[dict]]]) -> Tuple[dict, Union[str, None]]:
         path = None
         if isinstance(result, str):
             path = result
             result = load_result(path)
-        if isinstance(result, list):
-            if isinstance(result[0], list):
-                if not isinstance(result[0][0], dict):
-                    raise NotImplementedError(f'Got list of list of {type(result[0])} but expects list of list of dict')
-                result = dict(
-                    segments=[
-                        dict(
-                            start=words[0]['start'],
-                            end=words[-1]['end'],
-                            text=''.join(w['word'] for w in words),
-                            words=words
-                        )
-                        for words in result if words
-                    ]
-                )
+        if isinstance(result, dict):
+            return result, path
+        if not isinstance(result, list):
+            raise TypeError(f'Expect result to be list but got {type(result)}')
+        if not result or not result[0]:
+            return {}, path
+        if isinstance(result[0], list):
+            if not isinstance(result[0][0], dict):
+                raise NotImplementedError(f'Got list of list of {type(result[0])} but expects list of list of dict')
+            result = dict(
+                segments=[
+                    dict(
+                        start=words[0]['start'],
+                        end=words[-1]['end'],
+                        text=''.join(w['word'] for w in words),
+                        words=words
+                    )
+                    for words in result if words
+                ]
+            )
 
-            elif isinstance(result[0], dict):
-                result = dict(segments=result)
-            else:
-                raise NotImplementedError(f'Got list of {type(result[0])} but expects list of list/dict')
+        elif isinstance(result[0], dict):
+            result = dict(segments=result)
+        else:
+            raise NotImplementedError(f'Got list of {type(result[0])} but expects list of list/dict')
         return result, path
 
     def force_order(self):
@@ -2322,7 +2329,7 @@ class WhisperResult:
 
     @property
     def has_words(self):
-        return all(seg.has_words for seg in self.segments)
+        return bool(self.segments) and all(seg.has_words for seg in self.segments)
 
     to_srt_vtt = result_to_srt_vtt
     to_ass = result_to_ass
