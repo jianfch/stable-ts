@@ -422,6 +422,7 @@ def align(
                             audio_segment = audio.next_chunk(seek_sample, N_SAMPLES)
                             if audio_segment is None:
                                 break
+                            nonspeech_predictor.predict(audio=audio_segment, offset=time_offset)
                             if len(nonspeech_starts) > 1:
                                 new_sample_count = round((nonspeech_starts[1] - nonspeech_ends[0]) * SAMPLE_RATE)
                             else:
