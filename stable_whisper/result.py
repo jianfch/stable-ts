@@ -438,7 +438,7 @@ class Segment:
         else:
             self_state = 'with' if self.ori_has_words else 'without'
             other_state = 'with' if other.ori_has_words else 'without'
-            raise ValueError(f'Can merge segment {self_state} words and a segment {other_state} words.')
+            raise ValueError(f'Can't merge segment {self_state} words and a segment {other_state} words.')
 
         self_copy = self.copy(words, copy_words=copy_words)
         _combine_attr(self_copy, other, 'temperature')
