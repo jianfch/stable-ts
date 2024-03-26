@@ -39,6 +39,7 @@ def align(
         regroup: bool = True,
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
+        suppress_attention: bool = False,
         use_word_position: bool = True,
         min_word_dur: Optional[float] = None,
         nonspeech_error: float = 0.1,
@@ -118,6 +119,8 @@ def align(
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    suppress_attention : bool, default False
+        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -253,6 +256,9 @@ def align(
     total_words = len(words)
 
     if is_faster_model:
+        if suppress_attention:
+            raise NotImplementedError('``suppress_attention=True`` is not supported on Faster-Whisper')
+
         def timestamp_words():
             temp_segment = dict(
                 seek=0,
@@ -296,6 +302,7 @@ def align(
             sample_padding = max(N_SAMPLES - audio_segment.shape[-1], 0)
             mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
             mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
+            ts_token_mask = nonspeech_preds['mask'] if suppress_attention else None
 
             add_word_timestamps_stable(
                 segments=[temp_segment],
@@ -306,7 +313,8 @@ def align(
                 split_callback=(lambda x, _: x),
                 prepend_punctuations=prepend_punctuations,
                 append_punctuations=append_punctuations,
-                gap_padding=None
+                gap_padding=None,
+                ts_token_mask=ts_token_mask
             )
 
             return temp_segment
@@ -326,9 +334,9 @@ def align(
     result = []
 
     nonspeech_predictor = NonSpeechPredictor(
-        vad=vad if suppress_silence else None,
+        vad=vad if (suppress_silence or suppress_attention) else None,
         mask_pad_func=pad_or_trim,
-        get_mask=False,
+        get_mask=suppress_attention,
         min_word_dur=min_word_dur,
         q_levels=q_levels,
         k_size=k_size,
@@ -422,7 +430,7 @@ def align(
                             audio_segment = audio.next_chunk(seek_sample, N_SAMPLES)
                             if audio_segment is None:
                                 break
-                            nonspeech_predictor.predict(audio=audio_segment, offset=time_offset)
+                            nonspeech_preds = nonspeech_predictor.predict(audio=audio_segment, offset=time_offset)
                             if len(nonspeech_starts) > 1:
                                 new_sample_count = round((nonspeech_starts[1] - nonspeech_ends[0]) * SAMPLE_RATE)
                             else:

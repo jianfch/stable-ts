@@ -1,8 +1,9 @@
 import os
 import warnings
 import argparse
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Dict
 from os.path import splitext, split, join
+import shlex
 
 import numpy as np
 import torch
@@ -17,8 +18,15 @@ from whisper.tokenizer import LANGUAGES, TO_LANGUAGE_CODE
 from whisper.utils import optional_int, optional_float
 
 
+def _split_input_args(args: str) -> List[str]:
+    args = shlex.split(args)
+    if args and args[0] == 'stable-ts':
+        del args[0]
+    return args
+
+
 # modified version of whisper.transcribe.cli
-def cli():
+def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
 
     supported_denoisers = tuple(SUPPORTED_DENOISERS.keys())
 
@@ -335,7 +343,50 @@ def cli():
                              '(https://huggingface.co/openai/whisper-large-v3); '
                              'note: some features may not be available')
 
-    args = parser.parse_args().__dict__
+    parser.add_argument('--persist', '-p', action='store_true',
+                        help='Keep previous model loaded for the future sets of commands in the same CLI instance')
+
+    args = _split_input_args(cmd) if cmd else []
+    if _cache is None:
+        _cache = {}
+        if args:
+            args = [args]
+    elif _cache or args:
+        if _cache and not args:
+            curr_model_name = _cache['model']['fullname'] if 'model' in _cache else ''
+            try:
+                cmd = input(f"{curr_model_name}> ")
+            except KeyboardInterrupt:
+                args = []
+            else:
+                args = _split_input_args(cmd)
+
+        if _cache and not args:
+            _cache['persist'] = False
+            return
+
+        if _cache.get('persist') and not ('--persist' in args and '-p' in args):
+            args.append('-p')
+
+        if 'model' in _cache:
+            if '--model' not in args and '-m' not in args:
+                args.extend(['-m', _cache['model']['name']])
+            model_type = _cache['model']['type']
+            type_arg = '--faster_whisper' in args or '-fw' in args or '--huggingface_whisper' in args or '-hw' in args
+            if not type_arg:
+                if model_type == 'Faster-Whisper':
+                    args.append('-fw')
+                elif model_type == 'Hugging Face Whisper':
+                    args.append('-hw')
+
+        _, invalid_args = parser.parse_known_args(args)
+        if invalid_args:
+            print(f'Got invalid argument(s): {invalid_args}')
+            return
+        args = [args]
+
+    args = parser.parse_args(*args).__dict__
+    _cache['persist'] = args['persist']
     debug = args.pop('debug')
     if not args['language'] and (args['align'] or args['locate']):
         raise ValueError('langauge is required for --align / --locate')
@@ -539,6 +590,15 @@ def cli():
 
     def _load_model():
         nonlocal model
+        if model is None and _cache is not None and 'model' in _cache:
+            if _cache['model']['type'] == model_type_name and _cache['model']['name'] == model_name:
+                model = _cache['model']['instance']
+                if model_loading_str:
+                    print(f"Reuse {_cache['model']['fullname'] or 'previous model'}   ")
+            else:
+                del _cache['model']
+                import gc
+                gc.collect()
         if model is None:
             model_options = dict(
                 device=args.get('device'),
@@ -551,6 +611,10 @@ def cli():
             model = call_method_with_options(load_model_func, model_options)
             if model_loading_str:
                 print(f'Loaded {model_loading_str}  ')
+            if _cache is not None and _cache.get('persist'):
+                _cache['model'] = dict(
+                    fullname=model_loading_str, name=model_name, type=model_type_name, instance=model
+                )
         return model
 
     for i, (input_audio, output_paths) in enumerate(zip(inputs, final_outputs)):
@@ -619,3 +683,25 @@ def cli():
             save_options = isolate_useful_options(args, save_method)
             update_options_with_args('save_option', save_options)
             call_method_with_options(save_method, save_options)
+
+
+def cli(cmd: str = None):
+    cache = {}
+    while True:
+        error = None
+        try:
+            _cli(cmd=cmd, _cache=cache)
+        except RuntimeError as e:
+            if not str(e).startswith('FFmpeg'):
+                raise e
+            error = e
+        except ValueError as e:
+            error = e
+        if cache.get('persist'):
+            if error is not None:
+                print(f'Error: {error}')
+        else:
+            if error is not None:
+                raise error
+            break
+        cmd = None

@@ -112,9 +112,9 @@ def load_audio(
             out = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=stdin)
             out = out.communicate(input=file if isinstance(file, bytes) else None)[0]
             if not out:
-                raise RuntimeError(f"Failed to load audio from bytes ({len(file)}).")
+                raise RuntimeError(f"FFmpeg failed to load audio from bytes ({len(file)}).")
     except (subprocess.CalledProcessError, subprocess.SubprocessError) as e:
-        raise RuntimeError(f"Failed to load audio: {e.stderr.decode()}") from e
+        raise RuntimeError(f"FFmpeg failed to load audio: {e.stderr.decode()}") from e
 
     return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
 

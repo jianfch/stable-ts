@@ -42,6 +42,7 @@ def transcribe_stable(
         ts_noise: float = 0.1,
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
+        suppress_attention: bool = False,
         use_word_position: bool = True,
         q_levels: int = 20,
         k_size: int = 5,
@@ -123,6 +124,8 @@ def transcribe_stable(
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    suppress_attention : bool, default False
+        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -389,9 +392,9 @@ def transcribe_stable(
     initial_duration = audio.get_duration(2)
 
     nonspeech_predictor = NonSpeechPredictor(
-        vad=vad if suppress_silence else None,
+        vad=vad if (suppress_silence or suppress_attention) else None,
         mask_pad_func=pad_or_trim,
-        get_mask=suppress_ts_tokens,
+        get_mask=suppress_ts_tokens or suppress_attention,
         min_word_dur=min_word_dur,
         q_levels=q_levels,
         k_size=k_size,
@@ -437,8 +440,8 @@ def transcribe_stable(
             segment_duration = segment_samples / SAMPLE_RATE
 
             silence_preds = nonspeech_predictor.predict(audio_segment, offset=time_offset)
-            segment_silence_timing = silence_preds['timings']
-            ts_token_mask = silence_preds['mask']
+            segment_silence_timing = silence_preds['timings'] if suppress_silence else None
+            ts_token_mask = silence_preds['mask'] if suppress_ts_tokens else None
             is_silent_segment = silence_preds['is_silent']
 
             if is_silent_segment:
@@ -565,7 +568,8 @@ def transcribe_stable(
                     ts_num=ts_num,
                     ts_noise=ts_noise,
                     split_callback=split_callback,
-                    gap_padding=gap_padding
+                    gap_padding=gap_padding,
+                    ts_token_mask=(silence_preds['mask'] if suppress_attention else None)
                 )
 
                 for i in reversed(range(len(current_segments))):
@@ -653,7 +657,7 @@ def transcribe_stable(
     if len(final_result.text) == 0:
         warnings.warn(f'Failed to {task} audio. Result contains no text. ')
 
-    if final_nonspeech_timings := nonspeech_predictor.nonspeech_timings:
+    if suppress_silence and (final_nonspeech_timings := nonspeech_predictor.nonspeech_timings):
         final_result.update_nonspeech_sections(*final_nonspeech_timings)
 
     return final_result

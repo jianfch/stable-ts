@@ -244,7 +244,7 @@ class NonSpeechPredictor:
             audio: torch.Tensor,
             offset: Optional[float] = None
     ) -> dict:
-        mask = torch.where(audio == 0, True, False)
+        mask = torch.where(audio == 0, True, False).cpu()
         is_silent = self._silent_mask_test(mask, self.min_samples_per_word)
         return dict(timings=None, mask=None, is_silent=is_silent)
 

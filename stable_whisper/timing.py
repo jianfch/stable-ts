@@ -25,7 +25,8 @@ def find_alignment_stable(
         ts_num: int = 0,
         ts_noise: float = 0.1,
         token_split=None,
-        audio_features: torch.Tensor = None
+        audio_features: torch.Tensor = None,
+        ts_token_mask: torch.Tensor = None
 ) -> List[WordTiming]:
     tokens = torch.tensor(
         [
@@ -81,6 +82,8 @@ def find_alignment_stable(
 
     matrix = weights.mean(axis=0)
     matrix = matrix[len(tokenizer.sot_sequence): -1]
+    if ts_token_mask is not None:
+        matrix[..., ts_token_mask[:matrix.shape[-1]]] = 0
     text_indices, time_indices = dtw(-matrix)
 
     if token_split is None:
@@ -202,6 +205,7 @@ def add_word_timestamps_stable(
         min_word_dur: float = 0.1,
         split_callback: Callable = None,
         gap_padding: Optional[str] = ' ...',
+        ts_token_mask: torch.Tensor = None,
         **kwargs,
 ):
     if len(segments) == 0:
@@ -228,7 +232,8 @@ def add_word_timestamps_stable(
                                           token_split=token_split,
                                           audio_features=audio_features,
                                           ts_num=ts_num,
-                                          ts_noise=ts_noise)
+                                          ts_noise=ts_noise,
+                                          ts_token_mask=ts_token_mask)
         alt_beginning_alignment = pop_empty_alignment(alignment)
 
         merge_punctuations(alignment, prepend_punctuations, append_punctuations)

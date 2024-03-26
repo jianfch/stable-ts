@@ -57,7 +57,7 @@ def transcribe_any(
     Parameters
     ----------
     inference_func : Callable
-        Function that runs ASR when provided the [audio] and return data in the appropriate format.
+        Function that runs ASR when provided the ``audio`` and return data in the appropriate format.
         For format examples see, https://github.com/jianfch/stable-ts/blob/main/examples/non-whisper.ipynb.
     audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
         Path/URL to the audio file, the audio waveform, bytes of audio file or

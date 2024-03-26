@@ -140,6 +140,8 @@ Docstrings:
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    suppress_attention : bool, default False
+        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -825,6 +827,8 @@ Docstring:
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    suppress_attention : bool, default False
+        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -1738,6 +1742,7 @@ and the end is adjusted for the last word of the segment as long as one of the c
 - use `encode_video_comparison()` to encode multiple transcripts into one video for synced comparison; see [Encode Comparison](#encode-comparison) 
 - use `visualize_suppression()` to visualize the differences between non-VAD and VAD options; see [Visualizing Suppression](#visualizing-suppression)
 - [refinement](#refinement) can an effective (but slow) alternative for polishing timestamps if silence suppression isn't effective
+- use `--persist`/`-p` for CLI to keep the CLI running without reloading the same model after it finishes executing its commands
 
 ### Visualizing Suppression
 You can visualize which parts of the audio will likely be suppressed (i.e. marked as silent). 
