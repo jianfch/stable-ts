@@ -1035,7 +1035,8 @@ class WhisperResult:
             The current instance after the changes.
         """
         min_word_dur = get_min_word_dur(min_word_dur)
-        with tqdm(total=self.duration, unit='sec', disable=not verbose, desc='Adjustment') as tqdm_pbar:
+        max_ts = self.segments[-1].end if self.segments else 0
+        with tqdm(total=max_ts, unit='sec', disable=not verbose, desc='Adjustment') as tqdm_pbar:
             for s in self.segments:
                 s.suppress_silence(
                     silent_starts,

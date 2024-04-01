@@ -306,7 +306,8 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                         choices=('transcribe', 'transcribe_minimal'))
 
     parser.add_argument('--align', '-a', action="extend", nargs='+', type=str,
-                        help='path(s) to TXT file(s) or JSON previous result(s)')
+                        help='path(s) to TXT file(s) or JSON file previous result(s); '
+                             'plain-text must begin with a "text=" (e.g. --align "text=plain-text")')
 
     parser.add_argument('--refine', '-r', action='store_true',
                         help='Refine timestamps to increase precision of timestamps')
@@ -504,14 +505,16 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
         return method(**options)
 
     if alignments := args['align']:
-        if unsupported_align_fmts := \
-                [_ext for p in alignments if (_ext := splitext(p)[-1].lower()) not in ('.json', '.txt')]:
+        if unsupported_align_fmts := [
+            _ext for p in alignments
+            if not p.startswith('text=') and (_ext := splitext(p)[-1].lower()) not in ('.json', '.txt')
+        ]:
             raise NotImplementedError(
                 f'Unsupported format(s) for alignment: {unsupported_align_fmts}'
             )
         if len(inputs) != len(alignments):
             raise NotImplementedError(
-                f'Got {len(inputs)} audio file(s) but specified {len(alignments)} file(s) to align.'
+                f'Got {len(inputs)} audio file(s) but specified {len(alignments)} input(s) to align.'
             )
     else:
         alignments = ['']*len(inputs)
@@ -572,7 +575,13 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
         print('Input(s)  ->  Outputs(s)')
         for i, (input_audio, output_paths, alignment) in enumerate(zip(inputs, final_outputs, alignments)):
             dm_output = f' {denoiser_outputs[i]} ->' if denoiser_outputs else ''
-            alignment = f' + "{alignment}"' if alignment else ''
+            if alignment:
+                if alignment.startswith('text='):
+                    if len(alignment) > 25:
+                        alignment = alignment[5:22] + '...'
+                    alignment = f' + text="{alignment}"'
+                else:
+                    alignment = f' + "{alignment}"'
             print(f'"{input_audio}"{alignment}  ->{dm_output}  {output_paths}')
         print('')
 
@@ -632,9 +641,11 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             if alignments and (text := alignments[i]):
                 if text.endswith('.json'):
                     text = WhisperResult(text)
-                else:
+                elif text.endswith('.txt'):
                     with open(text, 'r', encoding='utf-8') as f:
                         text = f.read()
+                elif text.startswith('text='):
+                    text = text[5:]
                 args['text'] = text
                 transcribe_method = 'align'
             if strings_to_locate and (text := strings_to_locate[i]):

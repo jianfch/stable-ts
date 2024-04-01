@@ -952,7 +952,7 @@ def refine(
             update_pbar(round(tqdm_pbar.total / len(step), 2))
         tqdm_pbar.update(tqdm_pbar.total - tqdm_pbar.n)
 
-    result.update_all_segs_with_words()
+    result.reassign_ids()
 
     return result
 
