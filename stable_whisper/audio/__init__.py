@@ -9,6 +9,7 @@ from .utils import (
 )
 from .demucs import is_demucs_available, load_demucs_model, demucs_audio
 from .dfnet import is_dfnet_available, load_dfnet_model, dfnet_audio
+from .noisereduce import is_noisereduce_available, load_noisereduce_model, noisereduce_audio
 from .output import save_audio_tensor
 from ..utils import update_options
 
@@ -17,7 +18,8 @@ from whisper.audio import SAMPLE_RATE
 
 SUPPORTED_DENOISERS = {
     'demucs': {'run': demucs_audio, 'load': load_demucs_model, 'access': is_demucs_available},
-    'dfnet': {'run': dfnet_audio, 'load': load_dfnet_model, 'access': is_dfnet_available}
+    'dfnet': {'run': dfnet_audio, 'load': load_dfnet_model, 'access': is_dfnet_available},
+    'noisereduce': {'run': noisereduce_audio, 'load': load_noisereduce_model, 'access': is_noisereduce_available}
 }
 
 
