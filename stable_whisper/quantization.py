@@ -34,8 +34,16 @@ def ptdq_linear(model: "Whisper"):
     """
     Apply Dynamic Quantization to instance of :class:`whisper.model.Whisper`.
     """
-    model.cpu()    
-    torch.backends.quantized.engine = 'qnnpack'
+    model.cpu()
+
+    supported_engines = torch.backends.quantized.supported_engines
+    print(f"Supported quantized engines: {supported_engines}")
+
+    if 'fbgemm' in supported_engines:
+        torch.backends.quantized.engine = 'fbgemm'
+    else:
+        torch.backends.quantized.engine = 'qnnpack'
+
     replace_modules(model, only_linear=True)
     torch.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8, inplace=True)
     setattr(model, 'dq', True)
