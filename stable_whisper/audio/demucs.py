@@ -40,7 +40,8 @@ def apply_demucs_model(
         progress=False,
         device=None,
         num_workers=0,
-        pool=None
+        pool=None,
+        as_dict=False
 ):
     if device is None:
         device = mix.device
@@ -115,6 +116,7 @@ def apply_demucs_model(
         def update_pbar(samples):
             if samples is None:
                 pbar.update(pbar.total - pbar.n)
+                pbar.close()
                 return
             if shifts > 1:
                 samples /= shifts
@@ -142,6 +144,9 @@ def apply_demucs_model(
 
     update_pbar(None)
 
+    if as_dict:
+        return {k: v for k, v in zip(model.sources, output[0])}
+
     return output[0, model.sources.index('vocals')].mean(0)
 
 
@@ -165,7 +170,7 @@ def demucs_audio(
         model = load_demucs_model()
 
     if isinstance(audio, (str, bytes)):
-        audio = torch.from_numpy(load_audio(audio, model.samplerate))
+        audio = torch.from_numpy(load_audio(audio, model.samplerate, mono=False))
     elif input_sr != model.samplerate:
         if input_sr is None:
             raise ValueError('No ``input_sr`` specified for audio tensor.')
@@ -193,7 +198,7 @@ def demucs_audio(
         random.seed(seed)
     vocals = apply_demucs_model(**apply_kwarg)
 
-    if device != 'cpu':
+    if 'cuda' in str(device):
         torch.cuda.empty_cache()
 
     if output_sr is not None and model.samplerate != output_sr:

@@ -1,3 +1,4 @@
+import warnings
 import torch
 from torch import nn
 from whisper.model import Linear, Conv1d, LayerNorm, Whisper
@@ -30,11 +31,24 @@ def replace_modules(model: nn.Module, only_linear: bool = False):
             model.__getattr__(m).load_state_dict(module.state_dict())
 
 
-def ptdq_linear(model: "Whisper"):
+def ptdq_linear(model: "Whisper", engine: str = None):
     """
     Apply Dynamic Quantization to instance of :class:`whisper.model.Whisper`.
     """
     model.cpu()
+
+    supported_engines = set(torch.backends.quantized.supported_engines)
+    if engine is None:
+        if torch.backends.quantized.engine == 'none' and (engines := supported_engines - {'none'}):
+            engine = engines.pop()
+    elif engine not in supported_engines:
+        warnings.warn(f"'{engine}' not found in supported engine(s): {supported_engines}")
+        engine = None
+
+    if engine is not None:
+        torch.backends.quantized.engine = engine
+        print(f"Quantized Engine set to '{engine}'")
+
     replace_modules(model, only_linear=True)
     torch.quantization.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8, inplace=True)
     setattr(model, 'dq', True)

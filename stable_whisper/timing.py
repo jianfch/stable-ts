@@ -1,7 +1,8 @@
+import warnings
 import string
 import torch
 import numpy as np
-from typing import TYPE_CHECKING, List, Callable, Optional
+from typing import TYPE_CHECKING, List, Callable, Optional, Tuple
 from itertools import chain
 
 from whisper.audio import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN
@@ -12,30 +13,17 @@ if TYPE_CHECKING:
     from whisper.model import Whisper
 
 
-# modified version of whisper.timing.find_alignment
-def find_alignment_stable(
+def _compute_qks(
         model: "Whisper",
         tokenizer: "Tokenizer",
         text_tokens: List[int],
         mel: torch.Tensor,
         num_samples: int,
-        *,
+        tokens: torch.tensor,
         medfilt_width: int = 7,
         qk_scale: float = 1.0,
-        ts_num: int = 0,
-        ts_noise: float = 0.1,
-        token_split=None,
         audio_features: torch.Tensor = None,
-        ts_token_mask: torch.Tensor = None
-) -> List[WordTiming]:
-    tokens = torch.tensor(
-        [
-            *tokenizer.sot_sequence,
-            tokenizer.no_timestamps,
-            *text_tokens,
-            tokenizer.eot,
-        ]
-    ).to(model.device)
+) -> Tuple[torch.Tensor, List[float]]:
 
     # install hooks on the cross attention layers to retrieve the attention weights
     QKs = [None] * model.dims.n_text_layer
@@ -49,21 +37,7 @@ def find_alignment_stable(
     with torch.no_grad():
         if audio_features is None:
             audio_features = model.encoder(mel.unsqueeze(0))
-        if ts_num:
-            if ts_noise is None:
-                ts_noise = 0.1
-            extra_audio_features = audio_features.repeat_interleave(ts_num, 0)
-            torch.manual_seed(0)
-            audio_features = torch.cat([audio_features,
-                                        extra_audio_features *
-                                        (1 - (torch.rand_like(extra_audio_features) * ts_noise))],
-                                       dim=0)
-            logits = model.decoder(tokens.unsqueeze(0).repeat_interleave(audio_features.shape[0], 0),
-                                   audio_features)
-        else:
-            logits = model.decoder(tokens.unsqueeze(0), audio_features)
-
-        logits = logits[0]
+        logits = model.decoder(tokens.unsqueeze(0), audio_features)[0]
         sampled_logits = logits[len(tokenizer.sot_sequence):, : tokenizer.eot]
         token_probs = sampled_logits.softmax(dim=-1)
         text_token_probs = token_probs[np.arange(len(text_tokens)), text_tokens]
@@ -74,16 +48,72 @@ def find_alignment_stable(
 
     # heads * tokens * frames
     weights = torch.cat([QKs[_l][:, _h] for _l, _h in model.alignment_heads.indices().T], dim=0)
-    weights = weights[:, :, : round(num_samples / N_SAMPLES_PER_TOKEN)]
+    weights = weights[:, len(tokenizer.sot_sequence): -1, : round(num_samples / N_SAMPLES_PER_TOKEN)]
     weights = (weights * qk_scale).softmax(dim=-1)
     std, mean = torch.std_mean(weights, dim=-2, keepdim=True, unbiased=False)
     weights = (weights - mean) / std
     weights = median_filter(weights, medfilt_width)
 
-    matrix = weights.mean(axis=0)
-    matrix = matrix[len(tokenizer.sot_sequence): -1]
-    if ts_token_mask is not None:
-        matrix[..., ts_token_mask[:matrix.shape[-1]]] = 0
+    return weights, text_token_probs
+
+
+# modified version of whisper.timing.find_alignment
+def find_alignment_stable(
+        model: "Whisper",
+        tokenizer: "Tokenizer",
+        text_tokens: List[int],
+        mel: torch.Tensor,
+        num_samples: int,
+        *,
+        medfilt_width: int = 7,
+        qk_scale: float = 1.0,
+        ts_num: int = 0,
+        ts_noise: float = None,
+        token_split=None,
+        audio_features: torch.Tensor = None,
+        extra_models: List["Whisper"] = None
+) -> List[WordTiming]:
+    if extra_models and (invalid_model_types := set(map(type, extra_models)) - {type(model)}):
+        raise NotImplementedError(f'Got unsupported model type(s): {invalid_model_types}')
+
+    if ts_num:
+        warnings.warn('``ts_num`` is deprecated and will be removed in future versions.',
+                      stacklevel=2)
+    if ts_noise:
+        warnings.warn('``ts_noise`` is deprecated and will be removed in future versions.',
+                      stacklevel=2)
+    tokens = torch.tensor(
+        [
+            *tokenizer.sot_sequence,
+            tokenizer.no_timestamps,
+            *text_tokens,
+            tokenizer.eot,
+        ]
+    ).to(model.device)
+
+    kwargs = dict(
+        tokenizer=tokenizer,
+        text_tokens=text_tokens,
+        mel=mel,
+        num_samples=num_samples,
+        tokens=tokens,
+        qk_scale=qk_scale,
+        medfilt_width=medfilt_width
+    )
+
+    weights, text_token_probs = _compute_qks(model, audio_features=audio_features, **kwargs)
+
+    if extra_models:
+        extra_weights = [weights]
+        extra_text_token_probs = [text_token_probs]
+        for other_model in extra_models:
+            m, p = _compute_qks(other_model, **kwargs)
+            extra_weights.append(m)
+            extra_text_token_probs.append(p)
+        weights = torch.cat(extra_weights, dim=0)
+        text_token_probs = torch.tensor(extra_text_token_probs, device=extra_weights[0].device).mean(dim=0).tolist()
+
+    matrix = weights.mean(dim=0)
     text_indices, time_indices = dtw(-matrix)
 
     if token_split is None:
@@ -201,11 +231,10 @@ def add_word_timestamps_stable(
         append_punctuations: str = "\"'.。,，!！?？:：”)]}、",
         audio_features: torch.Tensor = None,
         ts_num: int = 0,
-        ts_noise: float = 0.1,
+        ts_noise: float = None,
         min_word_dur: float = 0.1,
         split_callback: Callable = None,
         gap_padding: Optional[str] = ' ...',
-        ts_token_mask: torch.Tensor = None,
         **kwargs,
 ):
     if len(segments) == 0:
@@ -232,8 +261,7 @@ def add_word_timestamps_stable(
                                           token_split=token_split,
                                           audio_features=audio_features,
                                           ts_num=ts_num,
-                                          ts_noise=ts_noise,
-                                          ts_token_mask=ts_token_mask)
+                                          ts_noise=ts_noise)
         alt_beginning_alignment = pop_empty_alignment(alignment)
 
         merge_punctuations(alignment, prepend_punctuations, append_punctuations)
@@ -263,16 +291,6 @@ def add_word_timestamps_stable(
                 )
 
     align()
-    if (
-            gap_padding is not None and
-            any(
-                (word['end'] - word['start']) < min_word_dur
-                for seg in segments
-                for word in seg['words']
-            )
-    ):
-        gap_padding = None
-        align()
 
     for segment in segments:
         if len(words := segment["words"]) > 0:

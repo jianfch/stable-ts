@@ -73,6 +73,8 @@ Docstrings:
     dq : bool, default False
         Whether to apply Dynamic Quantization to model to reduced memory usage and increase inference speed
         but at the cost of a slight decrease in accuracy. Only for CPU.
+    engine : str, optional
+        Engine for Dynamic Quantization.
 
     Returns
     -------
@@ -131,17 +133,10 @@ Docstrings:
     regroup : bool or str, default True, meaning the default regroup algorithm
         String for customizing the regrouping algorithm. False disables regrouping.
         Ignored if ``word_timestamps = False``.
-    ts_num : int, default 0, meaning disable this option
-        Number of extra timestamp inferences to perform then use average of these extra timestamps.
-        An experimental option that might hurt performance.
-    ts_noise : float, default 0.1
-        Percentage of noise to add to audio_features to perform inferences for ``ts_num``.
     suppress_silence : bool, default True
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
-    suppress_attention : bool, default False
-        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -206,6 +201,8 @@ Docstrings:
         The second parameter is a float for total duration of audio in seconds.
     ignore_compatibility : bool, default False
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
+    extra_models : list of whisper.model.Whisper, optional
+        List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
     decode_options
         Keyword arguments to construct class:`whisper.decode.DecodingOptions` instances.
 
@@ -827,8 +824,6 @@ Docstring:
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
-    suppress_attention : bool, default False
-        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -868,6 +863,15 @@ Docstring:
         The second parameter is a float for total duration of audio in seconds.
     ignore_compatibility : bool, default False
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
+    extra_models : list of whisper.model.Whisper, optional
+        List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
+    presplit : bool or list of str, default True meaning ['.', '。', '?', '？']
+        List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
+        but segmentation of final output is unnaffected unless ``original_split=True``.
+        If ``original_split=True``, the original split is used instead of split from ``presplit``.
+    gap_padding : str, default ' ...'
+        Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
+        Used to reduce the probability of model predicting timestamps earlier than the first utterance.
 
     Returns
     -------

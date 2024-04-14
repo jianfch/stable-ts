@@ -1,6 +1,6 @@
 import warnings
 from types import MethodType
-from typing import TYPE_CHECKING, Union, Optional, Tuple, Callable
+from typing import TYPE_CHECKING, Union, Optional, Tuple, Callable, List
 
 import torch
 import numpy as np
@@ -39,7 +39,7 @@ def transcribe_stable(
         word_timestamps: bool = True,
         regroup: Union[bool, str] = True,
         ts_num: int = 0,
-        ts_noise: float = 0.1,
+        ts_noise: float = None,
         suppress_silence: bool = True,
         suppress_word_ts: bool = True,
         suppress_attention: bool = False,
@@ -69,6 +69,7 @@ def transcribe_stable(
         avg_prob_threshold: Optional[float] = None,
         progress_callback: Callable = None,
         ignore_compatibility: bool = False,
+        extra_models: Optional[List["Whisper"]] = None,
         **decode_options) \
         -> WhisperResult:
     """
@@ -115,17 +116,10 @@ def transcribe_stable(
     regroup : bool or str, default True, meaning the default regroup algorithm
         String for customizing the regrouping algorithm. False disables regrouping.
         Ignored if ``word_timestamps = False``.
-    ts_num : int, default 0, meaning disable this option
-        Number of extra timestamp inferences to perform then use average of these extra timestamps.
-        An experimental option that might hurt performance.
-    ts_noise : float, default 0.1
-        Percentage of noise to add to audio_features to perform inferences for ``ts_num``.
     suppress_silence : bool, default True
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
-    suppress_attention : bool, default False
-        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -190,6 +184,8 @@ def transcribe_stable(
         The second parameter is a float for total duration of audio in seconds.
     ignore_compatibility : bool, default False
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
+    extra_models : list of whisper.model.Whisper, optional
+        List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
     decode_options
         Keyword arguments to construct class:`whisper.decode.DecodingOptions` instances.
 
@@ -220,6 +216,10 @@ def transcribe_stable(
                       'Use ``stream`` (e.g. replace ``mel_first=True`` with ``stream=False``).',
                       stacklevel=2)
         stream = not mel_first
+
+    if suppress_attention:
+        warnings.warn('``suppress_attention`` is deprecated and will be removed in future versions',
+                      stacklevel=2)
 
     prepend_punctuations = get_prepend_punctuations(prepend_punctuations)
     append_punctuations = get_append_punctuations(append_punctuations)
@@ -392,9 +392,9 @@ def transcribe_stable(
     initial_duration = audio.get_duration(2)
 
     nonspeech_predictor = NonSpeechPredictor(
-        vad=vad if (suppress_silence or suppress_attention) else None,
+        vad=vad if suppress_silence else None,
         mask_pad_func=pad_or_trim,
-        get_mask=suppress_ts_tokens or suppress_attention,
+        get_mask=suppress_ts_tokens,
         min_word_dur=min_word_dur,
         q_levels=q_levels,
         k_size=k_size,
@@ -569,7 +569,7 @@ def transcribe_stable(
                     ts_noise=ts_noise,
                     split_callback=split_callback,
                     gap_padding=gap_padding,
-                    ts_token_mask=(silence_preds['mask'] if suppress_attention else None)
+                    extra_models=extra_models
                 )
 
                 for i in reversed(range(len(current_segments))):
@@ -833,7 +833,7 @@ def modify_model(model: "Whisper"):
 # modified version of whisper.load_model
 def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
                download_root: str = None, in_memory: bool = False,
-               cpu_preload: bool = True, dq: bool = False) -> "Whisper":
+               cpu_preload: bool = True, dq: bool = False, engine: Optional[str] = None) -> "Whisper":
     """
     Load an instance if :class:`whisper.model.Whisper`.
 
@@ -855,6 +855,8 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     dq : bool, default False
         Whether to apply Dynamic Quantization to model to reduced memory usage and increase inference speed
         but at the cost of a slight decrease in accuracy. Only for CPU.
+    engine : str, optional
+        Engine for Dynamic Quantization.
 
     Returns
     -------
@@ -881,5 +883,5 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     modify_model(model)
     if dq:
         from ..quantization import ptdq_linear
-        ptdq_linear(model)
+        ptdq_linear(model, engine=engine)
     return model

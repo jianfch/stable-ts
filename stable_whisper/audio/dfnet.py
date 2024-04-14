@@ -54,7 +54,7 @@ def dfnet_audio(
     if model is None:
         model = load_dfnet_model()
     if isinstance(audio, (str, bytes)):
-        audio = torch.from_numpy(load_audio(audio, model.samplerate))
+        audio = torch.from_numpy(load_audio(audio, model.samplerate, mono=False))
     elif input_sr != model.samplerate:
         if input_sr is None:
             raise ValueError('No ``input_sr`` specified for audio tensor.')
@@ -66,10 +66,17 @@ def dfnet_audio(
     if audio.shape[-2] == 1:
         audio = audio.repeat_interleave(2, -2)
 
+    if device is not None:
+        from df import config
+        device_str = str(device)
+        config.set('DEVICE', device_str, str, section='train')
+        audio.to(device=device)
+        model.to(device=device)
+
     dfnet_options.pop('progress', None)  # not implemented
     denoised_audio = model.enhance(audio=audio, **dfnet_options).mean(dim=0)
 
-    if device != 'cpu':
+    if 'cuda' in str(device):
         torch.cuda.empty_cache()
 
     if output_sr is not None and model.samplerate != output_sr:

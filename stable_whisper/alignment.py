@@ -67,6 +67,9 @@ def align(
         tokenizer: "Tokenizer" = None,
         stream: Optional[bool] = None,
         failure_threshold: Optional[float] = None,
+        extra_models: Optional[List["Whisper"]] = None,
+        presplit: Union[bool, List[str]] = True,
+        gap_padding: str = ' ...'
 ) -> Union[WhisperResult, None]:
     """
     Align plain text or tokens with audio at word-level.
@@ -119,8 +122,6 @@ def align(
         Whether to enable timestamps adjustments based on the detected silence.
     suppress_word_ts : bool, default True
         Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
-    suppress_attention : bool, default False
-        Whether to suppress cross-attention pattern with the predicted non-speech mask for computing word timestamps.
     use_word_position : bool, default True
         Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
         adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
@@ -160,6 +161,15 @@ def align(
         The second parameter is a float for total duration of audio in seconds.
     ignore_compatibility : bool, default False
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
+    extra_models : list of whisper.model.Whisper, optional
+        List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
+    presplit : bool or list of str, default True meaning ['.', '。', '?', '？']
+        List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
+        but segmentation of final output is unnaffected unless ``original_split=True``.
+        If ``original_split=True``, the original split is used instead of split from ``presplit``.
+    gap_padding : str, default ' ...'
+        Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
+        Used to reduce the probability of model predicting timestamps earlier than the first utterance.
 
     Returns
     -------
@@ -185,6 +195,9 @@ def align(
     >>> result.to_srt_vtt('helloword.srt')
     Saved 'helloworld.srt'
     """
+    if suppress_attention:
+        warnings.warn('``suppress_attention`` is deprecated and will be removed in future versions',
+                      stacklevel=2)
     denoiser, denoiser_options = convert_demucs_kwargs(
         denoiser, denoiser_options, demucs=demucs, demucs_options=demucs_options
     )
@@ -228,6 +241,23 @@ def align(
     tokens = tokenizer.encode(text) if isinstance(text, str) else text
     tokens = [t for t in tokens if t < tokenizer.eot]
     _, (words, word_tokens), _ = split_word_tokens([dict(tokens=tokens)], tokenizer)
+    pad_mask = None
+    if presplit:
+        if not isinstance(presplit, List):
+            presplit = ['.', '。', '?', '？']
+        if len(split_indices_by_char):
+            pad_mask = []
+            cumsums = split_indices_by_char.tolist()
+            cumsum_len = 0
+            for word in words:
+                cumsum_len += len(word)
+                if cumsums and cumsum_len >= cumsums[0]:
+                    cumsums.pop(0)
+                    pad_mask.append(True)
+                else:
+                    pad_mask.append(False)
+        else:
+            pad_mask = [any(map(w.endswith, presplit)) for w in words]
 
     if isinstance(audio, AudioLoader):
         audio.validate_external_args(
@@ -256,8 +286,6 @@ def align(
     total_words = len(words)
 
     if is_faster_model:
-        if suppress_attention:
-            raise NotImplementedError('``suppress_attention=True`` is not supported on Faster-Whisper')
 
         def timestamp_words():
             temp_segment = dict(
@@ -295,17 +323,25 @@ def align(
 
     else:
         def timestamp_words():
-            temp_segment = dict(
-                seek=time_offset,
-                tokens=(curr_words, curr_word_tokens)
-            )
+            if curr_split_indices:
+                temp_split_indices = [0] + curr_split_indices
+                if temp_split_indices[-1] < len(curr_words):
+                    temp_split_indices.append(len(curr_words))
+                temp_segments = [
+                    dict(
+                        seek=time_offset,
+                        tokens=(curr_words[i:j], curr_word_tokens[i:j])
+                    )
+                    for i, j in zip(temp_split_indices[:-1], temp_split_indices[1:])
+                ]
+            else:
+                temp_segments = [dict(seek=time_offset, tokens=(curr_words, curr_word_tokens))]
             sample_padding = max(N_SAMPLES - audio_segment.shape[-1], 0)
             mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
             mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
-            ts_token_mask = nonspeech_preds['mask'] if suppress_attention else None
 
             add_word_timestamps_stable(
-                segments=[temp_segment],
+                segments=temp_segments,
                 model=model,
                 tokenizer=tokenizer,
                 mel=mel_segment,
@@ -313,30 +349,34 @@ def align(
                 split_callback=(lambda x, _: x),
                 prepend_punctuations=prepend_punctuations,
                 append_punctuations=append_punctuations,
-                gap_padding=None,
-                ts_token_mask=ts_token_mask
+                gap_padding=gap_padding if presplit else None,
+                extra_models=extra_models,
             )
-
-            return temp_segment
+            if len(temp_segments) == 1:
+                return temp_segments[0]
+            return dict(words=[w for seg in temp_segments for w in seg['words']])
 
     def get_curr_words():
-        nonlocal words, word_tokens
+        nonlocal words, word_tokens, pad_mask
         curr_tk_count = 0
-        w, wt = [], []
-        for _ in range(len(words)):
+        w, wt, m = [], [], []
+        for i in range(len(words)):
             tk_count = len(word_tokens[0])
-            if curr_tk_count + tk_count > token_step and w:
+            m_count = 1 if pad_mask and pad_mask[0] else 0
+            if curr_tk_count + len(m) + tk_count + m_count > token_step and w:
                 break
             w.append(words.pop(0))
             wt.append(word_tokens.pop(0))
             curr_tk_count += tk_count
-        return w, wt
+            if pad_mask and pad_mask.pop(0):
+                m.append(i+1)
+        return w, wt, m
     result = []
 
     nonspeech_predictor = NonSpeechPredictor(
-        vad=vad if (suppress_silence or suppress_attention) else None,
+        vad=vad if suppress_silence else None,
         mask_pad_func=pad_or_trim,
-        get_mask=suppress_attention,
+        get_mask=False,
         min_word_dur=min_word_dur,
         q_levels=q_levels,
         k_size=k_size,
@@ -438,7 +478,7 @@ def align(
                             audio_segment = audio_segment[:new_sample_count]
                             segment_samples = audio_segment.shape[-1]
 
-            curr_words, curr_word_tokens = get_curr_words()
+            curr_words, curr_word_tokens, curr_split_indices = get_curr_words()
 
             segment = timestamp_words()
             curr_words = segment['words']

@@ -157,7 +157,7 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
 
     parser.add_argument('--ts_num', type=int, default=0,
                         help="number of extra inferences to perform to find the mean timestamps")
-    parser.add_argument('--ts_noise', type=float, default=0.1,
+    parser.add_argument('--ts_noise', type=float,
                         help="percentage of noise to add to audio_features to perform inferences for [ts_num]")
 
     parser.add_argument('--suppress_silence', type=str2bool, default=True,

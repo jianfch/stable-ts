@@ -17,8 +17,10 @@ def is_noisereduce_available():
 def load_noisereduce_model(cache: bool = True, **kwargs):
     is_noisereduce_available()
     from noisereduce import reduce_noise
+
     class NRWrapper:
         samplerate = SAMPLE_RATE
+
         def __call__(self, audio, **kwargs):
             options = dict(
                 n_fft=512,
@@ -28,8 +30,10 @@ def load_noisereduce_model(cache: bool = True, **kwargs):
             )
             options.update(kwargs)
             return torch.from_numpy(reduce_noise(y=audio, **options))
+
     model = NRWrapper()
     return model
+
 
 def noisereduce_audio(
     audio: Union[torch.Tensor, str, bytes],
@@ -64,9 +68,10 @@ def noisereduce_audio(
     if audio.shape[-2] == 1:
         audio = audio.repeat_interleave(2, -2)
 
+    noisereduce_options.pop('progress', None)  # not implemented
     denoised_audio = model(audio=audio, device=device, **noisereduce_options).mean(dim=0)
 
-    if device != 'cpu':
+    if 'cuda' in str(device):
         torch.cuda.empty_cache()
 
     if output_sr is not None and input_sr != output_sr:

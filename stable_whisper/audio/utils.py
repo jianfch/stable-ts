@@ -26,7 +26,7 @@ def load_source(
         if is_ytdlp_available():
             if return_dict:
                 stderr = subprocess.PIPE
-                verbosity = ' --no-simulate --print title,duration,is_live'
+                verbosity = ' --no-simulate --print title,duration,is_live --no-warnings'
             else:
                 verbosity = ' -q' if verbose is None else (' --progress' if verbose else ' --progress -q')
                 stderr = None
@@ -65,6 +65,7 @@ def load_audio(
         sr: int = None,
         verbose: Optional[bool] = True,
         only_ffmpeg: bool = False,
+        mono: bool = True
 
 ):
     """
@@ -81,6 +82,8 @@ def load_audio(
         For yd-dlp: ``None`` is "--quiet"; ``True`` is "--progress"; ``False`` is "--progress" + "--quiet".
     only_ffmpeg : bool, default False
         Whether to use only FFmpeg (instead of yt-dlp) for URls.
+    mono : bool, default True
+        Whether to load as mono audio.
 
     Returns
     -------
@@ -99,7 +102,7 @@ def load_audio(
             "-threads", "0",
             "-i", file if isinstance(file, str) else "pipe:",
             "-f", "s16le",
-            "-ac", "1",
+            "-ac", "1" if mono else "2",
             "-acodec", "pcm_s16le",
             "-ar", str(sr),
             "-"
@@ -116,7 +119,10 @@ def load_audio(
     except (subprocess.CalledProcessError, subprocess.SubprocessError) as e:
         raise RuntimeError(f"FFmpeg failed to load audio: {e.stderr.decode()}") from e
 
-    return np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
+    waveform = np.frombuffer(out, np.int16).flatten().astype(np.float32) / 32768.0
+    if not mono:
+        return waveform.reshape(-1, 2).transpose(1, 0)
+    return waveform
 
 
 def resample(audio: torch.Tensor, in_sr: int, out_sr: int, **kwargs) -> torch.Tensor:

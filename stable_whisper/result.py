@@ -1100,7 +1100,7 @@ class WhisperResult:
             Recommend 5 or 3; higher sizes will reduce detection of silence.
         min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
             Shortest duration each word is allowed to reach from adjustments.
-        word_level : bool, default False
+        word_level : bool, default True
             Whether to settings to word level timestamps.
         nonspeech_error : float, default 0.3
             Relative error of non-speech sections that appear in between a word for adjustments.
