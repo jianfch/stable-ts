@@ -869,9 +869,11 @@ Docstring:
         List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
         but segmentation of final output is unnaffected unless ``original_split=True``.
         If ``original_split=True``, the original split is used instead of split from ``presplit``.
+        Ignored if ``model`` is a faster-whisper model.
     gap_padding : str, default ' ...'
         Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
         Used to reduce the probability of model predicting timestamps earlier than the first utterance.
+        Ignored if ``model`` is a faster-whisper model.
 
     Returns
     -------
