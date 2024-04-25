@@ -9,7 +9,7 @@ from ..non_whisper import transcribe_any
 from ..utils import safe_print, isolate_useful_options
 from ..audio import audioloader_not_supported, convert_demucs_kwargs
 
-from whisper.tokenizer import LANGUAGES
+from ..whisper_compatibility import LANGUAGES
 
 
 def faster_transcribe(

@@ -10,7 +10,7 @@ from .utils import is_ascending_sequence, valid_ts, mask2timing, timing2mask
 from ..audio.utils import audio_to_tensor_resample
 from ..default import get_min_word_dur
 
-from whisper.audio import SAMPLE_RATE, FRAMES_PER_SECOND, N_SAMPLES_PER_TOKEN
+from ..whisper_compatibility import SAMPLE_RATE, FRAMES_PER_SECOND, N_SAMPLES_PER_TOKEN
 
 
 class NonSpeechPredictor:

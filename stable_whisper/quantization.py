@@ -1,7 +1,7 @@
 import warnings
 import torch
 from torch import nn
-from whisper.model import Linear, Conv1d, LayerNorm, Whisper
+from .whisper_compatibility import Whisper
 
 
 def replace_modules(model: nn.Module, only_linear: bool = False):
@@ -9,6 +9,7 @@ def replace_modules(model: nn.Module, only_linear: bool = False):
     Replace ``Linear``/``Conv1d``/``LayerNorm`` from :class:`whisper.model` with equivalent module in
         :class:`torch.nn`.
     """
+    from whisper.model import Linear, Conv1d, LayerNorm
     for m in model.__dict__.get('_modules', []):
         module = model.__getattr__(m)
         update = True

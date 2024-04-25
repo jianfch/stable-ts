@@ -13,7 +13,7 @@ from .noisereduce import is_noisereduce_available, load_noisereduce_model, noise
 from .output import save_audio_tensor
 from ..utils import update_options
 
-from whisper.audio import SAMPLE_RATE
+from ..whisper_compatibility import SAMPLE_RATE
 
 
 SUPPORTED_DENOISERS = {

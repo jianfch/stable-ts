@@ -15,16 +15,14 @@ from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
 from .stabilization import NonSpeechPredictor
 from .default import get_min_word_dur, get_prepend_punctuations, get_append_punctuations
 
-import whisper
-from whisper.audio import (
-    SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES
+from .whisper_compatibility import (
+    SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES,
+    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper
 )
-from whisper.timing import median_filter
-from whisper.decoding import DecodingTask, DecodingOptions, SuppressTokens
 
 if TYPE_CHECKING:
-    from whisper.model import Whisper
-    from whisper.tokenizer import Tokenizer
+    from .whisper_compatibility import Whisper
+    from .whisper_compatibility import Tokenizer
 
 __all__ = ['align', 'refine', 'locate']
 

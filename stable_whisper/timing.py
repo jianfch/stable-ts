@@ -4,13 +4,21 @@ import torch
 import numpy as np
 from typing import TYPE_CHECKING, List, Callable, Optional, Tuple
 from itertools import chain
+from dataclasses import dataclass
 
-from whisper.audio import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN
-from whisper.timing import WordTiming, median_filter, dtw, merge_punctuations
+from .whisper_compatibility import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN, median_filter, dtw, merge_punctuations
 
 if TYPE_CHECKING:
-    from whisper.tokenizer import Tokenizer
-    from whisper.model import Whisper
+    from .whisper_compatibility import Whisper, Tokenizer
+
+
+@dataclass
+class WordTiming:
+    word: str
+    tokens: List[int]
+    start: float
+    end: float
+    probability: float
 
 
 def _compute_qks(
