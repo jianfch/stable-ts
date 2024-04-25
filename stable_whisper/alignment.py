@@ -207,13 +207,14 @@ def align(
     if failure_threshold is not None and (failure_threshold < 0 or failure_threshold > 1):
         raise ValueError(f'``failure_threshold`` ({failure_threshold}) must be between 0 and 1.')
     is_faster_model = model.__module__.startswith('faster_whisper.')
+    if not is_faster_model:
+        warn_compatibility_issues(whisper, ignore_compatibility)
     max_token_step = (model.max_length if is_faster_model else model.dims.n_text_ctx) - 6
     if token_step < 1:
         token_step = max_token_step
     elif token_step > max_token_step:
         raise ValueError(f'The max value for [token_step] is {max_token_step} but got {token_step}.')
 
-    warn_compatibility_issues(whisper, ignore_compatibility)
     split_indices_by_char = []
     if isinstance(text, WhisperResult):
         if language is None:

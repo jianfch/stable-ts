@@ -49,6 +49,8 @@ if IS_WHISPER_AVAILABLE:
     from whisper.model import Whisper
     from whisper.decoding import DecodingTask, DecodingOptions, DecodingResult, SuppressTokens
 else:
+    import torch
+    import numpy as np
     whisper = None
     # hard-coded audio hyperparameters from Whisper
     SAMPLE_RATE = 16000
@@ -61,7 +63,7 @@ else:
     FRAMES_PER_SECOND = exact_div(SAMPLE_RATE, HOP_LENGTH)  # 10ms per audio frame
     TOKENS_PER_SECOND = exact_div(SAMPLE_RATE, N_SAMPLES_PER_TOKEN)  # 20ms per audio token
 
-    log_mel_spectrogram = pad_or_trim = median_filter = dtw = merge_punctuations = get_whisper_tokenizer \
+    log_mel_spectrogram = median_filter = dtw = merge_punctuations = get_whisper_tokenizer \
         = whisper_not_available
     Tokenizer = Whisper = DecodingTask = DecodingOptions = DecodingResult = SuppressTokens = Unavailable
     LANGUAGES = {
@@ -183,6 +185,32 @@ else:
         "castilian": "es",
         "mandarin": "zh",
     }
+
+
+    def pad_or_trim(array, length: int = N_SAMPLES, *, axis: int = -1):
+        """
+        Pad or trim the audio array to N_SAMPLES, as expected by the encoder.
+        """
+        if torch.is_tensor(array):
+            if array.shape[axis] > length:
+                array = array.index_select(
+                    dim=axis, index=torch.arange(length, device=array.device)
+                )
+
+            if array.shape[axis] < length:
+                pad_widths = [(0, 0)] * array.ndim
+                pad_widths[axis] = (0, length - array.shape[axis])
+                array = torch.nn.functional.pad(array, [pad for sizes in pad_widths[::-1] for pad in sizes])
+        else:
+            if array.shape[axis] > length:
+                array = array.take(indices=range(length), axis=axis)
+
+            if array.shape[axis] < length:
+                pad_widths = [(0, 0)] * array.ndim
+                pad_widths[axis] = (0, length - array.shape[axis])
+                array = np.pad(array, pad_widths)
+
+        return array
 
 
 def warn_compatibility_issues(
