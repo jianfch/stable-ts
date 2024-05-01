@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torchaudio
 
-from whisper.audio import SAMPLE_RATE
+from ..whisper_compatibility import SAMPLE_RATE
 
 
 def is_ytdlp_available():

@@ -6,18 +6,17 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-import whisper
-from whisper import log_mel_spectrogram, pad_or_trim, DecodingResult, DecodingOptions
-from whisper.audio import SAMPLE_RATE, N_FRAMES, HOP_LENGTH, N_SAMPLES_PER_TOKEN, N_SAMPLES
-from whisper.tokenizer import LANGUAGES
-from whisper.utils import exact_div
+from ..whisper_compatibility import (
+    whisper, log_mel_spectrogram, pad_or_trim, DecodingResult, DecodingOptions,
+    SAMPLE_RATE, N_FRAMES, HOP_LENGTH, N_SAMPLES_PER_TOKEN, N_SAMPLES, LANGUAGES
+)
 
 from ..result import WhisperResult, Segment
 from ..audio import AudioLoader, audioloader_not_supported, convert_demucs_kwargs
 from ..decode import decode_stable
 from ..stabilization import NonSpeechPredictor
 from ..timing import add_word_timestamps_stable
-from ..utils import safe_print, isolate_useful_options, update_options
+from ..utils import safe_print, isolate_useful_options, update_options, exact_div
 from ..whisper_compatibility import warn_compatibility_issues, get_tokenizer
 from ..default import get_min_word_dur, get_prepend_punctuations, get_append_punctuations
 
@@ -867,6 +866,9 @@ def load_model(name: str, device: Optional[Union[str, torch.device]] = None,
     -----
     The overhead from ``dq = True`` might make inference slower for models smaller than 'large'.
     """
+    if whisper is None:
+        from ..whisper_compatibility import whisper_not_available
+        whisper_not_available()
     if device is None or dq:
         device = "cuda" if torch.cuda.is_available() and not dq else "cpu"
     if cpu_preload:

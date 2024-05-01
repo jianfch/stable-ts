@@ -5,7 +5,7 @@ from typing import List, Union, Optional, Tuple
 import numpy as np
 import torch
 
-from whisper.audio import TOKENS_PER_SECOND
+from ..whisper_compatibility import TOKENS_PER_SECOND
 
 
 def is_ascending_sequence(

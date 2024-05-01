@@ -31,6 +31,19 @@ To install the latest commit:
 pip install -U git+https://github.com/jianfch/stable-ts.git
 ```
 
+<details>
+<summary>Whisperless Version</summary>
+
+To install Stable-ts without Whisper as a dependency:
+```
+pip install -U stable-ts-whisperless
+```
+To install the latest Whisperless commit:
+```
+pip install -U git+https://github.com/jianfch/stable-ts.git@whisperless
+```
+</details>
+
 ## Usage
 
 ### Transcribe

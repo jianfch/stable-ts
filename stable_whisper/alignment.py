@@ -15,16 +15,14 @@ from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
 from .stabilization import NonSpeechPredictor
 from .default import get_min_word_dur, get_prepend_punctuations, get_append_punctuations
 
-import whisper
-from whisper.audio import (
-    SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES
+from .whisper_compatibility import (
+    SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES,
+    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper
 )
-from whisper.timing import median_filter
-from whisper.decoding import DecodingTask, DecodingOptions, SuppressTokens
 
 if TYPE_CHECKING:
-    from whisper.model import Whisper
-    from whisper.tokenizer import Tokenizer
+    from .whisper_compatibility import Whisper
+    from .whisper_compatibility import Tokenizer
 
 __all__ = ['align', 'refine', 'locate']
 
@@ -209,13 +207,14 @@ def align(
     if failure_threshold is not None and (failure_threshold < 0 or failure_threshold > 1):
         raise ValueError(f'``failure_threshold`` ({failure_threshold}) must be between 0 and 1.')
     is_faster_model = model.__module__.startswith('faster_whisper.')
+    if not is_faster_model:
+        warn_compatibility_issues(whisper, ignore_compatibility)
     max_token_step = (model.max_length if is_faster_model else model.dims.n_text_ctx) - 6
     if token_step < 1:
         token_step = max_token_step
     elif token_step > max_token_step:
         raise ValueError(f'The max value for [token_step] is {max_token_step} but got {token_step}.')
 
-    warn_compatibility_issues(whisper, ignore_compatibility)
     split_indices_by_char = []
     if isinstance(text, WhisperResult):
         if language is None:

@@ -4,11 +4,11 @@ from dataclasses import replace
 import torch
 import numpy as np
 
-from whisper.decoding import DecodingTask, DecodingOptions, DecodingResult
+from .whisper_compatibility import DecodingTask, DecodingOptions, DecodingResult
 
 
 if TYPE_CHECKING:
-    from whisper.model import Whisper
+    from .whisper_compatibility import Whisper
 
 
 def _suppress_ts(ts_logits: torch.Tensor, ts_token_mask: torch.Tensor = None):
@@ -71,7 +71,7 @@ class DecodingTaskStable(DecodingTask):
 @torch.no_grad()
 def decode_stable(model: "Whisper",
                   mel: torch.Tensor,
-                  options: DecodingOptions = DecodingOptions(),
+                  options: DecodingOptions = None,
                   ts_token_mask: torch.Tensor = None,
                   audio_features: torch.Tensor = None,
                   **kwargs, ) -> \
@@ -99,6 +99,9 @@ def decode_stable(model: "Whisper",
     """
     if single := mel.ndim == 2:
         mel = mel.unsqueeze(0)
+
+    if options is None:
+        options = DecodingOptions()
 
     if kwargs:
         options = replace(options, **kwargs)

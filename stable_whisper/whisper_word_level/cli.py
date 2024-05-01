@@ -13,9 +13,7 @@ from ..utils import isolate_useful_options, str_to_valid_type, get_func_paramete
 from ..audio import SUPPORTED_DENOISERS
 from ..default import *
 
-from whisper import DecodingOptions, available_models
-from whisper.tokenizer import LANGUAGES, TO_LANGUAGE_CODE
-from whisper.utils import optional_int, optional_float
+from ..whisper_compatibility import DecodingOptions, LANGUAGES, TO_LANGUAGE_CODE
 
 
 def _split_input_args(args: str) -> List[str]:
@@ -25,6 +23,14 @@ def _split_input_args(args: str) -> List[str]:
     return args
 
 
+def optional_int(string):
+    return None if string == "None" else int(string)
+
+
+def optional_float(string):
+    return None if string == "None" else float(string)
+
+
 # modified version of whisper.transcribe.cli
 def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
 
@@ -32,18 +38,42 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
 
     str2val = {"true": True, "false": False, "1": True, "0": False}
 
+    default_langs_choices = sorted(LANGUAGES.keys()) + sorted([k.title() for k in TO_LANGUAGE_CODE.keys()])
+
     def str2bool(string: str) -> bool:
         string = string.lower()
         if string in str2val:
             return str2val[string]
         raise ValueError(f"Expected one of {set(str2val.keys())}, got {string}")
 
-    def valid_model_name(name):
-        if name in available_models() or os.path.exists(name):
+    def valid_model_name(name: str) -> str:
+        available_models = {}
+        if is_original_whisper:
+            from whisper import available_models
+        elif is_faster_whisper:
+            from faster_whisper.utils import available_models
+        _models = None if is_hf_whisper or available_models is None else available_models()
+
+        if not _models or name in _models or os.path.exists(name):
             return name
         raise ValueError(
-            f"model should be one of {available_models()} or path to a model checkpoint"
+            f"model should be one of {_models} or path to a model checkpoint"
         )
+
+    def valid_language(lang: Optional[str]) -> Union[str, None]:
+        if lang is None:
+            return
+        lang_code = lang
+        if is_faster_whisper:
+            from faster_whisper.tokenizer import _LANGUAGE_CODES
+            lang_code = lang
+            if lang not in _LANGUAGE_CODES and lang.lower() in TO_LANGUAGE_CODE:
+                lang_code = TO_LANGUAGE_CODE[lang]
+            if lang_code not in _LANGUAGE_CODES:
+                raise ValueError(
+                    f'"{lang}" is not one of the available languages: {default_langs_choices}'
+                )
+        return lang_code
 
     def use_deprecated_args(
             key: str, old_key: str, pop: bool = False, expected_default=None, new_default=None, eg: str = None,
@@ -99,7 +129,7 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                         help="output filepaths(s);"
                              "if not specified, auto-named output file(s) will be saved to "
                              "[output_dir] or current dir if not specified.")
-    parser.add_argument("--model", '-m', default="base", type=valid_model_name,
+    parser.add_argument("--model", '-m', default="base", type=str,
                         help="name of the Whisper model to use")
     parser.add_argument("--model_dir", type=str, default=None,
                         help="the path to save model files; uses ~/.cache/whisper by default")
@@ -132,7 +162,7 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                         help="whether to perform X->X speech recognition ('transcribe') "
                              "or X->English translation ('translate')")
     parser.add_argument("--language", '-l', type=str, default=None,
-                        choices=sorted(LANGUAGES.keys()) + sorted([k.title() for k in TO_LANGUAGE_CODE.keys()]),
+                        choices=default_langs_choices,
                         help="language spoken in the audio, specify None to perform language detection")
 
     parser.add_argument("--prepend_punctuations", '-pp', type=str, default=get_prepend_punctuations(),
@@ -396,7 +426,8 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
     is_hf_whisper = args.pop('huggingface_whisper')
     assert not (is_faster_whisper and is_hf_whisper), f'--huggingface_whisper cannot be used with --faster_whisper'
     is_original_whisper = not (is_faster_whisper or is_hf_whisper)
-    model_name: str = args.pop("model")
+    args['language'] = valid_language(args['language'])
+    model_name: str = valid_model_name(args.pop("model"))
     model_dir: str = args.pop("model_dir")
     inputs: List[Union[str, torch.Tensor]] = args.pop("inputs")
     outputs: List[str] = args.pop("output")

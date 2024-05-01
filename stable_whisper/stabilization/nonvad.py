@@ -7,7 +7,7 @@ from torch.nn import functional as F
 from .utils import mask2timing, timing2mask
 from ..audio.utils import audio_to_tensor_resample
 
-from whisper.audio import N_SAMPLES_PER_TOKEN
+from ..whisper_compatibility import N_SAMPLES_PER_TOKEN
 
 
 NONVAD_SAMPLE_RATES = (16000,)
