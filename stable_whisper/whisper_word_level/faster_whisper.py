@@ -32,6 +32,7 @@ def faster_transcribe(
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         min_word_dur: Optional[float] = None,
+        min_silence_dur: Optional[float] = None,
         nonspeech_error: float = 0.1,
         only_voice_freq: bool = False,
         only_ffmpeg: bool = False,
@@ -93,6 +94,8 @@ def faster_transcribe(
         Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
     nonspeech_error : float, default 0.3
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
@@ -160,6 +163,7 @@ def faster_transcribe(
         vad_threshold=vad_threshold,
         vad_onnx=vad_onnx,
         min_word_dur=min_word_dur,
+        min_silence_dur=min_silence_dur,
         nonspeech_error=nonspeech_error,
         use_word_position=use_word_position,
         only_voice_freq=only_voice_freq,

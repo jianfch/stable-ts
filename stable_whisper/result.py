@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from .stabilization import suppress_silence, get_vad_silence_func, VAD_SAMPLE_RATES
 from .stabilization.nonvad import audio2timings
+from .stabilization.utils import filter_timings
 from .text_output import *
 from .utils import str_to_valid_type, format_timestamp, UnsortedException
 from .audio.utils import audio_to_tensor_resample
@@ -187,10 +188,12 @@ class WordTiming:
     def suppress_silence(self,
                          silent_starts: np.ndarray,
                          silent_ends: np.ndarray,
+                         *,
                          min_word_dur: Optional[float] = None,
+                         min_silence_dur: Optional[float] = None,
                          nonspeech_error: float = 0.3,
                          keep_end: Optional[bool] = True):
-        suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)
+        suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end, min_silence_dur)
         return self
 
     def rescale_time(self, scale_factor: float):
@@ -1006,7 +1009,7 @@ class WhisperResult:
             word_level: bool = True,
             nonspeech_error: float = 0.3,
             use_word_position: bool = True,
-            verbose: bool = True
+            verbose: bool = True,
     ) -> "WhisperResult":
         """
         Move any start/end timestamps in silence parts of audio to the boundaries of the silence.
@@ -1064,6 +1067,7 @@ class WhisperResult:
             q_levels: int = 20,
             k_size: int = 5,
             min_word_dur: Optional[float] = None,
+            min_silence_dur: Optional[float] = None,
             word_level: bool = True,
             nonspeech_error: float = 0.3,
             use_word_position: bool = True
@@ -1100,6 +1104,8 @@ class WhisperResult:
             Recommend 5 or 3; higher sizes will reduce detection of silence.
         min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
             Shortest duration each word is allowed to reach from adjustments.
+        min_silence_dur : float, optional
+            Shortest duration of silence allowed for silence suppression.
         word_level : bool, default True
             Whether to settings to word level timestamps.
         nonspeech_error : float, default 0.3
@@ -1132,6 +1138,8 @@ class WhisperResult:
             silent_timings = audio2timings(audio, q_levels=q_levels, k_size=k_size, sr=sample_rate)
         if silent_timings is None:
             return self
+        if min_silence_dur:
+            silent_timings = filter_timings(silent_timings, min_silence_dur)
         self.suppress_silence(
             *silent_timings,
             min_word_dur=min_word_dur,

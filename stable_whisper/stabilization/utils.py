@@ -104,6 +104,17 @@ def timing2mask(
     return ts_token_mask
 
 
+def filter_timings(
+        silent_timings: Union[Tuple[np.ndarray, np.ndarray], None],
+        min_silence_dur: float
+) -> (Tuple[np.ndarray, np.ndarray], None):
+    if silent_timings is None:
+        return
+    silent_starts, silent_ends = silent_timings
+    mask = (silent_ends - silent_starts) >= min_silence_dur
+    return silent_starts[mask], silent_ends[mask]
+
+
 class SetTorchThread:
     def __init__(self, temp_thread_count: int):
         self.original_thread_count = torch.get_num_threads()

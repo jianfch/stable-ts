@@ -17,7 +17,7 @@ from .default import get_min_word_dur, get_prepend_punctuations, get_append_punc
 
 from .whisper_compatibility import (
     SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES,
-    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper
+    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper, TOKENS_PER_SECOND
 )
 
 if TYPE_CHECKING:
@@ -40,6 +40,7 @@ def align(
         suppress_attention: bool = False,
         use_word_position: bool = True,
         min_word_dur: Optional[float] = None,
+        min_silence_dur: Optional[float] = None,
         nonspeech_error: float = 0.1,
         q_levels: int = 20,
         k_size: int = 5,
@@ -144,6 +145,8 @@ def align(
         Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
     nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
@@ -379,7 +382,7 @@ def align(
     nonspeech_predictor = NonSpeechPredictor(
         vad=vad if suppress_silence else None,
         mask_pad_func=pad_or_trim,
-        get_mask=False,
+        get_mask=True,
         min_word_dur=min_word_dur,
         q_levels=q_levels,
         k_size=k_size,
@@ -389,10 +392,57 @@ def align(
         sampling_rate=SAMPLE_RATE,
         verbose=None if audio.stream else verbose,
         store_timings=True,
-        ignore_is_silent=True
+        ignore_is_silent=True,
+        min_silence_dur=min_silence_dur
     )
     audio.update_post_prep_callback(nonspeech_predictor.get_on_prep_callback(audio.stream))
     failure_count, max_fail = 0, total_words * (failure_threshold or 1)
+    all_punctuations = prepend_punctuations + append_punctuations
+
+    def fix_temp_words(target_word: dict, word_sources: List[dict], second_target: Optional[dict] = None):
+        first_word_src = word_sources[0]
+        assert target_word['word'].startswith(first_word_src['word'])
+        if target_word['word'] != first_word_src['word']:
+            if len(word_sources) < 2:
+                return None, []
+            first_word_src['probability'] = [first_word_src['probability']]
+            if first_word_src['word'].strip() in all_punctuations:
+                first_word_src['start'], first_word_src['end'] = word_sources[1]['start'], word_sources[1]['end']
+            for _ in range(len(word_sources)-1):
+                tw = word_sources.pop(1)
+                fullword = first_word_src['word'] + tw['word']
+                assert target_word['word'].startswith(fullword)
+                first_word_src['word'] = fullword
+                first_word_src['tokens'] += tw['tokens']
+                first_word_src['probability'].append(tw['probability'])
+                if tw['word'].strip() not in all_punctuations:
+                    first_word_src['end'] = tw['end']
+                if target_word['word'] == first_word_src['word']:
+                    break
+            if target_word['word'] != first_word_src['word']:
+                return None, []
+            if isinstance(first_word_src['probability'], list):
+                first_word_src['probability'] = np.mean(first_word_src['probability']).item()
+        elif second_target:
+            if len(word_sources) == 1:
+                return first_word_src, []
+            second_word_src, word_sources = fix_temp_words(second_target, word_sources[1:])
+            if second_word_src is not None:
+                word_sources = [second_word_src] + word_sources
+            return first_word_src, word_sources
+
+        return first_word_src, word_sources[1:]
+
+    def speech_percentage(_word: dict, _mask: torch.Tensor, _offset: float):
+        s, e = _word['start'], _word['end']
+        s = int((s - _offset) * TOKENS_PER_SECOND)
+        e = int((e - _offset) * TOKENS_PER_SECOND)
+        return 1 - _mask[s:e].float().mean().nan_to_num()
+
+    def is_new_better(w0, m0, o0, w1, m1, o1):
+        speech0 = speech_percentage(w0, m0, o0)
+        speech1 = speech_percentage(w1, m1, o1)
+        return speech0 >= speech1 or w0['probability'] >= w1['probability']
 
     with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc='Align') as tqdm_pbar:
 
@@ -406,12 +456,41 @@ def align(
             if progress_callback is not None:
                 progress_callback(seek=tqdm_pbar.n, total=tqdm_pbar.total)
 
+        def update_curr_words():
+            if temp_data['temp_word'] is not None:
+                temp_words = [temp_data['temp_word']] + temp_data['extra_words'][:len(curr_words) - 1]
+                curr_words[:len(temp_words)] = temp_words
+                temp_data['temp_word'] = None
+
         def redo_words(_idx: int = None):
-            nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words, temp_word
-            if _idx is not None and curr_words and temp_word is not None:
-                assert curr_words[0]['word'] == temp_word['word']
-                if curr_words[0]['probability'] >= temp_word['probability']:
-                    temp_word = curr_words[0]
+            nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words, temp_data
+            if _idx is not None and curr_words and temp_data['temp_word'] is not None:
+                temp_data['temp_word'], temp_data['extra_words'] = fix_temp_words(
+                    curr_words[0],
+                    [temp_data['temp_word']] + temp_data['extra_words'],
+                    curr_words[1] if len(curr_words) > 1 else None
+                )
+
+                if temp_data['temp_word']:
+                    use_new = is_new_better(
+                        curr_words[0], nonspeech_preds['mask'], time_offset,
+                        temp_data['temp_word'], temp_data['temp_mask'], temp_data['temp_offset']
+                    )
+                    new_extra_words = []
+                    if use_new:
+                        temp_data['temp_word'] = curr_words[0]
+                    else:
+                        for wi, (cw, tw) in enumerate(zip(curr_words[1:], temp_data['extra_words'])):
+                            assert cw['word'].startswith(tw['word'])
+                            use_new = is_new_better(
+                                cw, nonspeech_preds['mask'], time_offset,
+                                tw, temp_data['temp_mask'], temp_data['temp_offset']
+                            )
+                            if use_new or cw['word'] != tw['word'] or cw['end'] < tw['end']:
+                                break
+                            new_extra_words.append(tw)
+                    temp_data['extra_words'] = new_extra_words
+
             if _idx is None:  # redo all
                 words = seg_words + words
                 word_tokens = seg_tokens + word_tokens
@@ -419,20 +498,19 @@ def align(
             elif _idx != len(seg_words):  # redo from _idx
                 words = seg_words[_idx:] + words
                 word_tokens = seg_tokens[_idx:] + word_tokens
-                curr_words = curr_words[:_idx]
+                curr_words, new_extra_words = curr_words[:_idx], curr_words[_idx:]
                 if curr_words:
-                    if temp_word is not None:
-                        curr_words[0] = temp_word
-                        temp_word = None
+                    update_curr_words()
                     words = seg_words[_idx-1:_idx] + words
                     word_tokens = seg_tokens[_idx-1:_idx] + word_tokens
-                    temp_word = curr_words.pop(-1)
+                    temp_data['temp_word'] = curr_words.pop(-1)
+                    temp_data['extra_words'] = new_extra_words
+                    temp_data['temp_mask'] = nonspeech_preds['mask']
+                    temp_data['temp_offset'] = time_offset
             else:
-                if temp_word is not None:
-                    curr_words[0] = temp_word
-                    temp_word = None
+                update_curr_words()
 
-        temp_word = None
+        temp_data: dict = dict(temp_word=None)
 
         while words:
 
@@ -562,8 +640,8 @@ def align(
 
         update_pbar(failure_count <= max_fail)
 
-    if temp_word is not None:
-        result.append(temp_word)
+    if temp_data.get('temp_word') is not None:
+        result.append(temp_data['temp_word'])
     if not result:
         warnings.warn('Failed to align text.', stacklevel=2)
     if failure_count > max_fail:

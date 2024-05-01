@@ -44,6 +44,7 @@ def transcribe_any(
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         min_word_dur: Optional[float] = None,
+        min_silence_dur: Optional[float] = None,
         nonspeech_error: float = 0.1,
         use_word_position: bool = True,
         only_voice_freq: bool = False,
@@ -107,6 +108,8 @@ def transcribe_any(
         Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
     nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     use_word_position : bool, default True
@@ -348,7 +351,8 @@ def transcribe_any(
                 sample_rate=curr_audio_sr(True), min_word_dur=min_word_dur,
                 word_level=suppress_word_ts, verbose=True,
                 nonspeech_error=nonspeech_error,
-                use_word_position=use_word_position
+                use_word_position=use_word_position,
+                min_silence_dur=min_silence_dur
             )
 
         if result.has_words and regroup:

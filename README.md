@@ -174,6 +174,8 @@ Docstrings:
         Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
     nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
@@ -298,6 +300,8 @@ Docstrings:
         Whether to use ONNX for Silero VAD.
     min_word_dur : float, default 0.1
         Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
     nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
@@ -413,6 +417,8 @@ Docstring:
         Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
     nonspeech_error : float, default 0.3
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False
@@ -861,6 +867,8 @@ Docstring:
         Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
     nonspeech_error : float, default 0.1
         Relative error of non-speech sections that appear in between a word for silence suppression.
     only_voice_freq : bool, default False

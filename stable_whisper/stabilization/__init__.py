@@ -6,7 +6,7 @@ import numpy as np
 
 from .nonvad import NONVAD_SAMPLE_RATES, audio2loudness, wav2mask, visualize_mask
 from .silero_vad import VAD_SAMPLE_RATES, load_silero_vad_model, compute_vad_probs, assert_sr_window
-from .utils import is_ascending_sequence, valid_ts, mask2timing, timing2mask
+from .utils import is_ascending_sequence, valid_ts, mask2timing, timing2mask, filter_timings
 from ..audio.utils import audio_to_tensor_resample
 from ..default import get_min_word_dur
 
@@ -30,9 +30,11 @@ class NonSpeechPredictor:
             store_timings: bool = False,
             ignore_is_silent: bool = False,
             stream: bool = False,
-            units_per_seconds: int = None
+            units_per_seconds: int = None,
+            min_silence_dur: Optional[float] = None
     ):
         min_word_dur = get_min_word_dur(min_word_dur)
+        self.min_silence_dur = min_silence_dur
         self.vad = vad
         self.mask_pad_func = mask_pad_func
         self.get_mask = get_mask
@@ -64,13 +66,23 @@ class NonSpeechPredictor:
         self._using_callback = False
         self._load_vad_model()
         if self.vad is None:
-            self.predict = self.predict_with_samples
+            self._predict = self.predict_with_samples
         else:
-            self.predict = self.predict_with_vad if self.vad else self.predict_with_nonvad
+            self._predict = self.predict_with_vad if self.vad else self.predict_with_nonvad
 
     @property
     def nonspeech_timings(self):
         return self._nonspeech_timings
+
+    def predict(
+            self,
+            audio: torch.Tensor,
+            offset: Optional[float] = None
+    ) -> dict:
+        pred = self._predict(audio, offset)
+        if self.min_silence_dur:
+            pred['timings'] = filter_timings(pred['timings'], self.min_silence_dur)
+        return pred
 
     def _load_vad_model(self):
         if self.vad:
@@ -244,9 +256,14 @@ class NonSpeechPredictor:
             audio: torch.Tensor,
             offset: Optional[float] = None
     ) -> dict:
-        mask = torch.where(audio == 0, True, False).cpu()
-        is_silent = self._silent_mask_test(mask, self.min_samples_per_word)
-        return dict(timings=None, mask=None, is_silent=is_silent)
+        if self.get_mask:
+            mask = torch.all(audio.reshape(-1, N_SAMPLES_PER_TOKEN), dim=-1)
+            min_unit_per_word = self.min_frames_per_word
+        else:
+            mask = audio == 0
+            min_unit_per_word = self.min_samples_per_word
+        is_silent = self._silent_mask_test(mask, min_unit_per_word)
+        return dict(timings=None, mask=self.pad_mask(mask) if self.get_mask else None, is_silent=is_silent)
 
 
 def get_vad_silence_func(
@@ -316,10 +333,10 @@ def suppress_silence(
             result_obj.start <= silent_starts,
             result_obj.end >= silent_ends,
         ).nonzero()[0].tolist()
-        if len(matches) == 0:
+        if len(matches) != 1:
             return
-        silence_start = np.min(silent_starts[matches])
-        silence_end = np.max(silent_ends[matches])
+        silence_start = silent_starts[matches[0]]
+        silence_end = silent_ends[matches[0]]
         start_extra = silence_start - result_obj.start
         end_extra = result_obj.end - silence_end
         silent_duration = silence_end - silence_start
