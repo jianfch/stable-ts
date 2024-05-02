@@ -188,12 +188,10 @@ class WordTiming:
     def suppress_silence(self,
                          silent_starts: np.ndarray,
                          silent_ends: np.ndarray,
-                         *,
                          min_word_dur: Optional[float] = None,
-                         min_silence_dur: Optional[float] = None,
                          nonspeech_error: float = 0.3,
                          keep_end: Optional[bool] = True):
-        suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end, min_silence_dur)
+        suppress_silence(self, silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)
         return self
 
     def rescale_time(self, scale_factor: float):
