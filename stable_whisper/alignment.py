@@ -649,8 +649,9 @@ def align(
                       f'{format_timestamp(seek_sample / SAMPLE_RATE)}.',
                       stacklevel=2)
     elif words:
+        last_ts_str = format_timestamp(result[-1]["end"] if result else 0)
         warnings.warn(f'Failed to align the last {len(words)}/{total_words} words after '
-                      f'{format_timestamp(result[-1]["end"])}.', stacklevel=2)
+                      f'{last_ts_str}.', stacklevel=2)
 
     if words and not remove_instant_words:
         final_total_duration = audio.get_duration(3)
