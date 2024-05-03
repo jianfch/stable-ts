@@ -257,6 +257,8 @@ class NonSpeechPredictor:
             offset: Optional[float] = None
     ) -> dict:
         if self.get_mask:
+            if extra_len := audio.shape[-1] % N_SAMPLES_PER_TOKEN:
+                audio = torch.nn.functional.pad(audio, (0, N_SAMPLES_PER_TOKEN - extra_len))
             mask = torch.all(audio.reshape(-1, N_SAMPLES_PER_TOKEN), dim=-1)
             min_unit_per_word = self.min_frames_per_word
         else:
@@ -308,7 +310,7 @@ def suppress_silence(
     if isinstance(silent_ends, list):
         silent_ends = np.array(silent_ends)
 
-    start_overlaps = np.all(
+    start_overlaps = (keep_end is None or keep_end) and np.all(
         (silent_starts <= result_obj.start, result_obj.start < silent_ends, silent_ends <= result_obj.end),
         axis=0
     ).nonzero()[0].tolist()
@@ -318,7 +320,7 @@ def suppress_silence(
         if (result_obj.end - result_obj.start) <= min_word_dur:
             return
 
-    end_overlaps = np.all(
+    end_overlaps = not keep_end and np.all(
         (result_obj.start <= silent_starts, silent_starts < result_obj.end, result_obj.end <= silent_ends),
         axis=0
     ).nonzero()[0].tolist()
@@ -335,24 +337,43 @@ def suppress_silence(
         ).nonzero()[0].tolist()
         if len(matches) != 1:
             return
-        silence_start = silent_starts[matches[0]]
-        silence_end = silent_ends[matches[0]]
-        start_extra = silence_start - result_obj.start
-        end_extra = result_obj.end - silence_end
-        silent_duration = silence_end - silence_start
-        start_within_error = (start_extra / silent_duration) <= nonspeech_error
-        end_within_error = (end_extra / silent_duration) <= nonspeech_error
-        if keep_end is None:
-            keep_end = start_extra <= end_extra
-            within_error = start_within_error if keep_end else end_within_error
-        else:
-            within_error = start_within_error or end_within_error
 
-        if within_error:
-            if keep_end:
+        def silence_errors(silence_start, silence_end):
+            start_extra = silence_start - result_obj.start
+            end_extra = result_obj.end - silence_end
+            silent_duration = silence_end - silence_start
+            start_error = start_extra / silent_duration
+            end_error = end_extra / silent_duration
+            return start_error, end_error
+
+        def _adjust(silence_start, silence_end, errors=None):
+            if not errors:
+                errors = silence_errors(silence_start, silence_end)
+            _keep_end = keep_end
+            start_within_error = errors[0] <= nonspeech_error
+            end_within_error = errors[1] <= nonspeech_error
+            if _keep_end is None:
+                _keep_end = errors[0] <= errors[1]
+            if not (start_within_error or end_within_error):
+                return
+            if _keep_end:
                 result_obj.start = min(silence_end, round(result_obj.end - min_word_dur, 3))
             else:
                 result_obj.end = max(silence_start, round(result_obj.start + min_word_dur, 3))
+
+        max_i = len(matches) - 1
+        for i in range(len(matches)):
+            error = None
+            if i == max_i:
+                idx = 0
+            elif keep_end is None:
+                error0 = silence_errors(silent_starts[matches[0]], silent_ends[matches[0]])
+                error1 = silence_errors(silent_starts[matches[-1]], silent_ends[matches[-1]])
+                idx, error = (0, error0) if min(error0) <= min(error1) else (-1, error1)
+            else:
+                idx = 0 if keep_end else -1
+            idx = matches.pop(idx)
+            _adjust(silent_starts[idx], silent_ends[idx], error)
 
 
 def visualize_suppression(

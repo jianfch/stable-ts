@@ -648,7 +648,7 @@ class Segment:
             words = self.words if word_level or len(self.words) == 1 else [self.words[0], self.words[-1]]
             for i, w in enumerate(words, 1):
                 if use_word_position:
-                    keep_end = w.word[-1] not in ending_punctuations
+                    keep_end = not (w.word[-1] in ending_punctuations or i == len(words))
                 else:
                     keep_end = None
                 w.suppress_silence(silent_starts, silent_ends, min_word_dur, nonspeech_error, keep_end)

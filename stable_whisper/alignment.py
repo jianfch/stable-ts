@@ -440,8 +440,8 @@ def align(
         return 1 - _mask[s:e].float().mean().nan_to_num()
 
     def is_new_better(w0, m0, o0, w1, m1, o1):
-        speech0 = speech_percentage(w0, m0, o0)
-        speech1 = speech_percentage(w1, m1, o1)
+        speech0 = speech_percentage(w0, m0, o0).round(decimals=1)
+        speech1 = speech_percentage(w1, m1, o1).round(decimals=1)
         return speech0 >= speech1 or w0['probability'] >= w1['probability']
 
     with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc='Align') as tqdm_pbar:
