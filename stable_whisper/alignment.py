@@ -259,11 +259,11 @@ def align(
                 cumsum_len += len(word)
                 if cumsums and cumsum_len >= cumsums[0]:
                     cumsums.pop(0)
-                    pad_mask.append(True)
+                    pad_mask.extend([True]*len(word))
                 else:
-                    pad_mask.append(False)
+                    pad_mask.extend([False]*len(word))
         else:
-            pad_mask = [any(map(w.endswith, presplit)) for w in words]
+            pad_mask = [b for w in words for b in [any(map(w.endswith, presplit))]*len(w)]
 
     if isinstance(audio, AudioLoader):
         audio.validate_external_args(
@@ -290,6 +290,7 @@ def align(
 
     seek_sample = 0
     total_words = len(words)
+    remaining_len = sum(len(w) for w in words)
 
     if is_faster_model:
 
@@ -357,26 +358,29 @@ def align(
                 append_punctuations=append_punctuations,
                 gap_padding=gap_padding if presplit else None,
                 extra_models=extra_models,
+                pad_first_seg=pad_first_seg
             )
             if len(temp_segments) == 1:
                 return temp_segments[0]
             return dict(words=[w for seg in temp_segments for w in seg['words']])
 
     def get_curr_words():
-        nonlocal words, word_tokens, pad_mask
+        nonlocal words, word_tokens, pad_mask, remaining_len
         curr_tk_count = 0
         w, wt, m = [], [], []
+        is_start_gap = (True if remaining_len == len(pad_mask) else pad_mask[-(remaining_len+1)]) if pad_mask else True
         for i in range(len(words)):
             tk_count = len(word_tokens[0])
-            m_count = 1 if pad_mask and pad_mask[0] else 0
+            m_count = 1 if pad_mask and pad_mask[-(remaining_len-len(words[0])+1)] else 0
             if curr_tk_count + len(m) + tk_count + m_count > token_step and w:
                 break
+            if pad_mask and pad_mask[-(remaining_len-len(words[0])+1)]:
+                    m.append(i+1)
+            remaining_len -= len(words[0])
             w.append(words.pop(0))
             wt.append(word_tokens.pop(0))
             curr_tk_count += tk_count
-            if pad_mask and pad_mask.pop(0):
-                m.append(i+1)
-        return w, wt, m
+        return w, wt, m, is_start_gap
     result = []
 
     nonspeech_predictor = NonSpeechPredictor(
@@ -434,6 +438,8 @@ def align(
         return first_word_src, word_sources[1:]
 
     def speech_percentage(_word: dict, _mask: torch.Tensor, _offset: float):
+        if _mask is None:
+            return 1
         s, e = _word['start'], _word['end']
         s = int((s - _offset) * TOKENS_PER_SECOND)
         e = int((e - _offset) * TOKENS_PER_SECOND)
@@ -442,7 +448,8 @@ def align(
     def is_new_better(w0, m0, o0, w1, m1, o1):
         speech0 = speech_percentage(w0, m0, o0).round(decimals=1)
         speech1 = speech_percentage(w1, m1, o1).round(decimals=1)
-        return speech0 >= speech1 or w0['probability'] >= w1['probability']
+        w0p, w1p = w0['probability'], w1['probability']
+        return ((w1p**0.75 - w0p**0.75) < 0.35 and speech0 >= speech1) or w0p >= w1p
 
     with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc='Align') as tqdm_pbar:
 
@@ -463,7 +470,7 @@ def align(
                 temp_data['temp_word'] = None
 
         def redo_words(_idx: int = None):
-            nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words, temp_data
+            nonlocal seg_words, seg_tokens, seg_words, words, word_tokens, curr_words, temp_data, remaining_len
             if _idx is not None and curr_words and temp_data['temp_word'] is not None:
                 temp_data['temp_word'], temp_data['extra_words'] = fix_temp_words(
                     curr_words[0],
@@ -492,15 +499,18 @@ def align(
                     temp_data['extra_words'] = new_extra_words
 
             if _idx is None:  # redo all
+                remaining_len += sum(len(w) for w in seg_words)
                 words = seg_words + words
                 word_tokens = seg_tokens + word_tokens
                 curr_words = []
             elif _idx != len(seg_words):  # redo from _idx
+                remaining_len += sum(len(w) for w in seg_words[_idx:])
                 words = seg_words[_idx:] + words
                 word_tokens = seg_tokens[_idx:] + word_tokens
                 curr_words, new_extra_words = curr_words[:_idx], curr_words[_idx:]
                 if curr_words:
                     update_curr_words()
+                    remaining_len += sum(len(w) for w in seg_words[_idx-1:_idx])
                     words = seg_words[_idx-1:_idx] + words
                     word_tokens = seg_tokens[_idx-1:_idx] + word_tokens
                     temp_data['temp_word'] = curr_words.pop(-1)
@@ -559,7 +569,7 @@ def align(
                             audio_segment = audio_segment[:new_sample_count]
                             segment_samples = audio_segment.shape[-1]
 
-            curr_words, curr_word_tokens, curr_split_indices = get_curr_words()
+            curr_words, curr_word_tokens, curr_split_indices, pad_first_seg = get_curr_words()
 
             segment = timestamp_words()
             curr_words = segment['words']

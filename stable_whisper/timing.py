@@ -188,7 +188,8 @@ def split_word_tokens(segments: List[dict],
                       tokenizer: "Tokenizer",
                       *,
                       padding: (str, int) = None,
-                      split_callback: Callable = None):
+                      split_callback: Callable = None,
+                      pad_first_seg: bool = True):
     if padding is not None:
         if isinstance(padding, str):
             padding = tokenizer.encode(padding)
@@ -210,7 +211,8 @@ def split_word_tokens(segments: List[dict],
         if (
                 padding is not None and
                 curr_word_tokens[0][0] != padding and
-                (len(tokens) == 0 or tokens[-1] != padding)
+                (len(tokens) == 0 or tokens[-1] != padding) and
+                (pad_first_seg or i != 0)
         ):
             tokens.extend(padding)
             words.append(None)
@@ -223,7 +225,18 @@ def split_word_tokens(segments: List[dict],
     return tokens, (words, word_tokens), seg_indices
 
 
-def pop_empty_alignment(alignment: List[WordTiming]):
+def pop_empty_alignment(alignment: List[WordTiming], seg_indices: Optional[List[int]] = None):
+    if seg_indices is not None:
+        seg_idx_pos = len(seg_indices)
+        empty_wts = {}
+        for i in reversed(range(len(alignment))):
+            assert seg_idx_pos != -1
+            if alignment[i].word is None:
+                empty_wts[seg_indices[seg_idx_pos]] = alignment.pop(i)
+            else:
+                seg_idx_pos -= 1
+        return empty_wts
+
     return list(reversed([alignment.pop(i) for i in reversed(range(len(alignment))) if alignment[i].word is None]))
 
 
@@ -243,6 +256,7 @@ def add_word_timestamps_stable(
         min_word_dur: float = 0.1,
         split_callback: Callable = None,
         gap_padding: Optional[str] = ' ...',
+        pad_first_seg: bool = True,
         **kwargs,
 ):
     if len(segments) == 0:
@@ -261,8 +275,13 @@ def add_word_timestamps_stable(
         for seg in segments:
             seg['words'] = []
 
-        text_tokens, token_split, seg_indices = split_word_tokens(segments, tokenizer,
-                                                                  padding=gap_padding, split_callback=split_callback)
+        text_tokens, token_split, seg_indices = split_word_tokens(
+            segments,
+            tokenizer,
+            padding=gap_padding,
+            split_callback=split_callback,
+            pad_first_seg=pad_first_seg
+        )
 
         alignment = find_alignment_stable(model, tokenizer, text_tokens, mel, num_samples,
                                           **kwargs,
@@ -270,14 +289,14 @@ def add_word_timestamps_stable(
                                           audio_features=audio_features,
                                           ts_num=ts_num,
                                           ts_noise=ts_noise)
-        alt_beginning_alignment = pop_empty_alignment(alignment)
+        alt_beginning_alignment = pop_empty_alignment(alignment, seg_indices)
 
         merge_punctuations(alignment, prepend_punctuations, append_punctuations)
 
         time_offset = segments[0]["seek"]
 
         assert len(alignment) == len(seg_indices)
-        assert (gap_padding is None or len(segments) == len(alt_beginning_alignment))
+        assert (gap_padding is None or len(segments) == len(alt_beginning_alignment) + (1, 0)[pad_first_seg])
         for i, timing in zip(seg_indices, alignment):
             if len(timing.tokens) != 0:
                 start = timing.start
@@ -285,7 +304,7 @@ def add_word_timestamps_stable(
                 if (
                         len(segments[i]['words']) == 0 and
                         ((end - start) < min_word_dur) and
-                        len(alt_beginning_alignment)
+                        i in alt_beginning_alignment
                 ):
                     start = alt_beginning_alignment[i].start
                 segments[i]['words'].append(
