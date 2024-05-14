@@ -437,17 +437,17 @@ def align(
 
         return first_word_src, word_sources[1:]
 
-    def speech_percentage(_word: dict, _mask: torch.Tensor, _offset: float):
+    def speech_percentage(_word: dict, _mask: torch.Tensor, _offset: float) -> float:
         if _mask is None:
             return 1
         s, e = _word['start'], _word['end']
         s = int((s - _offset) * TOKENS_PER_SECOND)
         e = int((e - _offset) * TOKENS_PER_SECOND)
-        return 1 - _mask[s:e].float().mean().nan_to_num()
+        return 1 - _mask[s:e].float().mean().nan_to_num().item()
 
     def is_new_better(w0, m0, o0, w1, m1, o1):
-        speech0 = speech_percentage(w0, m0, o0).round(decimals=1)
-        speech1 = speech_percentage(w1, m1, o1).round(decimals=1)
+        speech0 = round(speech_percentage(w0, m0, o0), 1)
+        speech1 = round(speech_percentage(w1, m1, o1), 1)
         w0p, w1p = w0['probability'], w1['probability']
         return ((w1p**0.75 - w0p**0.75) < 0.35 and speech0 >= speech1) or w0p >= w1p
 
@@ -695,6 +695,7 @@ def align(
             verbose=verbose is not None
         )
         result.update_nonspeech_sections(*nonspeech_timings)
+        result.set_current_as_orig()
     if not original_split:
         result.regroup(regroup)
 
@@ -798,6 +799,10 @@ def refine(
     >>> result.to_srt_vtt('audio.srt')
     Saved 'audio.srt'
     """
+    if result and not all(part.tokens for part in result.all_words_or_segments()):
+        raise NotImplementedError('The are missing tokens in the result. '
+                                  'Refinement currently only supports results produced by '
+                                  '``transcribe()`` on vanilla Whisper models.')
     audioloader_not_supported(audio)
     if not steps:
         steps = 'se'
@@ -962,18 +967,17 @@ def refine(
                             return
                     elif new_ts >= words[idx].start:
                         return
-                if not verbose:
-                    return
-                curr_word = words[idx]
-                word_info = (f'[Word="{curr_word.word}"] '
-                             f'[Segment ID: {curr_word.segment_id}] '
-                             f'[Word ID: {curr_word.id}]')
                 if is_end_ts:
-                    print(f'End: {words[idx].end} -> {new_ts}  {word_info}')
+                    old_ts = words[idx].end
                     words[idx].end = new_ts
                 else:
-                    print(f'Start: {words[idx].start} -> {new_ts}  {word_info}')
+                    old_ts = words[idx].start
                     words[idx].start = new_ts
+                if verbose and old_ts != new_ts:
+                    word_info = (f'[Word="{words[idx].word}"] '
+                                 f'[Segment ID: {words[idx].segment_id}] '
+                                 f'[Word ID: {words[idx].id}]')
+                    print(f'{"End" if is_end_ts else "Start"}: {old_ts} -> {new_ts}  {word_info}')
 
             mel_segment = orig_mel_segment.clone().repeat_interleave(2, 0)
             is_end_ts = _step == 'e'
@@ -1075,13 +1079,18 @@ def refine(
 
         def update_pbar(last_ts: float):
             nonlocal prev_ts
-            tqdm_pbar.update(round(((last_ts - prev_ts) / len(steps)), 2))
+            if last_ts == tqdm_pbar.total:
+                new_n = pbar_step * step_count
+            else:
+                new_n = ((last_ts - prev_ts) / len(steps)) + tqdm_pbar.n
+            tqdm_pbar.update(min(round(new_n, 2) - tqdm_pbar.n, tqdm_pbar.total))
             prev_ts = last_ts
 
+        pbar_step = tqdm_pbar.total / len(steps)
         for step_count, step in enumerate(steps, 1):
             prev_ts = 0
             _refine(step)
-            update_pbar(round(tqdm_pbar.total / len(step), 2))
+            update_pbar(tqdm_pbar.total)
         tqdm_pbar.update(tqdm_pbar.total - tqdm_pbar.n)
 
     result.reassign_ids()

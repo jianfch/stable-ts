@@ -22,6 +22,41 @@ https://github.com/jianfch/stable-ts/assets/28970749/7adf0540-3620-4b2b-b2d4-e31
 * [Quick 1.X → 2.X Guide](#quick-1x--2x-guide)
 
 ## Setup
+<details>
+<summary>Prerequisites: FFmpeg & PyTorch</summary>
+
+<details>
+<summary>FFmpeg</summary>
+
+Requires [FFmpeg](https://ffmpeg.org/) in PATH 
+```
+# on Ubuntu or Debian
+sudo apt update && sudo apt install ffmpeg
+
+# on Arch Linux
+sudo pacman -S ffmpeg
+
+# on MacOS using Homebrew (https://brew.sh/)
+brew install ffmpeg
+
+# on Windows using Chocolatey (https://chocolatey.org/)
+choco install ffmpeg
+
+# on Windows using Scoop (https://scoop.sh/)
+scoop install ffmpeg
+```
+</details>
+
+<details>
+<summary>PyTorch</summary>
+
+If PyTorch is not installed when installing Stable-ts, 
+the default version will be installed which may not have GPU support.
+To avoid this issue, install your preferred version with instructions at https://pytorch.org/get-started/locally/.
+</details>
+
+</details>
+
 ```
 pip install -U stable-ts
 ```
