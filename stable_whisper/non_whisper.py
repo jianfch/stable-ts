@@ -354,6 +354,7 @@ def transcribe_any(
                 use_word_position=use_word_position,
                 min_silence_dur=min_silence_dur
             )
+            result.set_current_as_orig()
 
         if result.has_words and regroup:
             result.regroup(regroup)

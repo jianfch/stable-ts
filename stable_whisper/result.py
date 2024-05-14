@@ -1260,11 +1260,12 @@ class WhisperResult:
     def all_tokens(self):
         return list(chain.from_iterable(s.tokens for s in self.all_words()))
 
-    def to_dict(self):
+    def to_dict(self, keep_orig: bool = True):
+        ori_dict = self.ori_dict if keep_orig else {}
         return dict(text=self.text,
                     segments=self.segments_to_dicts(),
                     language=self.language,
-                    ori_dict=self.ori_dict,
+                    ori_dict=ori_dict,
                     regroup_history=self._regroup_history,
                     nonspeech_sections=self._nonspeech_sections)
 
@@ -2322,9 +2323,15 @@ class WhisperResult:
             s.unlock_all_words()
         return self
 
+    def set_current_as_orig(self, keep_orig: bool = False):
+        """
+        Overwrite all values in ``ori_dict`` with current values.
+        """
+        self.ori_dict = self.to_dict(keep_orig=keep_orig)
+
     def reset(self):
         """
-        Restore all values to that at initialization.
+        Restore all values to that at initialization in ``ori_dict``.
         """
         self.language = self.ori_dict.get('language')
         self._regroup_history = ''
