@@ -349,7 +349,7 @@ def transcribe_any(
                 vad_onnx=vad_onnx, vad_threshold=vad_threshold,
                 q_levels=q_levels, k_size=k_size,
                 sample_rate=curr_audio_sr(True), min_word_dur=min_word_dur,
-                word_level=suppress_word_ts, verbose=True,
+                word_level=suppress_word_ts, verbose=verbose is not None,
                 nonspeech_error=nonspeech_error,
                 use_word_position=use_word_position,
                 min_silence_dur=min_silence_dur
