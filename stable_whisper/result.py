@@ -1084,7 +1084,7 @@ class WhisperResult:
             Whether to use Silero VAD to generate timestamp suppression mask.
             Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
         verbose : bool or None, default False
-            Whether to use progressbar to show progress.
+            Displays all info if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
             If ``vad = True`` and ``False``, mute messages about hitting local caches.
             Note that the message about first download cannot be muted.
         sample_rate : int, default None, meaning ``whisper.audio.SAMPLE_RATE``, 16kHZ
@@ -1144,7 +1144,7 @@ class WhisperResult:
             word_level=word_level,
             nonspeech_error=nonspeech_error,
             use_word_position=use_word_position,
-            verbose=verbose
+            verbose=verbose is not None
         )
         self.update_nonspeech_sections(*silent_timings)
         return self
