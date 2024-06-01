@@ -1310,6 +1310,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             to be merged.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
+        newline : bool, default False
+            Whether to insert a line break between the merged segments.
 
         Returns
         -------
@@ -1336,6 +1338,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             to be merged.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
+        newline : bool, default False
+            Whether to insert a line break between the merged segments.
 
         Returns
         -------
@@ -1402,6 +1406,34 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Whether to match the case of the prefixes/suffixes with the words/segments.
         strip : bool, default True
             Whether to ignore spaces before and after both words/segments and prefixes/suffixes.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+</details>
+
+<details>
+<summary>pad()</summary>
+
+        Pad (in-place) timestamps in chronological order.
+
+        Parameters
+        ----------
+        start_pad : float, optional
+            Seconds to pad start timestamps.
+            Each start timestamp will be extended no earlier than the end timestamp of the previous word.
+        end_pad : float, optional
+            Seconds to pad end timestamps.
+            Each end timestamp will be extended no later than the start timestamp of the next word or ``max_end``.
+        max_dur : float, optional
+            Only pad segments or words (``word_level=True``) with duration (in seconds) under or equal to ``max_dur``.
+        max_end : float, optional
+            Timestamp (in seconds) that padded timestamps cannot exceed.
+            Generally used to prevent the last padded end timestamp from exceeding the total duration of the audio.
+        word_level : bool, default False
+            Whether to pad segment timestamps or word timestamps.
 
         Returns
         -------

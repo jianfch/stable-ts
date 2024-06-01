@@ -128,6 +128,9 @@ class WordTiming:
             return timestamp
         return _round_timestamp(timestamp)
 
+    def to_display_str(self):
+        return f"[{format_timestamp(self.start)}] -> [{format_timestamp(self.end)}] \"{self.word}\""
+
     @property
     def start(self):
         return self._start
@@ -369,7 +372,7 @@ class Segment:
         line = f'[{format_timestamp(self.start)} --> {format_timestamp(self.end)}] "{self.text}"'
         if self.has_words and not only_segment:
             line += '\n' + '\n'.join(
-                f"-[{format_timestamp(w.start)}] -> [{format_timestamp(w.end)}] \"{w.word}\"" for w in self.words
+                f"-{w.to_display_str()}" for w in self.words
             ) + '\n'
         return line
 
@@ -433,7 +436,7 @@ class Segment:
             return sum(len(w) for w in self.words)
         return len(self.text)
 
-    def add(self, other: 'Segment', copy_words: bool = False):
+    def add(self, other: 'Segment', copy_words: bool = False, newline: bool = False):
         if self.ori_has_words == other.ori_has_words:
             words = (self.words + other.words) if self.ori_has_words else None
         else:
@@ -446,6 +449,18 @@ class Segment:
         _combine_attr(self_copy, other, 'avg_logprob')
         _combine_attr(self_copy, other, 'compression_ratio')
         _combine_attr(self_copy, other, 'no_speech_prob')
+
+        self_copy._default_end = other._default_end
+        self_copy._default_text += other._default_text
+        self_copy._default_tokens += other._default_tokens
+
+        if newline:
+            if self_copy.has_words:
+                if not self_copy.words[len(self.words)-1].word.endswith('\n'):
+                    self_copy.words[len(self.words)-1].word += '\n'
+            else:
+                if self_copy.text[len(self.text)-1] != '\n':
+                    self_copy._default_text = self_copy.text[:len(self.text)] + '\n' + self_copy.text[len(self.text):]
 
         return self_copy
 
@@ -951,8 +966,8 @@ class WhisperResult:
             dict(start=round(s, 3), end=round(e, 3)) for s, e in zip(silent_starts, silent_ends)
         ]
 
-    def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False):
-        new_seg = self.segments[index0].add(self.segments[index1], copy_words=False)
+    def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False, newline: bool = False):
+        new_seg = self.segments[index0].add(self.segments[index1], copy_words=False, newline=newline)
         if lock and self.segments[index0].has_words:
             lock_idx = len(self.segments[index0].words)
             new_seg.words[lock_idx - 1].lock_right()
@@ -1084,7 +1099,7 @@ class WhisperResult:
             Whether to use Silero VAD to generate timestamp suppression mask.
             Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
         verbose : bool or None, default False
-            Whether to use progressbar to show progress.
+            Displays all info if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
             If ``vad = True`` and ``False``, mute messages about hitting local caches.
             Note that the message about first download cannot be muted.
         sample_rate : int, default None, meaning ``whisper.audio.SAMPLE_RATE``, 16kHZ
@@ -1144,7 +1159,7 @@ class WhisperResult:
             word_level=word_level,
             nonspeech_error=nonspeech_error,
             use_word_position=use_word_position,
-            verbose=verbose
+            verbose=verbose is not None
         )
         self.update_nonspeech_sections(*silent_timings)
         return self
@@ -1312,8 +1327,16 @@ class WhisperResult:
             warnings.warn('Found segment(s) without word timings. These segment(s) cannot be split.')
         self.remove_no_word_segments()
 
-    def _merge_segments(self, indices: List[int],
-                        *, max_words: int = None, max_chars: int = None, is_sum_max: bool = False, lock: bool = False):
+    def _merge_segments(
+            self,
+            indices: List[int],
+            *,
+            max_words: int = None,
+            max_chars: int = None,
+            is_sum_max: bool = False,
+            lock: bool = False,
+            newline: bool = False
+    ):
         if len(indices) == 0:
             return
         for i in reversed(indices):
@@ -1338,7 +1361,7 @@ class WhisperResult:
                     )
             ):
                 continue
-            self.add_segments(i, i + 1, inplace=True, lock=lock)
+            self.add_segments(i, i + 1, inplace=True, lock=lock, newline=newline)
         self.remove_no_word_segments()
 
     def get_content_by_time(
@@ -1421,7 +1444,8 @@ class WhisperResult:
             max_words: int = None,
             max_chars: int = None,
             is_sum_max: bool = False,
-            lock: bool = False
+            lock: bool = False,
+            newline: bool = False
     ) -> "WhisperResult":
         """
         Merge (in-place) any pair of adjacent segments if the gap between them <= ``min_gap``.
@@ -1439,6 +1463,8 @@ class WhisperResult:
             to be merged.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
+        newline : bool, default False
+            Whether to insert a line break between the merged segments.
 
         Returns
         -------
@@ -1446,11 +1472,19 @@ class WhisperResult:
             The current instance after the changes.
         """
         indices = self.get_gap_indices(min_gap)
-        self._merge_segments(indices,
-                             max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
+        self._merge_segments(
+            indices,
+            max_words=max_words,
+            max_chars=max_chars,
+            is_sum_max=is_sum_max,
+            lock=lock,
+            newline=newline
+        )
         if self._regroup_history:
             self._regroup_history += '_'
-        self._regroup_history += f'mg={min_gap}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}'
+        self._regroup_history += (
+            f'mg={min_gap}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}+{int(newline)}'
+        )
         return self
 
     def split_by_punctuation(
@@ -1511,7 +1545,8 @@ class WhisperResult:
             max_words: int = None,
             max_chars: int = None,
             is_sum_max: bool = False,
-            lock: bool = False
+            lock: bool = False,
+            newline: bool = False
     ) -> "WhisperResult":
         """
         Merge (in-place) any two segments that has specific punctuations inbetween.
@@ -1529,6 +1564,8 @@ class WhisperResult:
             to be merged.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
+        newline : bool, default False
+            Whether to insert a line break between the merged segments.
 
         Returns
         -------
@@ -1536,12 +1573,87 @@ class WhisperResult:
             The current instance after the changes.
         """
         indices = self.get_punctuation_indices(punctuation)
-        self._merge_segments(indices,
-                             max_words=max_words, max_chars=max_chars, is_sum_max=is_sum_max, lock=lock)
+        self._merge_segments(
+            indices,
+            max_words=max_words,
+            max_chars=max_chars,
+            is_sum_max=is_sum_max,
+            lock=lock,
+            newline=newline
+        )
         if self._regroup_history:
             self._regroup_history += '_'
         punct_str = '/'.join(p if isinstance(p, str) else '*'.join(p) for p in punctuation)
-        self._regroup_history += f'mp={punct_str}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}'
+        self._regroup_history += (
+            f'mp={punct_str}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}+{int(newline)}'
+        )
+        return self
+
+    def pad(
+            self,
+            start_pad: Optional[float] = None,
+            end_pad: Optional[float] = None,
+            max_dur: Optional[float] = None,
+            max_end: Optional[float] = None,
+            word_level: bool = False
+    ) -> "WhisperResult":
+        """
+        Pad (in-place) timestamps in chronological order.
+
+        Parameters
+        ----------
+        start_pad : float, optional
+            Seconds to pad start timestamps.
+            Each start timestamp will be extended no earlier than the end timestamp of the previous word.
+        end_pad : float, optional
+            Seconds to pad end timestamps.
+            Each end timestamp will be extended no later than the start timestamp of the next word or ``max_end``.
+        max_dur : float, optional
+            Only pad segments or words (``word_level=True``) with duration (in seconds) under or equal to ``max_dur``.
+        max_end : float, optional
+            Timestamp (in seconds) that padded timestamps cannot exceed.
+            Generally used to prevent the last padded end timestamp from exceeding the total duration of the audio.
+        word_level : bool, default False
+            Whether to pad segment timestamps or word timestamps.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+        """
+        if not (start_pad or end_pad):
+            warnings.warn(f'No ``start_pad`` or ``end_pad`` given.',
+                          stacklevel=2)
+            return self
+        if word_level and not self.has_words:
+            word_level = False
+        parts = self.all_words() if word_level else self.segments
+        assert not start_pad or start_pad > 0, '``start_pad`` must be positive'
+        assert not end_pad or end_pad > 0, '``end_pad`` must be positive'
+        assert max_dur is None or max_dur > 0, '``max_dur`` must be greater than 0'
+        assert max_end is None or max_end > 0, '``max_end`` must be greater than 0'
+        for i, part in enumerate(parts, 1):
+            if max_dur and part.end - part.start > max_dur:
+                continue
+            if start_pad:
+                new_start = part.start - start_pad
+                new_start = max(0 if i == 1 else parts[i-2].end, new_start)
+                part.start = new_start
+            if end_pad:
+                new_end = part.end + end_pad
+                temp_max_end = max_end
+                if i != len(parts):
+                    temp_max_end = min(max_end, parts[i].start) if max_end else parts[i].start
+                if temp_max_end and temp_max_end < new_end:
+                    new_end = temp_max_end
+                if new_end > part.end:
+                    part.end = new_end
+
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += (
+            f'p={start_pad or ""}+{end_pad or ""}+{max_dur or ""}+{max_end or ""}+{int(word_level)}'
+        )
         return self
 
     def merge_all_segments(self) -> "WhisperResult":
@@ -1559,9 +1671,9 @@ class WhisperResult:
             new_seg = self.segments[0].copy(self.all_words(), keep_result=True, copy_words=False)
         else:
             new_seg = self.segments[0]
-            new_seg._default_text += ''.join(s.text for s in self.segments[1:])
+            new_seg._default_text = ''.join(s.text for s in self.segments)
             if all(s.tokens is not None for s in self.segments):
-                new_seg._default_tokens += list(chain.from_iterable(s.tokens for s in self.segments[1:]))
+                new_seg._default_tokens = list(chain.from_iterable(s.tokens for s in self.segments))
             new_seg.end = self.segments[-1].end
         self.segments = [new_seg]
         self.reassign_ids()
@@ -2198,6 +2310,7 @@ class WhisperResult:
                 rp: remove_repetition
                 rws: remove_words_by_str
                 fg: fill_in_gaps
+                p: pad
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -2249,6 +2362,7 @@ class WhisperResult:
             rp=self.remove_repetition,
             rws=self.remove_words_by_str,
             fg=self.fill_in_gaps,
+            p=self.pad,
         )
         if not regroup_algo:
             return []
