@@ -44,7 +44,7 @@ def align(
         nonspeech_error: float = 0.1,
         q_levels: int = 20,
         k_size: int = 5,
-        vad: bool = False,
+        vad: Union[bool, dict] = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         denoiser: Optional[str] = None,
@@ -136,13 +136,12 @@ def align(
         See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
     denoiser_options : dict, optional
         Options to use for ``denoiser``.
-    vad : bool, default False
+    vad : bool or dict, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
+        Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
     vad_threshold : float, default 0.35
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
-    vad_onnx : bool, default False
-        Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
     min_silence_dur : float, optional
