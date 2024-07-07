@@ -1,4 +1,5 @@
 import os
+import shlex
 import subprocess as sp
 import warnings
 from typing import List
@@ -98,6 +99,7 @@ def encode_video_comparison(
         output_videopath = f'{name}_sub_comparison.mp4'
     cmd = (f'ffmpeg {ow} {background} {border} {audio} '
            f'-filter_complex "{final_fil}"{vc}{ac} -shortest "{output_videopath}"')
+    cmd = shlex.split(cmd)
     if only_cmd:
         return cmd
     if verbose:
