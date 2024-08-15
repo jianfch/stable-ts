@@ -1501,7 +1501,7 @@ class WhisperResult:
 
         Parameters
         ----------
-        punctuation : list of str of list of tuple of (str, str) or str
+        punctuation : list of str or list of tuple of (str, str) or str
             Punctuation(s) to split segments by.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
@@ -1553,7 +1553,7 @@ class WhisperResult:
 
         Parameters
         ----------
-        punctuation : list of str of list of tuple of (str, str) or str
+        punctuation : list of str or list of tuple of (str, str) or str
             Punctuation(s) to merge segments by.
         max_words : int, optional
             Maximum number of words allowed in each segment.

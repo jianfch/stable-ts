@@ -93,7 +93,7 @@ def align(
     token_step : int, default 100
         Max number of tokens to align each pass. Use higher values to reduce chance of misalignment.
     original_split : bool, default False
-        Whether to preserve the original segment groupings. Segments are spit by line break if ``text`` is plain-text.
+        Whether to preserve the original segment groupings. Segments are split by line breaks if ``text`` is plain-text.
     max_word_dur : float or None, default 3.0
         Global maximum word duration in seconds. Re-align words that exceed the global maximum word duration.
     word_dur_factor : float or None, default 2.0

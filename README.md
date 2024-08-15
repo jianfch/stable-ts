@@ -847,7 +847,7 @@ Docstring:
     token_step : int, default 100
         Max number of tokens to align each pass. Use higher values to reduce chance of misalignment.
     original_split : bool, default False
-        Whether to preserve the original segment groupings. Segments are spit by line break if ``text`` is plain-text.
+        Whether to preserve the original segment groupings. Segments are split by line breaks if ``text`` is plain-text.
     max_word_dur : float or None, default 3.0
         Global maximum word duration in seconds. Re-align words that exceed the global maximum word duration.
     word_dur_factor : float or None, default 2.0
@@ -1198,7 +1198,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
         Parameters
         ----------
-        punctuation : list of str of list of tuple of (str, str) or str
+        punctuation : list of str or list of tuple of (str, str) or str
             Punctuation(s) to split segments by.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
@@ -1323,7 +1323,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
         Parameters
         ----------
-        punctuation : list of str of list of tuple of (str, str) or str
+        punctuation : list of str or list of tuple of (str, str) or str
             Punctuation(s) to merge segments by.
         max_words : int, optional
             Maximum number of words allowed in each segment.
