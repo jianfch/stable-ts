@@ -1046,8 +1046,8 @@ Docstring:
         Precision of refined timestamps in seconds. The lowest precision is 0.02 second.
     single_batch : bool, default False
         Whether to process in only batch size of one to reduce memory usage.
-    inplace : bool, default True, meaning return a deepcopy of ``result``
-        Whether to alter timestamps in-place.
+    inplace : bool, default True
+        Whether to alter timestamps in-place. Return a deepcopy of ``result`` if ``False``.
     demucs : bool or torch.nn.Module, default False
         Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
         a Demucs model to avoid reloading the model for each run.

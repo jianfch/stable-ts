@@ -767,8 +767,8 @@ def refine(
         Precision of refined timestamps in seconds. The lowest precision is 0.02 second.
     single_batch : bool, default False
         Whether to process in only batch size of one to reduce memory usage.
-    inplace : bool, default True, meaning return a deepcopy of ``result``
-        Whether to alter timestamps in-place.
+    inplace : bool, default True
+        Whether to alter timestamps in-place. Return a deepcopy of ``result`` if ``False``.
     denoiser : str, optional
         String of the denoiser to use for preprocessing ``audio``.
         See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
