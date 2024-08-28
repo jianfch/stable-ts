@@ -1048,12 +1048,11 @@ Docstring:
         Whether to process in only batch size of one to reduce memory usage.
     inplace : bool, default True
         Whether to alter timestamps in-place. Return a deepcopy of ``result`` if ``False``.
-    demucs : bool or torch.nn.Module, default False
-        Whether to preprocess ``audio`` with Demucs to isolate vocals / remove noise. Set ``demucs`` to an instance of
-        a Demucs model to avoid reloading the model for each run.
-        Demucs must be installed to use. Official repo, https://github.com/facebookresearch/demucs.
-    demucs_options : dict, optional
-        Options to use for :func:`stable_whisper.audio.demucs_audio`.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
     only_voice_freq : bool, default False
         Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
     verbose : bool or None, default False
