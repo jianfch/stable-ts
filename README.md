@@ -367,6 +367,9 @@ Docstrings:
 <summary>faster-whisper</summary>
 
 Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper):
+```
+pip install -U stable-ts[fw]
+```
 ```python
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
@@ -493,6 +496,9 @@ Docstring:
 <summary>Hugging Face Transformers (~9x faster)</summary>
 
 Run Whisper up to 9x faster with [Hugging Face Transformer](https://huggingface.co/openai/whisper-large-v3):
+```
+pip install -U stable-ts[hf]
+```
 ```python
 model = stable_whisper.load_hf_whisper('base')
 result = model.transcribe('audio.mp3')
@@ -502,7 +508,7 @@ result = model.transcribe('audio.mp3')
 <summary>CLI</summary>
 
 ```commandline
-NOT IMPLEMETED YET
+stable-ts audio.mp3 -o audio.srt -hw
 ```
 </details>
 
