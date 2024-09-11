@@ -243,6 +243,9 @@ Docstrings:
         Transcribe the gap after the previous word and if the average word proababiliy of a segment falls below this
         value, discard the segment. If ``None``, skip transcribing the gap to reduce chance of timestamps starting
         before the next utterance.
+    nonspeech_skip : float or None, default None
+        Skip non-speech sections that are equal or longer than this duration in seconds. Disable skipping if ``None``.
+        Reduce text and timing hallucinations in non-speech sections but may increase processing time.
     progress_callback : Callable, optional
         A function that will be called when transcription progress is updated.
         The callback need two parameters.

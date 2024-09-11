@@ -36,7 +36,7 @@ class NonSpeechPredictor:
         min_word_dur = get_min_word_dur(min_word_dur)
         self.min_silence_dur = min_silence_dur
         vad_options = onnx_param_update(vad, vad_onnx)
-        self.vad = vad_options is not False
+        self.vad = None if vad is None else (vad_options is not False)
         self._vad_options = vad_options if self.vad and isinstance(vad_options, dict) else {}
         self.mask_pad_func = mask_pad_func
         self.get_mask = get_mask
