@@ -50,7 +50,7 @@ def transcribe_stable(
         denoiser_options: Optional[dict] = None,
         demucs: Union[bool, torch.nn.Module] = False,
         demucs_options: dict = None,
-        vad: bool = False,
+        vad: Union[bool, dict] = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         min_word_dur: Optional[float] = None,
@@ -67,6 +67,7 @@ def transcribe_stable(
         only_ffmpeg: bool = False,
         max_instant_words: float = 0.5,
         avg_prob_threshold: Optional[float] = None,
+        nonspeech_skip: Optional[float] = None,
         progress_callback: Callable = None,
         ignore_compatibility: bool = False,
         extra_models: Optional[List["Whisper"]] = None,
@@ -135,13 +136,12 @@ def transcribe_stable(
         See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
     denoiser_options : dict, optional
         Options to use for ``denoiser``.
-    vad : bool, default False
+    vad : bool or dict, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
+        Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
     vad_threshold : float, default 0.35
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
-    vad_onnx : bool, default False
-        Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
     min_silence_dur : float, optional
@@ -179,6 +179,9 @@ def transcribe_stable(
         Transcribe the gap after the previous word and if the average word proababiliy of a segment falls below this
         value, discard the segment. If ``None``, skip transcribing the gap to reduce chance of timestamps starting
         before the next utterance.
+    nonspeech_skip : float or None, default None
+        Skip non-speech sections that are equal or longer than this duration in seconds. Disable skipping if ``None``.
+        Reduce text and timing hallucinations in non-speech sections but may increase processing time.
     progress_callback : Callable, optional
         A function that will be called when transcription progress is updated.
         The callback need two parameters.
@@ -450,6 +453,21 @@ def transcribe_stable(
             if is_silent_segment:
                 fast_forward()
                 continue
+
+            if nonspeech_skip and silence_preds['timings'] is not None:
+                silence_starts = silence_preds['timings'][0] - time_offset
+                silence_ends = silence_preds['timings'][1] - time_offset
+                silence_durations = silence_ends - silence_starts
+                skip_silence_indices = np.flatnonzero(silence_durations >= nonspeech_skip)
+                if len(skip_silence_indices):
+                    skip_idx = skip_silence_indices[0]
+                    if silence_starts[skip_idx] < min_word_dur or int(silence_starts[skip_idx] * SAMPLE_RATE) == 0:
+                        segment_samples = round(silence_ends[skip_idx] * SAMPLE_RATE)
+                        fast_forward()
+                        continue
+                    audio_segment = audio_segment[..., :int(silence_starts[skip_idx] * SAMPLE_RATE)]
+                    segment_samples = audio_segment.shape[-1]
+                    segment_duration = segment_samples / SAMPLE_RATE
 
             sample_padding = max(N_SAMPLES - segment_samples, 0)
             mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)

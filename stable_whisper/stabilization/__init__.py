@@ -5,7 +5,7 @@ import torch
 import numpy as np
 
 from .nonvad import NONVAD_SAMPLE_RATES, audio2loudness, wav2mask, visualize_mask
-from .silero_vad import VAD_SAMPLE_RATES, load_silero_vad_model, compute_vad_probs, assert_sr_window
+from .silero_vad import VAD_SAMPLE_RATES, load_silero_vad_model, compute_vad_probs, assert_sr_window, onnx_param_update
 from .utils import is_ascending_sequence, valid_ts, mask2timing, timing2mask, filter_timings
 from ..audio.utils import audio_to_tensor_resample
 from ..default import get_min_word_dur
@@ -16,7 +16,7 @@ from ..whisper_compatibility import SAMPLE_RATE, FRAMES_PER_SECOND, N_SAMPLES_PE
 class NonSpeechPredictor:
     def __init__(
             self,
-            vad: Optional[bool] = False,
+            vad: Optional[Union[bool, dict]] = False,
             mask_pad_func=None,
             get_mask: bool = False,
             min_word_dur: Optional[float] = None,
@@ -35,13 +35,14 @@ class NonSpeechPredictor:
     ):
         min_word_dur = get_min_word_dur(min_word_dur)
         self.min_silence_dur = min_silence_dur
-        self.vad = vad
+        vad_options = onnx_param_update(vad, vad_onnx)
+        self.vad = None if vad is None else (vad_options is not False)
+        self._vad_options = vad_options if self.vad and isinstance(vad_options, dict) else {}
         self.mask_pad_func = mask_pad_func
         self.get_mask = get_mask
         self.q_levels = q_levels
         self.k_size = k_size
         self.vad_threshold = vad_threshold
-        self.vad_onnx = vad_onnx
         self.verbose = verbose
         self.store_timings = store_timings
         self.ignore_is_silent = ignore_is_silent
@@ -86,7 +87,7 @@ class NonSpeechPredictor:
 
     def _load_vad_model(self):
         if self.vad:
-            self.vad_model = load_silero_vad_model()[0]
+            self.vad_model = load_silero_vad_model(**self._vad_options)[0]
             self.reset()
 
     def reset(self):
@@ -270,11 +271,12 @@ class NonSpeechPredictor:
 
 def get_vad_silence_func(
         onnx=False,
-        verbose: Optional[bool] = False
+        verbose: Optional[bool] = False,
+        **kwargs
 ):
     predictor = NonSpeechPredictor(
-        vad=True,
-        vad_onnx=onnx,
+        vad_onnx=kwargs.pop('vad_onnx', False),
+        vad=dict(onnx=onnx, **kwargs),
         verbose=verbose
     )
 
@@ -382,7 +384,7 @@ def visualize_suppression(
         q_levels: int = 20,
         k_size: int = 5,
         vad_threshold: float = 0.35,
-        vad: bool = False,
+        vad: Union[bool, dict] = False,
         max_width: int = 1500,
         height: int = 200,
         **kwargs
@@ -406,8 +408,9 @@ def visualize_suppression(
     k_size : int, default 5
         Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
         Recommend 5 or 3; higher sizes will reduce detection of silence.
-    vad : bool, default False
+    vad : bool or dict, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
+        Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
     vad_threshold : float, default 0.35
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
@@ -434,7 +437,7 @@ def visualize_suppression(
         raise NotImplementedError(f'Audio is too short and cannot visualized.')
 
     if vad:
-        silence_timings = get_vad_silence_func()(audio, vad_threshold, **kwargs)
+        silence_timings = get_vad_silence_func(**(vad if isinstance(vad, dict) else {}))(audio, vad_threshold, **kwargs)
         silence_mask = None if silence_timings is None else timing2mask(*silence_timings, size=loudness_tensor.shape[0])
     else:
         silence_mask = wav2mask(audio, q_levels=q_levels, k_size=k_size, **kwargs)

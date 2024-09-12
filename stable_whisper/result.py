@@ -1071,7 +1071,7 @@ class WhisperResult:
     def adjust_by_silence(
             self,
             audio: Union[torch.Tensor, np.ndarray, str, bytes],
-            vad: bool = False,
+            vad: Union[bool, dict] = False,
             *,
             verbose: (bool, None) = False,
             sample_rate: int = None,
@@ -1095,8 +1095,9 @@ class WhisperResult:
         ----------
         audio : str or numpy.ndarray or torch.Tensor or bytes
             Path/URL to the audio file, the audio waveform, or bytes of audio file.
-        vad : bool, default False
+        vad : bool or dict, default False
             Whether to use Silero VAD to generate timestamp suppression mask.
+            Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
             Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
         verbose : bool or None, default False
             Displays all info if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
@@ -1104,8 +1105,6 @@ class WhisperResult:
             Note that the message about first download cannot be muted.
         sample_rate : int, default None, meaning ``whisper.audio.SAMPLE_RATE``, 16kHZ
             The sample rate of ``audio``.
-        vad_onnx : bool, default False
-            Whether to use ONNX for Silero VAD.
         vad_threshold : float, default 0.35
             Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
         q_levels : int, default 20
@@ -1140,11 +1139,12 @@ class WhisperResult:
         if ``suppress_silence = True``.
         """
         min_word_dur = get_min_word_dur(min_word_dur)
-        if vad:
+        if vad is not False:
             audio = audio_to_tensor_resample(audio, sample_rate, VAD_SAMPLE_RATES[0])
             sample_rate = VAD_SAMPLE_RATES[0]
             silent_timings = get_vad_silence_func(
-                onnx=vad_onnx,
+                **(vad if isinstance(vad, dict) else {}),
+                vad_onnx=vad_onnx,
                 verbose=verbose
             )(audio, speech_threshold=vad_threshold, sr=sample_rate)
         else:
@@ -1501,7 +1501,7 @@ class WhisperResult:
 
         Parameters
         ----------
-        punctuation : list of str of list of tuple of (str, str) or str
+        punctuation : list of str or list of tuple of (str, str) or str
             Punctuation(s) to split segments by.
         lock : bool, default False
             Whether to prevent future splits/merges from altering changes made by this method.
@@ -1553,7 +1553,7 @@ class WhisperResult:
 
         Parameters
         ----------
-        punctuation : list of str of list of tuple of (str, str) or str
+        punctuation : list of str or list of tuple of (str, str) or str
             Punctuation(s) to merge segments by.
         max_words : int, optional
             Maximum number of words allowed in each segment.

@@ -29,6 +29,17 @@ setup(
         "torchaudio",
         "tqdm"
     ],
+    extras_require={
+        "fw": [
+            "faster-whisper"
+        ],
+        "hf": [
+            "transformers>=4.23.0",
+            "optimum",
+            "accelerate"
+        ]
+    },
+
     entry_points={
         "console_scripts": ["stable-ts=stable_whisper.whisper_word_level:cli"],
     },

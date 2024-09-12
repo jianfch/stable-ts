@@ -194,7 +194,7 @@ class WhisperHF:
             k_size: int = 5,
             denoiser: Optional[str] = None,
             denoiser_options: Optional[dict] = None,
-            vad: bool = False,
+            vad: Union[bool, dict] = False,
             vad_threshold: float = 0.35,
             vad_onnx: bool = False,
             min_word_dur: Optional[float] = None,

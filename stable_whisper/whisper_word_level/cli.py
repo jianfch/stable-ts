@@ -602,6 +602,9 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
     if threads > 0:
         torch.set_num_threads(threads)
 
+    if args['vad'] and args['vad_onnx']:
+        args['vad'] = dict(onnx=args['vad_onnx'])
+
     if debug:
         print('Input(s)  ->  Outputs(s)')
         for i, (input_audio, output_paths, alignment) in enumerate(zip(inputs, final_outputs, alignments)):

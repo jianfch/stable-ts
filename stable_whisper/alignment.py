@@ -44,7 +44,7 @@ def align(
         nonspeech_error: float = 0.1,
         q_levels: int = 20,
         k_size: int = 5,
-        vad: bool = False,
+        vad: Union[bool, dict] = False,
         vad_threshold: float = 0.35,
         vad_onnx: bool = False,
         denoiser: Optional[str] = None,
@@ -93,7 +93,7 @@ def align(
     token_step : int, default 100
         Max number of tokens to align each pass. Use higher values to reduce chance of misalignment.
     original_split : bool, default False
-        Whether to preserve the original segment groupings. Segments are spit by line break if ``text`` is plain-text.
+        Whether to preserve the original segment groupings. Segments are split by line breaks if ``text`` is plain-text.
     max_word_dur : float or None, default 3.0
         Global maximum word duration in seconds. Re-align words that exceed the global maximum word duration.
     word_dur_factor : float or None, default 2.0
@@ -136,13 +136,12 @@ def align(
         See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
     denoiser_options : dict, optional
         Options to use for ``denoiser``.
-    vad : bool, default False
+    vad : bool or dict, default False
         Whether to use Silero VAD to generate timestamp suppression mask.
+        Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
         Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
     vad_threshold : float, default 0.35
         Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
-    vad_onnx : bool, default False
-        Whether to use ONNX for Silero VAD.
     min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
         Shortest duration each word is allowed to reach for silence suppression.
     min_silence_dur : float, optional
@@ -768,8 +767,8 @@ def refine(
         Precision of refined timestamps in seconds. The lowest precision is 0.02 second.
     single_batch : bool, default False
         Whether to process in only batch size of one to reduce memory usage.
-    inplace : bool, default True, meaning return a deepcopy of ``result``
-        Whether to alter timestamps in-place.
+    inplace : bool, default True
+        Whether to alter timestamps in-place. Return a deepcopy of ``result`` if ``False``.
     denoiser : str, optional
         String of the denoiser to use for preprocessing ``audio``.
         See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.

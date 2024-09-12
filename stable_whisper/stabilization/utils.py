@@ -61,6 +61,7 @@ def mask2timing(
     mask = np.concatenate(([False], silence_mask, [False]))
     silent_starts = np.logical_and(~mask[:-2], mask[1:-1]).nonzero()[0]
     silent_ends = (np.logical_and(mask[1:-1], ~mask[2:]).nonzero()[0] + 1)
+    clipped = False
     if second_per_unit is None:
         silent_starts = silent_starts / TOKENS_PER_SECOND
         silent_ends = silent_ends / TOKENS_PER_SECOND
@@ -71,11 +72,17 @@ def mask2timing(
         silent_starts += time_offset
         silent_ends += time_offset
     if min_start is not None and silent_starts[0] < min_start:
-        assert min_start <= silent_ends[0]
-        silent_starts[0] = min_start
+        silent_starts.clip(min_start, None, silent_starts)
+        clipped = True
     if max_end is not None and silent_ends[-1] > max_end:
-        assert max_end >= silent_starts[-1]
-        silent_ends[-1] = max_end
+        silent_ends.clip(None, max_end, silent_ends)
+        clipped = True
+    if clipped and (invalid_mask := silent_starts >= silent_ends).any():
+        if invalid_mask.all():
+            return
+        valid_mask = ~invalid_mask
+        silent_starts = silent_starts[valid_mask]
+        silent_ends = silent_ends[valid_mask]
     return silent_starts, silent_ends
 
 
