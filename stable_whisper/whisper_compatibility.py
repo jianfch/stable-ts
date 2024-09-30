@@ -1,6 +1,7 @@
 import warnings
 import importlib.metadata
 from importlib.util import find_spec
+from contextlib import contextmanager
 from .utils import get_func_parameters, exact_div
 
 IS_WHISPERLESS_VERSION = True
@@ -14,6 +15,7 @@ _COMPATIBLE_WHISPER_VERSIONS = (
     '20231106',
     '20231117',
     '20240927',
+    '20240930',
 )
 _required_whisper_ver = _COMPATIBLE_WHISPER_VERSIONS[-1]
 
@@ -34,6 +36,11 @@ class Unavailable:
     __init__ = whisper_not_available
 
 
+@contextmanager
+def _dummy_contextmanager():
+    yield
+
+
 if IS_WHISPER_AVAILABLE:
     import whisper
     from whisper.audio import (
@@ -49,6 +56,10 @@ if IS_WHISPER_AVAILABLE:
     from whisper.tokenizer import Tokenizer
     from whisper.model import Whisper
     from whisper.decoding import DecodingTask, DecodingOptions, DecodingResult, SuppressTokens
+    try:
+        from whisper.model import disable_sdpa
+    except ImportError:
+        disable_sdpa = _dummy_contextmanager
 else:
     import torch
     import numpy as np
@@ -213,6 +224,8 @@ else:
 
         return array
 
+    disable_sdpa = _dummy_contextmanager
+
 
 def warn_compatibility_issues(
         whisper_module,
@@ -222,8 +235,8 @@ def warn_compatibility_issues(
     compatibility_warning = ''
     if not ignore:
         if whisper_module.__version__ not in _COMPATIBLE_WHISPER_VERSIONS:
-            compatibility_warning += (f'Whisper {whisper_module.__version__} is installed.'
-                                      f'Versions confirm to be compatible: {", ".join(_COMPATIBLE_WHISPER_VERSIONS)}\n')
+            compatibility_warning += (f'Whisper {whisper_module.__version__} is installed. '
+                                      f'Compatible versions: {", ".join(_COMPATIBLE_WHISPER_VERSIONS)}\n')
         _is_whisper_repo_version = bool(importlib.metadata.distribution('openai-whisper').read_text('direct_url.json'))
         if _is_whisper_repo_version:
             compatibility_warning += ('The detected version appears to be installed from the repository '
@@ -235,8 +248,8 @@ def warn_compatibility_issues(
             compatibility_warning = (
                     'The installed version of Whisper might be incompatible.\n'
                     + compatibility_warning +
-                    'To prevent errors and performance issues, update Whisper by updating Stable-ts: '
-                    f'"pip install -U stable-ts".\n'
+                    'To prevent errors and performance issues, install the latest compatible version: '
+                    f'`pip install openai-whisper=={_COMPATIBLE_WHISPER_VERSIONS[-1]}` \n'
                     f'Use `ignore_compatibility=True` to ignore this warning.'
             )
             if additional_msg:

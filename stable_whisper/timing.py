@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING, List, Callable, Optional, Union
 from itertools import chain
 from dataclasses import dataclass
 
-from .whisper_compatibility import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN, median_filter, dtw, merge_punctuations
+from .whisper_compatibility import (
+    TOKENS_PER_SECOND,
+    N_SAMPLES_PER_TOKEN,
+    median_filter,
+    dtw,
+    merge_punctuations,
+    disable_sdpa
+)
 
 if TYPE_CHECKING:
     from .whisper_compatibility import Whisper, Tokenizer
@@ -48,7 +55,7 @@ def _compute_qks(
         for i, block in enumerate(model.decoder.blocks)
     ]
 
-    with torch.no_grad():
+    with torch.no_grad(), disable_sdpa():
         if (audio_features := cache['audio_features']) is None:
             audio_features = cache['audio_features'] = model.encoder(mel.unsqueeze(0))
         logits = model.decoder(tokens.unsqueeze(0), audio_features)[0]
