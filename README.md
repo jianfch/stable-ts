@@ -255,6 +255,11 @@ Docstrings:
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
     extra_models : list of whisper.model.Whisper, optional
         List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
+    dynamic_heads : bool or int or str, optional
+        Whether to find optimal cross-attention heads during runtime instead of using the predefined heads for 
+        word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
+        To specify number of iterations for finding the optimal heads,
+        use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
     decode_options
         Keyword arguments to construct class:`whisper.decode.DecodingOptions` instances.
 
@@ -935,6 +940,11 @@ Docstring:
         Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
         Used to reduce the probability of model predicting timestamps earlier than the first utterance.
         Ignored if ``model`` is a faster-whisper model.
+    dynamic_heads : bool or int or str, optional
+        Whether to find optimal cross-attention heads during runtime instead of using the predefined heads for 
+        word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
+        To specify number of iterations for finding the optimal heads,
+        use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
 
     Returns
     -------
