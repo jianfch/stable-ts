@@ -13,6 +13,7 @@ _COMPATIBLE_WHISPER_VERSIONS = (
     '20231105',
     '20231106',
     '20231117',
+    '20240927',
 )
 _required_whisper_ver = _COMPATIBLE_WHISPER_VERSIONS[-1]
 
@@ -25,7 +26,7 @@ else:
 
 def whisper_not_available(*args, **kwargs):
     raise ModuleNotFoundError("Please install Whisper: "
-                              "'pip install openai-whisper==20231117'. "
+                              "'pip install -U openai-whisper'. "
                               "Official Whisper repo: https://github.com/openai/whisper")
 
 
@@ -234,8 +235,9 @@ def warn_compatibility_issues(
             compatibility_warning = (
                     'The installed version of Whisper might be incompatible.\n'
                     + compatibility_warning +
-                    'To prevent errors and performance issues, reinstall correct version with: '
-                    f'"pip install --upgrade --no-deps --force-reinstall openai-whisper=={_required_whisper_ver}".'
+                    'To prevent errors and performance issues, update Whisper by updating Stable-ts: '
+                    f'"pip install -U stable-ts".\n'
+                    f'Use `ignore_compatibility=True` to ignore this warning.'
             )
             if additional_msg:
                 compatibility_warning += f' {additional_msg}'
