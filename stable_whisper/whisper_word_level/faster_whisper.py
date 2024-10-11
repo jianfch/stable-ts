@@ -9,7 +9,7 @@ from ..non_whisper import transcribe_any
 from ..utils import safe_print, isolate_useful_options
 from ..audio import audioloader_not_supported, convert_demucs_kwargs
 
-from ..whisper_compatibility import LANGUAGES
+from ..whisper_compatibility import LANGUAGES, is_faster_whisper_on_pt
 
 
 def faster_transcribe(
@@ -130,6 +130,11 @@ def faster_transcribe(
     denoiser, denoiser_options = convert_demucs_kwargs(
         denoiser, denoiser_options, demucs=demucs, demucs_options=demucs_options
     )
+    if is_faster_whisper_on_pt():
+        if 'audio_type' not in extra_options:
+            extra_options['audio_type'] = 'torch'
+        if 'model_sr' not in extra_options:
+            extra_options['model_sr'] = model.feature_extractor.sampling_rate
     if not isinstance(audio, (str, bytes)):
         if 'input_sr' not in extra_options:
             extra_options['input_sr'] = model.feature_extractor.sampling_rate

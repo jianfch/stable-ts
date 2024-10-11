@@ -298,6 +298,7 @@ def align(
     remaining_len = sum(len(w) for w in words)
 
     if is_faster_model:
+        from .whisper_compatibility import is_faster_whisper_on_pt
 
         def timestamp_words():
             temp_segment = dict(
@@ -306,11 +307,15 @@ def align(
                 end=round(segment_samples / model.feature_extractor.sampling_rate, 3),
                 tokens=[t for wt in curr_word_tokens for t in wt],
             )
-            features = model.feature_extractor(audio_segment.cpu().numpy())
+            is_on_pt = is_faster_whisper_on_pt()
+            if is_on_pt:
+                features = model.feature_extractor(audio_segment)
+            else:
+                features = model.feature_extractor(audio_segment.cpu().numpy())
             encoder_output = model.encode(features[:, : model.feature_extractor.nb_max_frames])
 
             model.add_word_timestamps(
-                segments=[temp_segment],
+                segments=[[temp_segment]] if is_on_pt else [temp_segment],
                 tokenizer=tokenizer,
                 encoder_output=encoder_output,
                 num_frames=round(segment_samples / model.feature_extractor.hop_length),

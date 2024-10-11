@@ -19,11 +19,24 @@ _COMPATIBLE_WHISPER_VERSIONS = (
 )
 _required_whisper_ver = _COMPATIBLE_WHISPER_VERSIONS[-1]
 
+_faster_compatibility = {}
+
 if IS_WHISPER_AVAILABLE:
     import whisper.tokenizer
     _TOKENIZER_PARAMS = get_func_parameters(whisper.tokenizer.get_tokenizer)
 else:
     _TOKENIZER_PARAMS = ()
+
+
+def is_faster_whisper_on_pt() -> bool:
+    if 'is_on_pt' not in _faster_compatibility:
+        try:
+            requirements = importlib.metadata.distribution('faster-whisper').requires
+        except importlib.metadata.PackageNotFoundError:
+            _faster_compatibility["is_on_pt"] = False
+        else:
+            _faster_compatibility["is_on_pt"] = any(r.startswith('torch') for r in requirements)
+    return _faster_compatibility["is_on_pt"]
 
 
 def whisper_not_available(*args, **kwargs):
