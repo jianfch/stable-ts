@@ -2,11 +2,18 @@ import warnings
 import string
 import torch
 import numpy as np
-from typing import TYPE_CHECKING, List, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, List, Callable, Optional, Union
 from itertools import chain
 from dataclasses import dataclass
 
-from .whisper_compatibility import TOKENS_PER_SECOND, N_SAMPLES_PER_TOKEN, median_filter, dtw, merge_punctuations
+from .whisper_compatibility import (
+    TOKENS_PER_SECOND,
+    N_SAMPLES_PER_TOKEN,
+    median_filter,
+    dtw,
+    merge_punctuations,
+    disable_sdpa
+)
 
 if TYPE_CHECKING:
     from .whisper_compatibility import Whisper, Tokenizer
@@ -21,48 +28,112 @@ class WordTiming:
     probability: float
 
 
+def _new_cache(audio_features=None, extras: int = None) -> dict:
+    return dict(
+        audio_features=audio_features,
+        jump_indices=None,
+        text_token_probs=None,
+        qks=None,
+        extra_caches=[_new_cache() for _ in range(extras)] if extras else None
+    )
+
+
 def _compute_qks(
+        model: "Whisper",
+        tokenizer: "Tokenizer",
+        text_tokens: List[int],
+        mel: torch.Tensor,
+        tokens: torch.tensor,
+        cache: dict
+):
+    # install hooks on the cross attention layers to retrieve the attention weights
+    cache['qks'] = [None] * model.dims.n_text_layer
+    hooks = [
+        block.cross_attn.register_forward_hook(
+            lambda _, ins, outs, index=i: cache['qks'].__setitem__(index, outs[-1])
+        )
+        for i, block in enumerate(model.decoder.blocks)
+    ]
+
+    with torch.no_grad(), disable_sdpa():
+        if (audio_features := cache['audio_features']) is None:
+            audio_features = cache['audio_features'] = model.encoder(mel.unsqueeze(0))
+        logits = model.decoder(tokens.unsqueeze(0), audio_features)[0]
+        sampled_logits = logits[len(tokenizer.sot_sequence):, : tokenizer.eot]
+        token_probs = sampled_logits.softmax(dim=-1)
+        cache['text_token_probs'] = token_probs[np.arange(len(text_tokens)), text_tokens].tolist()
+
+    for hook in hooks:
+        hook.remove()
+
+
+def _compute_atten_weights(
         model: "Whisper",
         tokenizer: "Tokenizer",
         text_tokens: List[int],
         mel: torch.Tensor,
         num_samples: int,
         tokens: torch.tensor,
+        cache: dict,
         medfilt_width: int = 7,
         qk_scale: float = 1.0,
-        audio_features: torch.Tensor = None,
-) -> Tuple[torch.Tensor, List[float]]:
+        dynamic_heads_count: Optional[int] = None
+) -> torch.Tensor:
+    if cache['qks'] is None:
+        _compute_qks(model, tokenizer, text_tokens, mel, tokens, cache)
+    QKs = cache['qks']
+    if dynamic_heads_count:
+        max_qk_len = round(num_samples / N_SAMPLES_PER_TOKEN)
+        if not cache.get('is_processed_qks'):
+            QKs = torch.cat([qk[0, :, len(tokenizer.sot_sequence): -1, : max_qk_len] for qk in QKs])
+            QKs = cache['qks'] = (QKs * qk_scale).softmax(dim=-1)
+            cache['is_processed_qks'] = True
 
-    # install hooks on the cross attention layers to retrieve the attention weights
-    QKs = [None] * model.dims.n_text_layer
-    hooks = [
-        block.cross_attn.register_forward_hook(
-            lambda _, ins, outs, index=i: QKs.__setitem__(index, outs[-1])
-        )
-        for i, block in enumerate(model.decoder.blocks)
-    ]
-
-    with torch.no_grad():
-        if audio_features is None:
-            audio_features = model.encoder(mel.unsqueeze(0))
-        logits = model.decoder(tokens.unsqueeze(0), audio_features)[0]
-        sampled_logits = logits[len(tokenizer.sot_sequence):, : tokenizer.eot]
-        token_probs = sampled_logits.softmax(dim=-1)
-        text_token_probs = token_probs[np.arange(len(text_tokens)), text_tokens]
-        text_token_probs = text_token_probs.tolist()
-
-    for hook in hooks:
-        hook.remove()
-
-    # heads * tokens * frames
-    weights = torch.cat([QKs[_l][:, _h] for _l, _h in model.alignment_heads.indices().T], dim=0)
-    weights = weights[:, len(tokenizer.sot_sequence): -1, : round(num_samples / N_SAMPLES_PER_TOKEN)]
-    weights = (weights * qk_scale).softmax(dim=-1)
+        if cache['jump_indices'] is None:
+            peaks = QKs.topk(1, dim=-1).indices
+        else:
+            jump_indices = np.pad(cache['jump_indices'], (0, 1), constant_values=max_qk_len)
+            peaks = jump_indices[:-1] + ((jump_indices[1:] - jump_indices[:-1]) * 0.5)
+            peaks = torch.from_numpy(peaks).to(QKs.device)[None, :, None]
+        distances = (peaks.expand_as(QKs) - torch.arange(QKs.size(-1), device=QKs.device)).abs() / 1500
+        scores = (distances * QKs).sum(dim=-1)
+        heads = [score.topk(dynamic_heads_count, largest=False).indices for score in scores.T]
+        weights = torch.stack([QKs[_h, i] for i, _h in enumerate(heads)], dim=1)
+    else:
+        weights = torch.cat([QKs[_l][:, _h] for _l, _h in model.alignment_heads.indices().T], dim=0)
+        weights = weights[:, len(tokenizer.sot_sequence): -1, : round(num_samples / N_SAMPLES_PER_TOKEN)]
+        weights = (weights * qk_scale).softmax(dim=-1)
     std, mean = torch.std_mean(weights, dim=-2, keepdim=True, unbiased=False)
     weights = (weights - mean) / std
     weights = median_filter(weights, medfilt_width)
 
-    return weights, text_token_probs
+    return weights
+
+
+def _compute_jump_indices(
+        model: "Whisper",
+        cache: dict,
+        extra_models: List["Whisper"] = None,
+        **kwargs
+):
+    weights = _compute_atten_weights(model, cache=cache, **kwargs)
+    if extra_models:
+        extra_weights = [weights]
+        for mi, other_model in enumerate(extra_models):
+            m = _compute_atten_weights(other_model, cache=cache['extra_caches'][mi], **kwargs)
+            extra_weights.append(m)
+        weights = torch.cat(extra_weights, dim=0)
+        extra_text_token_probs = [c['text_token_probs'] for c in cache['extra_caches']] + [cache['text_token_probs']]
+        cache['text_token_probs'] = torch.tensor(
+            extra_text_token_probs,
+            device=extra_weights[0].device
+        ).mean(dim=0).tolist()
+
+    matrix = weights.mean(dim=0)
+    text_indices, time_indices = dtw(-matrix)
+
+    jumps = np.pad(np.diff(text_indices), (1, 0), constant_values=1).astype(bool)
+    cache['jump_indices'] = time_indices[jumps].clip(min=0)
 
 
 # modified version of whisper.timing.find_alignment
@@ -79,7 +150,8 @@ def find_alignment_stable(
         ts_noise: float = None,
         token_split=None,
         audio_features: torch.Tensor = None,
-        extra_models: List["Whisper"] = None
+        extra_models: List["Whisper"] = None,
+        dynamic_heads: Optional[Union[bool, int, str]] = None
 ) -> List[WordTiming]:
     if extra_models and (invalid_model_types := set(map(type, extra_models)) - {type(model)}):
         raise NotImplementedError(f'Got unsupported model type(s): {invalid_model_types}')
@@ -99,31 +171,6 @@ def find_alignment_stable(
         ]
     ).to(model.device)
 
-    kwargs = dict(
-        tokenizer=tokenizer,
-        text_tokens=text_tokens,
-        mel=mel,
-        num_samples=num_samples,
-        tokens=tokens,
-        qk_scale=qk_scale,
-        medfilt_width=medfilt_width
-    )
-
-    weights, text_token_probs = _compute_qks(model, audio_features=audio_features, **kwargs)
-
-    if extra_models:
-        extra_weights = [weights]
-        extra_text_token_probs = [text_token_probs]
-        for other_model in extra_models:
-            m, p = _compute_qks(other_model, **kwargs)
-            extra_weights.append(m)
-            extra_text_token_probs.append(p)
-        weights = torch.cat(extra_weights, dim=0)
-        text_token_probs = torch.tensor(extra_text_token_probs, device=extra_weights[0].device).mean(dim=0).tolist()
-
-    matrix = weights.mean(dim=0)
-    text_indices, time_indices = dtw(-matrix)
-
     if token_split is None:
         words, word_tokens = tokenizer.split_to_word_tokens(text_tokens + [tokenizer.eot])
     else:
@@ -131,13 +178,40 @@ def find_alignment_stable(
         words.append(tokenizer.decode([tokenizer.eot]))
         word_tokens.append([tokenizer.eot])
     word_boundaries = np.pad(np.cumsum([len(t) for t in word_tokens[:-1]]), (1, 0))
-
-    jumps = np.pad(np.diff(text_indices), (1, 0), constant_values=1).astype(bool)
-    jump_times = time_indices[jumps].clip(min=0) / TOKENS_PER_SECOND
+    if dynamic_heads:
+        if dynamic_heads is True:
+            dynamic_heads_count = 6
+            dynamic_iterations = None
+        elif isinstance(dynamic_heads, int):
+            dynamic_heads_count = dynamic_heads
+            dynamic_iterations = None
+        else:
+            assert ',' in dynamic_heads
+            dynamic_heads = dynamic_heads.split(',')
+            dynamic_heads_count = int(dynamic_heads[0])
+            dynamic_iterations = int(dynamic_heads[1])
+    else:
+        dynamic_heads_count = dynamic_iterations = None
+    kwargs = dict(
+        model=model,
+        tokenizer=tokenizer,
+        text_tokens=text_tokens,
+        mel=mel,
+        num_samples=num_samples,
+        tokens=tokens,
+        qk_scale=qk_scale,
+        medfilt_width=medfilt_width,
+        extra_models=extra_models,
+        dynamic_heads_count=dynamic_heads_count
+    )
+    cache = _new_cache(audio_features=audio_features, extras=0 if extra_models is None else len(extra_models))
+    for _ in range(dynamic_iterations or 1):
+        _compute_jump_indices(cache=cache, **kwargs)
+    jump_times = cache['jump_indices'] / TOKENS_PER_SECOND
     start_times = jump_times[word_boundaries[:-1]]
     end_times = jump_times[word_boundaries[1:]]
     word_probabilities = [
-        np.mean(text_token_probs[i:j])
+        np.mean(cache['text_token_probs'][i:j])
         for i, j in zip(word_boundaries[:-1], word_boundaries[1:])
     ]
 

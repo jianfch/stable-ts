@@ -68,7 +68,8 @@ def align(
         failure_threshold: Optional[float] = None,
         extra_models: Optional[List["Whisper"]] = None,
         presplit: Union[bool, List[str]] = True,
-        gap_padding: str = ' ...'
+        gap_padding: str = ' ...',
+        dynamic_heads: Optional[Union[bool, int, str]] = None
 ) -> Union[WhisperResult, None]:
     """
     Align plain text or tokens with audio at word-level.
@@ -172,6 +173,11 @@ def align(
         Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
         Used to reduce the probability of model predicting timestamps earlier than the first utterance.
         Ignored if ``model`` is a faster-whisper model.
+    dynamic_heads : bool or int or str, optional
+        Whether to find optimal cross-attention heads during runtime instead of using the predefined heads for
+        word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
+        To specify number of iterations for finding the optimal heads,
+        use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
 
     Returns
     -------
@@ -292,6 +298,7 @@ def align(
     remaining_len = sum(len(w) for w in words)
 
     if is_faster_model:
+        from .whisper_compatibility import is_faster_whisper_on_pt
 
         def timestamp_words():
             temp_segment = dict(
@@ -300,11 +307,15 @@ def align(
                 end=round(segment_samples / model.feature_extractor.sampling_rate, 3),
                 tokens=[t for wt in curr_word_tokens for t in wt],
             )
-            features = model.feature_extractor(audio_segment.cpu().numpy())
+            is_on_pt = is_faster_whisper_on_pt()
+            if is_on_pt:
+                features = model.feature_extractor(audio_segment)
+            else:
+                features = model.feature_extractor(audio_segment.cpu().numpy())
             encoder_output = model.encode(features[:, : model.feature_extractor.nb_max_frames])
 
             model.add_word_timestamps(
-                segments=[temp_segment],
+                segments=[[temp_segment]] if is_on_pt else [temp_segment],
                 tokenizer=tokenizer,
                 encoder_output=encoder_output,
                 num_frames=round(segment_samples / model.feature_extractor.hop_length),
@@ -357,7 +368,8 @@ def align(
                 append_punctuations=append_punctuations,
                 gap_padding=gap_padding if presplit else None,
                 extra_models=extra_models,
-                pad_first_seg=pad_first_seg
+                pad_first_seg=pad_first_seg,
+                dynamic_heads=dynamic_heads
             )
             if len(temp_segments) == 1:
                 return temp_segments[0]

@@ -21,6 +21,8 @@ HF_MODELS = {
     "large-v2": "openai/whisper-large-v2",
     "large-v3": "openai/whisper-large-v3",
     "large": "openai/whisper-large-v3",
+    "large-v3-turbo": "openai/whisper-large-v3-turbo",
+    "turbo": "openai/whisper-large-v3-turbo"
 }
 
 
@@ -34,7 +36,7 @@ def get_device(device: str = None) -> str:
     return 'cpu'
 
 
-def load_hf_pipe(model_name: str, device: str = None, flash: bool = False):
+def load_hf_pipe(model_name: str, device: str = None, flash: bool = False, **pipeline_kwargs):
     from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
     device = get_device(device)
     is_cpu = (device if isinstance(device, str) else getattr(device, 'type', None)) == 'cpu'
@@ -56,8 +58,8 @@ def load_hf_pipe(model_name: str, device: str = None, flash: bool = False):
         except ValueError:
             pass
 
-    pipe = pipeline(
-        "automatic-speech-recognition",
+    final_pipe_kwargs = dict(
+        task="automatic-speech-recognition",
         model=model,
         tokenizer=processor.tokenizer,
         feature_extractor=processor.feature_extractor,
@@ -66,15 +68,18 @@ def load_hf_pipe(model_name: str, device: str = None, flash: bool = False):
         torch_dtype=dtype,
         device=device,
     )
+    final_pipe_kwargs.update(**pipeline_kwargs)
+    pipe = pipeline(**final_pipe_kwargs)
 
     return pipe
 
 
 class WhisperHF:
 
-    def __init__(self, model_name: str, device: str = None, flash: bool = False, pipeline=None):
+    def __init__(self, model_name: str, device: str = None, flash: bool = False, pipeline=None, **pipeline_kwargs):
         self._model_name = model_name
-        self._pipe = load_hf_pipe(self._model_name, device, flash=flash) if pipeline is None else pipeline
+        self._pipe = load_hf_pipe(self._model_name, device, flash=flash, **pipeline_kwargs) if pipeline is None \
+            else pipeline
         self._model_name = getattr(self._pipe.model, 'name_or_path', self._model_name)
 
     @property
@@ -259,5 +264,5 @@ class WhisperHF:
         )
 
 
-def load_hf_whisper(model_name: str, device: str = None, flash: bool = False, pipeline=None):
-    return WhisperHF(model_name, device, flash=flash, pipeline=pipeline)
+def load_hf_whisper(model_name: str, device: str = None, flash: bool = False, pipeline=None, **pipeline_kwargs):
+    return WhisperHF(model_name, device, flash=flash, pipeline=pipeline, **pipeline_kwargs)

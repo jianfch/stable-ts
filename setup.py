@@ -13,7 +13,7 @@ def read_me() -> str:
 
 
 setup(
-    name="stable-ts-whisperless",
+    name="stable-ts",
     version=version(),
     description="Modifies OpenAI's Whisper to produce more reliable timestamps.",
     long_description=read_me(),
@@ -27,7 +27,8 @@ setup(
         "numpy",
         "torch",
         "torchaudio",
-        "tqdm"
+        "tqdm",
+        "openai-whisper>=20230314,<=20240930"
     ],
     extras_require={
         "fw": [
@@ -39,7 +40,6 @@ setup(
             "accelerate"
         ]
     },
-
     entry_points={
         "console_scripts": ["stable-ts=stable_whisper.whisper_word_level:cli"],
     },
