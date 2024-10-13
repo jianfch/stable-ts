@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 2.17.5
+* added `dynamic_heads` to `transcribe()` and `align()` ([32235fa](https://github.com/jianfch/stable-ts/commit/32235fa3a677bff04d0a1784c63745b2560ffcd4))
+* added `pipeline_kwargs` to `load_hf_whisper()` ([024d7dc](https://github.com/jianfch/stable-ts/commit/024d7dc302ee9c5b33af18922a203b3ee29dd915))
+* added `"large-v3-turbo"` and `"turbo"` to `HF_MODELS` ([024d7dc](https://github.com/jianfch/stable-ts/commit/024d7dc302ee9c5b33af18922a203b3ee29dd915))
+* updated Whisper requirement to >=20230314,<=20240930 ([453013c](https://github.com/jianfch/stable-ts/commit/453013ca14739c0a0ff2833cc02594f630f5cf16), [df8dace](https://github.com/jianfch/stable-ts/commit/df8dace6c4a52be8cc9ffdd09137e1f87649a8be))
+* updated Whisper compatibility warning message ([453013c](https://github.com/jianfch/stable-ts/commit/453013ca14739c0a0ff2833cc02594f630f5cf16), [df8dace](https://github.com/jianfch/stable-ts/commit/df8dace6c4a52be8cc9ffdd09137e1f87649a8be))
+* updated compatibility with Whisper v20240930 ([df8dace](https://github.com/jianfch/stable-ts/commit/df8dace6c4a52be8cc9ffdd09137e1f87649a8be))
+* updated `align()` and `transcribe_stable()` compatibility with latest Faster-Whisper commit ([024d7dc](https://github.com/jianfch/stable-ts/commit/024d7dc302ee9c5b33af18922a203b3ee29dd915))
+
 ## 2.17.4
 * deprecated `vad_onnx` ([b309530](https://github.com/jianfch/stable-ts/commit/b30953022d5f5d80e2ad69735b6b1507c743caad))
 * added optional dependencies for Faster Whisper and Hugging Face ([c541169](https://github.com/jianfch/stable-ts/commit/c541169ea1ff98c128a26b9eaf6c945d0614d2ad))
