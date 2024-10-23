@@ -42,7 +42,7 @@ def compute_vad_probs(
 ) -> List[float]:
     duration = round(audio.shape[-1] / sampling_rate, 2)
     speech_probs = []
-    with SetTorchThread(1), tqdm(total=duration, unit='sec', desc='VAD', disable=not progress) as pbar:
+    with torch.no_grad(), SetTorchThread(1), tqdm(total=duration, unit='sec', desc='VAD', disable=not progress) as pbar:
         for current_start_sample in range(0, audio.shape[-1], window):
             chunk = audio[current_start_sample: current_start_sample + window]
             if len(chunk) < window:
