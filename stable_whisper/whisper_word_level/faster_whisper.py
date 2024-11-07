@@ -203,7 +203,7 @@ def _inner_transcribe(model, audio, verbose, **faster_transcribe_options):
         for segment in segments:
             segment = segment._asdict()
             if (words := segment.get('words')) is not None:
-                segment['words'] = [w._asdict() for w in words]
+                segment['words'] = [w if isinstance(w, dict) else w._asdict() for w in words]
             else:
                 del segment['words']
             if verbose:
