@@ -825,6 +825,15 @@ class Segment:
                       stacklevel=2)
         return self.result
 
+    def convert_to_segment_level(self):
+        if not self.has_words:
+            return
+        self._default_text = self.text
+        self._default_start = self.start
+        self._default_end = self.end
+        self._default_tokens = self.tokens
+        self.words = None
+
 
 class WhisperResult:
 
@@ -1892,7 +1901,7 @@ class WhisperResult:
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
-        assert startswith or endswith, 'Must specify [startswith] or/and [endswith].'
+        assert startswith is not None or endswith is not None, 'Must specify [startswith] or/and [endswith].'
         startswith = [] if startswith is None else ([startswith] if isinstance(startswith, str) else startswith)
         endswith = [] if endswith is None else ([endswith] if isinstance(endswith, str) else endswith)
         if not case_sensitive:
@@ -2267,6 +2276,142 @@ class WhisperResult:
 
         return self
 
+    def adjust_gaps(
+            self,
+            duration_threshold: float = 0.75,
+            one_section: bool = False
+    ) -> "WhisperResult":
+        """
+        Set segment timestamps to the timestamps of overlapping``nonspeech_sections`` within ``duration_threshold``.
+
+        For results with segments split by gaps or punctuations that indicate pauses in speech, the timestamps of these
+        gaps are replaced with those in ``nonspeech_sections`` which overlap. These timestamps tend to be more accurate
+        if not exact timestamps of the start and end of utterances, especially for audio with no sounds in the gaps.
+
+        Parameters
+        ----------
+        duration_threshold : float, default 0.75
+            Only ``nonspeech_sections`` with duration >= ``duration_threshold`` * duration of the longest section that
+            overlaps the existing gap between segments are considered for that gap.
+        one_section : bool, default False
+            Whether to use only one section of ``nonspeech_sections`` for each gap between segments.
+            Recommend ``True`` when there are no sounds in the gaps.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        The reliability of this approach hinges on the accuracy of the ``nonspeech_sections`` which is computed when
+        ``vad`` is ``False`` or ``True`` for transcription and alignment. The accuracy increases with cleaner audio.
+        Results produced by ``vad=True`` will work better with less clean audio (i.e. audio with non-speech sounds).
+
+        """
+        if duration_threshold > 1:
+            raise ValueError(f'``duration_threshold`` must be at most 1.0 but got {duration_threshold}')
+
+        ns_idx = 0
+        for seg_idx in range(-1, len(self.segments)):
+            curr_part = None if seg_idx == -1 else self.segments[seg_idx]
+            next_part = None if curr_part is self.segments[-1] else self.segments[seg_idx + 1]
+            curr_start = curr_end = next_start = next_end = None
+            if self.has_words:
+                if curr_part is None:
+                    word_duration = np.median([word.duration for word in next_part]) * 2
+                    curr_start = curr_end = max(next_part.start - word_duration, 0)
+                if next_part is None:
+                    med_duration = np.median([word.duration for word in curr_part]) * 2
+                    next_start = next_end = curr_part.end + med_duration
+                if curr_part is not None:
+                    curr_part = curr_part[-1]
+                if next_part is not None:
+                    next_part = next_part[0]
+            else:
+                if curr_part is None:
+                    curr_start = curr_end = max(next_part.start - next_part.duration, 0)
+                if next_part is None:
+                    next_start = next_end = curr_part.end + curr_part.duration
+
+            if curr_start is None:
+                curr_start = curr_part.start
+            if curr_end is None:
+                curr_end = curr_part.end
+            if next_start is None:
+                next_start = next_part.start
+            if next_end is None:
+                next_end = next_part.end
+
+            nonspeech_sections: List[Tuple[float, float]] = []
+            for ns_idx in range(ns_idx, len(self.nonspeech_sections)):
+                section = self.nonspeech_sections[ns_idx]
+                nonspeech_start = section['start']
+                nonspeech_end = section['end']
+                valid_start = curr_start < (nonspeech_end if curr_part is None else nonspeech_start)
+                valid_end = (nonspeech_start if next_part is None else nonspeech_end) < next_end
+                if valid_start and valid_end:
+                    nonspeech_sections.append((nonspeech_start, nonspeech_end))
+                if next_start < nonspeech_start:
+                    break
+            if not nonspeech_sections:
+                continue
+            nonspeech_durations = np.array([end - start for start, end in nonspeech_sections])
+            duration_indices = np.argsort(nonspeech_durations)
+            nonspeech_durations = nonspeech_durations[duration_indices]
+            nonspeech_duration_pct = nonspeech_durations / nonspeech_durations[-1]
+            valid_nonspeech_mask = nonspeech_duration_pct >= duration_threshold
+            if not np.any(valid_nonspeech_mask):
+                continue
+            duration_indices = duration_indices[valid_nonspeech_mask]
+
+            curr_scores = np.array([abs(nonspeech_sections[i][0] - curr_end) for i in duration_indices])
+            next_scores = np.array([abs(nonspeech_sections[i][1] - next_start) for i in duration_indices])
+
+            if one_section:
+                score_idx_idx = np.argmin(curr_scores + next_scores)
+                best_curr_score_idx = duration_indices[score_idx_idx]
+                best_next_score_idx = duration_indices[score_idx_idx]
+            else:
+                best_curr_score_idx = duration_indices[np.argmin(curr_scores)]
+                best_next_score_idx = duration_indices[np.argmin(next_scores)]
+                if best_curr_score_idx > best_next_score_idx:
+                    score_idx_idx = np.argmin(curr_scores + next_scores)
+                    best_curr_score_idx = duration_indices[score_idx_idx]
+                    best_next_score_idx = duration_indices[score_idx_idx]
+
+            new_end = nonspeech_sections[best_curr_score_idx][0]
+            if curr_part is not None and curr_start < new_end:
+                curr_part.end = new_end
+
+            new_start = nonspeech_sections[best_next_score_idx][1]
+            if next_part is not None and new_start < next_end:
+                next_part.start = new_start
+
+        return self
+
+    def convert_to_segment_level(self) -> "WhisperResult":
+        """
+        Remove all word-level data.
+
+        Converting from word-level to segment-level is useful when the word-level data restricts certain operations that
+        need to be performed at the segment-level or when the segment-level results of operations are more desirable.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        Since many regrouping operations require word-timestamps, it is recommended to only use this method after the
+        result has been regrouped into its final segments.
+
+        """
+        for seg in self.segments:
+            seg.convert_to_segment_level()
+        return self
+
     def regroup(
             self,
             regroup_algo: Union[str, bool] = None,
@@ -2311,6 +2456,8 @@ class WhisperResult:
                 rws: remove_words_by_str
                 fg: fill_in_gaps
                 p: pad
+                ag: adjust_gaps
+                csl: convert_to_segment_level
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -2363,6 +2510,8 @@ class WhisperResult:
             rws=self.remove_words_by_str,
             fg=self.fill_in_gaps,
             p=self.pad,
+            ag=self.adjust_gaps,
+            csl=self.convert_to_segment_level
         )
         if not regroup_algo:
             return []

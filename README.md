@@ -15,6 +15,7 @@ https://github.com/jianfch/stable-ts/assets/28970749/7adf0540-3620-4b2b-b2d4-e31
   * [Editing](#editing)
   * [Locating Words](#locating-words)
   * [Silence Suppression](#silence-suppression)
+    * [Gap Adjustment](#gap-adjustment)
   * [Tips](#tips)
   * [Visualizing Suppression](#visualizing-suppression)
   * [Encode Comparison](#encode-comparison)
@@ -1165,6 +1166,9 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
                 rp: remove_repetition
                 rws: remove_words_by_str
                 fg: fill_in_gaps
+                p: pad
+                ag: adjust_gaps
+                csl: convert_to_segment_leve
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -1840,6 +1844,98 @@ As a result, the start of 'Hello' is changed to 0.375s instead of 0.625s.
 Furthermore, the default setting, `use_word_position=True`, also ensures the start is adjusted for the first word 
 and the end is adjusted for the last word of the segment as long as one of the conditions is true.
 
+#### Gap Adjustment
+Generally, the initial timestamps are accurate enough for captioning/subtitling purposes. 
+However, starting/ending 200ms earlier/later than the actual time the words are actually spoken 
+makes the timestamps not viable for tasks that require greater accuracy, such as audio editing.
+
+Gap Adjustment makes use of makes timestamps that accurately if not exactly marks the boundary of utterances.
+These timestamps, `nonspeech_sections`, are computed during transcription / alignment and used for [Silence Suppression](#silence-suppression).
+Since the initial timestamps are not pinpoint accuracy, they tend to overlap with `nonspeech_sections` 
+which is what the approach exploits. 
+Unlike [Silence Suppression](#silence-suppression) which only clips timestamps, 
+Gap Adjustment sets the segment timestamps to the timestamps of an ideal section in `nonspeech_sections` 
+(i.e. nonspeech start to segment end and nonspeech end to segment start). 
+
+This only applies to segment timestamps because there more prominent gaps between each segment than word.
+Therefore, it is recommended to use Gap Adjustment before any regrouping operations that split segments at places that are unlikely to have gaps. 
+And the opposite is recommended to be applied (e.g. splitting by gaps or punctuations that indicate a pause) before Gap Adjustment .
+
+```python
+result = model.transcribe('audio.mp3')
+result.adjust_gaps()
+```
+_Note: `.adjust_gaps()` can be chained with regrouping methods_
+
+The reliability of the `nonspeech_sections` varies by audio and settings.
+It is generally recommended to use `vad=False` for audio with no sound in the gaps and `vad=True` otherwise.
+The respective sensitive can be also tuned. See [Visualizing Suppression](#visualizing-suppression).
+
+If the result contains word-level data (i.e. word-timestamps), 
+only `nonspeech_sections` that overlap the duration of the gap and words adjacent to the gap are considered to avoid clipping
+other words of the segments.
+There are cases, such as when timestamps are less accurate than usual, where the ideal `nonspeech_sections` does not overlap the aforementioned duration. 
+In such cases, it recommended to apply Gap Adjustment after converting the result from word-level to segment-level.
+
+```python
+result.convert_to_segment_level().adjust_gaps()
+```
+Note: .convert_to_segment_level() can be chained with regrouping methods
+
+
+Docstring:
+<details>
+<summary>adjust_gaps()</summary>
+
+        Set segment timestamps to the timestamps of overlapping``nonspeech_sections`` within ``duration_threshold``.
+
+        For results with segments split by gaps or punctuations that indicate pauses in speech, the timestamps of these
+        gaps are replaced with those in ``nonspeech_sections`` which overlap. These timestamps tend to be more accurate
+        if not exact timestamps of the start and end of utterances, especially for audio with no sounds in the gaps.
+
+        Parameters
+        ----------
+        duration_threshold : float, default 0.75
+            Only ``nonspeech_sections`` with duration >= ``duration_threshold`` * duration of the longest section that
+            overlaps the existing gap between segments are considered for that gap.
+        one_section : bool, default False
+            Whether to use only one section of ``nonspeech_sections`` for each gap between segments.
+            Recommend ``True`` when there are no sounds in the gaps.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        The reliability of this approach hinges on the accuracy of the ``nonspeech_sections`` which is computed when
+        ``vad`` is ``False`` or ``True`` for transcription and alignment. The accuracy increases with cleaner audio.
+        Results produced by ``vad=True`` will work better with less clean audio (i.e. audio with non-speech sounds).
+
+</details>
+
+<details>
+<summary>convert_to_segment_level()</summary>
+
+        Remove all word-level data.
+
+        Converting from word-level to segment-level is useful when the word-level data restricts certain operations that
+        need to be performed at the segment-level or when the segment-level results of operations are more desirable.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        Since many regrouping operations require word-timestamps, it is recommended to only use this method after the
+        result has been regrouped into its final segments.
+
+</details>
+
+
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
 - use `vad=True` for more accurate non-speech detection
@@ -1854,20 +1950,21 @@ and the end is adjusted for the last word of the segment as long as one of the c
 
 ### Visualizing Suppression
 You can visualize which parts of the audio will likely be suppressed (i.e. marked as silent). 
+The computed timestamps for any result can be found in `result.nonspeech_sections`.
 Requires: [Pillow](https://github.com/python-pillow/Pillow) or [opencv-python](https://github.com/opencv/opencv-python).
 
 #### Without VAD
 ```python
 import stable_whisper
 # regions on the waveform colored red are where it will likely be suppressed and marked as silent
-# [q_levels]=20 and [k_size]=5 (default)
+# ``q_levels=20`` and ``k_size=5`` (default)
 stable_whisper.visualize_suppression('audio.mp3', 'image.png', q_levels=20, k_size = 5) 
 ```
 ![novad](https://user-images.githubusercontent.com/28970749/225825408-aca63dbf-9571-40be-b399-1259d98f93be.png)
 
 #### With [Silero VAD](https://github.com/snakers4/silero-vad)
 ```python
-# [vad_threshold]=0.35 (default)
+# ``vad_threshold=0.35`` (default)
 stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_threshold=0.35)
 ```
 ![vad](https://user-images.githubusercontent.com/28970749/225825446-980924a5-7485-41e1-b0d9-c9b069d605f2.png)
