@@ -1849,7 +1849,7 @@ Generally, the initial timestamps are accurate enough for captioning/subtitling 
 However, starting/ending 200ms earlier/later than the actual time the words are actually spoken 
 makes the timestamps not viable for tasks that require greater accuracy, such as audio editing.
 
-Gap Adjustment makes use of makes timestamps that accurately if not exactly marks the boundary of utterances.
+Gap Adjustment makes use of timestamps that accurately if not exactly marks the boundary of utterances.
 These timestamps, `nonspeech_sections`, are computed during transcription / alignment and used for [Silence Suppression](#silence-suppression).
 Since the initial timestamps are not pinpoint accuracy, they tend to overlap with `nonspeech_sections` 
 which is what the approach exploits. 
@@ -1857,7 +1857,7 @@ Unlike [Silence Suppression](#silence-suppression) which only clips timestamps,
 Gap Adjustment sets the segment timestamps to the timestamps of an ideal section in `nonspeech_sections` 
 (i.e. nonspeech start to segment end and nonspeech end to segment start). 
 
-This only applies to segment timestamps because there more prominent gaps between each segment than word.
+This only applies to segment timestamps because there more prominent gaps between segments than between words.
 Therefore, it is recommended to use Gap Adjustment before any regrouping operations that split segments at places that are unlikely to have gaps. 
 And the opposite is recommended to be applied (e.g. splitting by gaps or punctuations that indicate a pause) before Gap Adjustment .
 
@@ -1869,7 +1869,7 @@ _Note: `.adjust_gaps()` can be chained with regrouping methods_
 
 The reliability of the `nonspeech_sections` varies by audio and settings.
 It is generally recommended to use `vad=False` for audio with no sound in the gaps and `vad=True` otherwise.
-The respective sensitive can be also tuned. See [Visualizing Suppression](#visualizing-suppression).
+Their respective sensitivities can be tuned. See [Visualizing Suppression](#visualizing-suppression).
 
 If the result contains word-level data (i.e. word-timestamps), 
 only `nonspeech_sections` that overlap the duration of the gap and words adjacent to the gap are considered to avoid clipping
@@ -1880,7 +1880,7 @@ In such cases, it recommended to apply Gap Adjustment after converting the resul
 ```python
 result.convert_to_segment_level().adjust_gaps()
 ```
-Note: .convert_to_segment_level() can be chained with regrouping methods
+Note: `.convert_to_segment_level()` can be chained with regrouping methods
 
 
 Docstring:
