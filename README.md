@@ -1134,6 +1134,7 @@ result.reset()
 result.regroup(history)
 ```
 _Note: `regroup_history` from operations that use non-primitive types (e.g. functions) for arguments cannot be used on another result_
+<br>
 Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162).
 #### Regrouping Methods
 <details>
@@ -1519,7 +1520,8 @@ Docstrings:
         Parameters
         ----------
         key : str
-            Attribute of words/segments to get value of.
+            Attribute of words/segments to get value for comparing with ``value``.
+            If ``key`` is empty string, directly use the instance of ``WordTiming``/``Segment`` object for comparison.
             All " " in ``key`` will be replaced with "_".
             Start with "len=" to get length of the attribute.
         operator : str or Callable
