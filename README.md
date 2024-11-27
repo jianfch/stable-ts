@@ -1121,11 +1121,20 @@ result1 = model.transcribe('audio.mp3', regroup=False)
     .split_by_punctuation([('.', ' '), '。', '?', '？'])
 )
 result2 = model.transcribe('audio.mp3', regroup='cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？')
-
-# To undo all regrouping operations:
-result0.reset()
 ```
-Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
+All chainable methods (i.e. all [Regrouping Method](#regrouping-methods) and [Editing Methods](#editing)) 
+are recorded in `result.regroup_history` as a string. 
+This string can be used to reproduce the same operations on another result or same result after a reset.
+
+```python
+history = result.regroup_history
+# To undo all operations (including ones applied by `transcribe()`):
+result.reset()
+# reapply all previous operations
+result.regroup(history)
+```
+_Note: `regroup_history` from operations that use non-primitive types (e.g. functions) for arguments cannot be used on another result_
+Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162).
 #### Regrouping Methods
 <details>
 <summary>regroup()</summary>
@@ -1168,7 +1177,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
                 fg: fill_in_gaps
                 p: pad
                 ag: adjust_gaps
-                csl: convert_to_segment_leve
+                csl: convert_to_segment_level
+                co: custom_operation
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -1179,6 +1189,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             -arguments are parsed positionally
             -if no argument is provided, the default ones will be used
             -use 1 or 0 to represent True or False
+            -use a space to in place of _ for ``key`` of ``custom_operation`` to avoid conflict with the metacharacter
+            -use strings "<True>" or "<False>" to represent True or False for ``value`` of ``custom_operation``
             Example 1:
                 merge_by_gap(.2, 10, lock=True)
                 mg=.2+10+++1
@@ -1189,6 +1201,9 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Example 3:
                 merge_all_segments().split_by_gap(.5).merge_by_gap(.15, 3)
                 ms_sg=.5_mg=.15+3
+            Examples 4:
+                custom_operation('compression_ratio', '>', 3.0, 'remove', word_level=False)
+                co=compression ratio+>+3.0+remove+0
 
 </details>
 
@@ -1460,6 +1475,80 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
 </details>
 
+#### Custom Method
+A custom method can replicate the operations of all the [Regrouping Methods](#regrouping-methods) 
+and more complexity logic with minimal code.
+
+```python
+# Split on the right of words that end with "." or "," or "?":
+result.custom_operation('word', 'end', 'any=.,\,,?', 'splitright', word_level=True)
+
+# Merge with next segment if the current segment is less than 15 chars:
+result.custom_operation('len=text', '<', 15, 'mergeright', word_level=False)
+
+# If there is split after the word " Mr." or " Ms." or " Mrs.", merge with next segment:
+result.custom_operation('word', 'in', (' Mr.', ' Ms.', ' Mrs.'), 'mergeright', word_level=True)
+# same as:
+result.custom_operation('word', '==', 'any= Mr., Ms., Mrs', 'mergeright', word_level=True)
+
+# Replace "one" with "1" if the word has probability below 0.5 
+def is_match(word, value):
+    text = word.word.strip().lower()
+    return text == 'one' and word.probability < value
+def replace_one(result, seg_index, word_index):
+    word = result[seg_index][word_index]
+    word.word = word.word.lower().replace('one', '1')
+result.custom_operation('', is_match, 0.5, replace_one, word_level=True)
+```
+`custom_operation()` is chainable with other [Regrouping Methods](#regrouping-methods). 
+It can be represented with just a string for `regroup()`.
+```python
+result.custom_operation('len=text', '<', 15, 'mergeright', word_level=False)
+
+# the above produces result as same below:
+result.regroup('co=len=text+<+15+mergeright+0')
+```
+
+
+Docstrings:
+<details>
+<summary>custom_operation()</summary>
+
+        Perform custom operation on words/segments that satisfy specified conditions.
+
+        Parameters
+        ----------
+        key : str
+            Attribute of words/segments to get value of.
+            All " " in ``key`` will be replaced with "_".
+            Start with "len=" to get length of the attribute.
+        operator : str or Callable
+            Operator or function for comparing vaLue of ``key`` and ``value``.
+            Built-in operators: ==, >, >=, <, <=, is, in, start, end
+            Function must return a boolean and accept two arguments: vaLue of ``key``, ``value``.
+        value : any
+            Value to compare with vaLue of ``key``.
+            To express multiple values as a string:
+                -start string with "all=" or "any=" followed with values separated by ','
+                -use "\" to escape values with "," in values
+                -these values can only be conbination of str, int, float
+                -start with "all=": all values are required to meet the condition to be satisfied
+                -start with "any=": only require one of the values to meet the conditions to be satified
+        method : str or Callable
+            Operation or function to check if words/segments meet conditions.
+            Built-in operations:
+                mergeleft, mergeright, merge, lockright, lockleft, lock, splitright, splitleft, split, remove
+            Function must accept three arguments: this instance of `WhisperResult`, segment index, word index.
+        word_level : bool, default None, meaning True if this instance has word-timestamps
+            Whether to operate on words. Operate on segments if ``False``.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+</details>
+
 ### Editing
 The editing methods in stable-ts can be chained with [Regrouping Methods](#regrouping-methods) and used in `regroup()`.
 
@@ -1491,6 +1580,8 @@ Docstrings:
             Whether to reassign segment and word ids (indices) after removing ``word``.
         verbose : bool, default True
             Whether to print detail of the removed word.
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------
@@ -1512,6 +1603,8 @@ Docstrings:
             Whether to reassign segment IDs (indices) after removing ``segment``.
         verbose : bool, default True
             Whether to print detail of the removed word.
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------

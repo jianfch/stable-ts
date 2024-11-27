@@ -44,6 +44,33 @@ def _round_timestamp(ts: Union[float, None]):
     return round(ts, 3)
 
 
+def _store_content(obj: object, content: Union[Callable, object]) -> str:
+    if content is None:
+        return ''
+    if isinstance(content, str):
+        return content
+    key = content.__repr__().replace('_', '-')
+    if not key.startswith('<') and not key.endswith('>'):
+        key = f'<{key}>'
+    if not hasattr(obj, '_content_cache'):
+        setattr(obj, '_content_cache', {})
+    getattr(obj, '_content_cache')[key] = content
+    return key
+
+
+def _get_content(obj: object, content: Union[Callable, object, str], strict=True) -> Union[Callable, object, str]:
+    if isinstance(content, str) and content.startswith('<') and content.endswith('>'):
+        curr_variable = {'<True>': True, '<False>': False}.get(content, None)
+        if curr_variable is None and hasattr(obj, '_content_cache'):
+            curr_variable = getattr(obj, '_content_cache').get(content, None)
+        if curr_variable is None:
+            if strict:
+                raise NameError(f'{content.replace("-", "_")} not found')
+            return content
+        content = curr_variable
+    return content
+
+
 class WordTiming:
 
     def __init__(
@@ -436,7 +463,7 @@ class Segment:
             return sum(len(w) for w in self.words)
         return len(self.text)
 
-    def add(self, other: 'Segment', copy_words: bool = False, newline: bool = False):
+    def add(self, other: 'Segment', copy_words: bool = False, newline: bool = False, reassign_ids: bool = True):
         if self.ori_has_words == other.ori_has_words:
             words = (self.words + other.words) if self.ori_has_words else None
         else:
@@ -461,7 +488,8 @@ class Segment:
             else:
                 if self_copy.text[len(self.text)-1] != '\n':
                     self_copy._default_text = self_copy.text[:len(self.text)] + '\n' + self_copy.text[len(self.text):]
-
+        if reassign_ids:
+            self_copy.reassign_ids()
         return self_copy
 
     def __add__(self, other: 'Segment'):
@@ -796,7 +824,7 @@ class Segment:
                         curr_total_dur = word.duration
         return indices
 
-    def split(self, indices: List[int]):
+    def split(self, indices: List[int], reassign_ids: bool = True):
         if len(indices) == 0:
             return []
         if indices[-1] != len(self.words) - 1:
@@ -806,8 +834,11 @@ class Segment:
         for i in indices:
             i += 1
             new_words = self.words[prev_i:i]
-            new_seg = self.copy(new_words, copy_words=False)
-            seg_copies.append(new_seg)
+            if new_words:
+                new_seg = self.copy(new_words, copy_words=False)
+                seg_copies.append(new_seg)
+                if reassign_ids:
+                    new_seg.reassign_ids()
             prev_i = i
         return seg_copies
 
@@ -975,8 +1006,21 @@ class WhisperResult:
             dict(start=round(s, 3), end=round(e, 3)) for s, e in zip(silent_starts, silent_ends)
         ]
 
-    def add_segments(self, index0: int, index1: int, inplace: bool = False, lock: bool = False, newline: bool = False):
-        new_seg = self.segments[index0].add(self.segments[index1], copy_words=False, newline=newline)
+    def add_segments(
+            self,
+            index0: int,
+            index1: int,
+            inplace: bool = False,
+            lock: bool = False,
+            newline: bool = False,
+            reassign_ids: bool = True
+    ):
+        new_seg = self.segments[index0].add(
+            self.segments[index1],
+            copy_words=False,
+            newline=newline,
+            reassign_ids=reassign_ids
+        )
         if lock and self.segments[index0].has_words:
             lock_idx = len(self.segments[index0].words)
             new_seg.words[lock_idx - 1].lock_right()
@@ -986,6 +1030,8 @@ class WhisperResult:
             i0, i1 = sorted([index0, index1])
             self.segments[i0] = new_seg
             del self.segments[i1]
+            if reassign_ids:
+                self.reassign_ids(True)
         return new_seg
 
     def rescale_time(self, scale_factor: float):
@@ -1005,14 +1051,14 @@ class WhisperResult:
                 break
             if result.segments[i].duration < min_dur:
                 if i == max_i:
-                    result.add_segments(i-1, i, inplace=True)
+                    result.add_segments(i-1, i, inplace=True, reassign_ids=False)
                 elif i == 0:
-                    result.add_segments(i, i+1, inplace=True)
+                    result.add_segments(i, i+1, inplace=True, reassign_ids=False)
                 else:
                     if result.segments[i+1].duration < result.segments[i-1].duration:
-                        result.add_segments(i-1, i, inplace=True)
+                        result.add_segments(i-1, i, inplace=True, reassign_ids=False)
                     else:
-                        result.add_segments(i, i+1, inplace=True)
+                        result.add_segments(i, i+1, inplace=True, reassign_ids=False)
                 max_i -= 1
         result.reassign_ids()
         for s in result.segments:
@@ -1296,6 +1342,29 @@ class WhisperResult:
     def segments_to_dicts(self, reverse_text: Union[bool, tuple] = False):
         return [s.to_dict(reverse_text=reverse_text) for s in self.segments]
 
+    def split_segment_by_index(
+            self,
+            segment: Union[int, Segment],
+            indices: Union[int, List[int]],
+            reassign_ids: bool = True
+    ):
+        if not self.has_words:
+            return
+        if isinstance(indices, int):
+            indices = [indices]
+        elif not indices:
+            return
+        oor_indices = [i for i in indices if i < 0 or i > len(segment.words)]
+        if oor_indices:
+            raise IndexError(f'got out of split range indices: {oor_indices}')
+        seg_idx = segment if isinstance(segment, int) else segment.id
+        new_segments = self.segments[seg_idx].split(indices, reassign_ids=reassign_ids)
+        del self.segments[seg_idx]
+        for seg in reversed(new_segments):
+            self.segments.insert(seg_idx, seg)
+        if reassign_ids:
+            self.reassign_ids(True)
+
     def _split_segments(self, get_indices, args: list = None, *, lock: bool = False, newline: bool = False):
         if args is None:
             args = []
@@ -1320,7 +1389,7 @@ class WhisperResult:
                         if word_idx + 1 < len(self.segments[i].words):
                             self.segments[i].words[word_idx+1].lock_left()
             else:
-                new_segments = self.segments[i].split(indices)
+                new_segments = self.segments[i].split(indices, reassign_ids=False)
                 if lock:
                     for s in new_segments:
                         if s == new_segments[0]:
@@ -1370,8 +1439,15 @@ class WhisperResult:
                     )
             ):
                 continue
-            self.add_segments(i, i + 1, inplace=True, lock=lock, newline=newline)
+            self.add_segments(i, i + 1, inplace=True, lock=lock, newline=newline, reassign_ids=False)
         self.remove_no_word_segments()
+
+    def _update_history(self, changes: str):
+        if not changes:
+            return
+        if self._regroup_history:
+            self._regroup_history += '_'
+        self._regroup_history += changes
 
     def get_content_by_time(
             self,
@@ -1442,9 +1518,7 @@ class WhisperResult:
             The current instance after the changes.
         """
         self._split_segments(lambda x: x.get_gap_indices(max_gap), lock=lock, newline=newline)
-        if self._regroup_history:
-            self._regroup_history += '_'
-        self._regroup_history += f'sg={max_gap}+{int(lock)}+{int(newline)}'
+        self._update_history(f'sg={max_gap}+{int(lock)}+{int(newline)}')
         return self
 
     def merge_by_gap(
@@ -1489,9 +1563,7 @@ class WhisperResult:
             lock=lock,
             newline=newline
         )
-        if self._regroup_history:
-            self._regroup_history += '_'
-        self._regroup_history += (
+        self._update_history(
             f'mg={min_gap}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}+{int(newline)}'
         )
         return self
@@ -1541,11 +1613,10 @@ class WhisperResult:
             return x.get_punctuation_indices(punctuation) if indices is None or x.id in indices else []
 
         self._split_segments(_get_indices, lock=lock, newline=newline)
-        if self._regroup_history:
-            self._regroup_history += '_'
         punct_str = '/'.join(p if isinstance(p, str) else '*'.join(p) for p in punctuation)
-        self._regroup_history += f'sp={punct_str}+{int(lock)}+{int(newline)}'
-        self._regroup_history += f'+{min_words or ""}+{min_chars or ""}+{min_dur or ""}'.rstrip('+')
+        self._update_history(
+            f'sp={punct_str}+{int(lock)}+{int(newline)}+{min_words or ""}+{min_chars or ""}+{min_dur or ""}'.rstrip('+')
+        )
         return self
 
     def merge_by_punctuation(
@@ -1590,10 +1661,8 @@ class WhisperResult:
             lock=lock,
             newline=newline
         )
-        if self._regroup_history:
-            self._regroup_history += '_'
         punct_str = '/'.join(p if isinstance(p, str) else '*'.join(p) for p in punctuation)
-        self._regroup_history += (
+        self._update_history(
             f'mp={punct_str}+{max_words or ""}+{max_chars or ""}+{int(is_sum_max)}+{int(lock)}+{int(newline)}'
         )
         return self
@@ -1658,9 +1727,7 @@ class WhisperResult:
                 if new_end > part.end:
                     part.end = new_end
 
-        if self._regroup_history:
-            self._regroup_history += '_'
-        self._regroup_history += (
+        self._update_history(
             f'p={start_pad or ""}+{end_pad or ""}+{max_dur or ""}+{max_end or ""}+{int(word_level)}'
         )
         return self
@@ -1686,9 +1753,7 @@ class WhisperResult:
             new_seg.end = self.segments[-1].end
         self.segments = [new_seg]
         self.reassign_ids()
-        if self._regroup_history:
-            self._regroup_history += '_'
-        self._regroup_history += 'ms'
+        self._update_history('ms')
         return self
 
     def split_by_length(
@@ -1745,10 +1810,10 @@ class WhisperResult:
             lock=lock,
             newline=newline
         )
-        if self._regroup_history:
-            self._regroup_history += '_'
-        self._regroup_history += (f'sl={max_chars or ""}+{max_words or ""}+{int(even_split)}+{int(force_len)}'
-                                  f'+{int(lock)}+{int(include_lock)}+{int(newline)}')
+        self._update_history(
+            f'sl={max_chars or ""}+{max_words or ""}+{int(even_split)}+{int(force_len)}'
+            f'+{int(lock)}+{int(include_lock)}+{int(newline)}'
+        )
         return self
 
     def split_by_duration(
@@ -1801,10 +1866,9 @@ class WhisperResult:
             lock=lock,
             newline=newline
         )
-        if self._regroup_history:
-            self._regroup_history += '_'
-        self._regroup_history += (f'sd={max_dur}+{int(even_split)}+{int(force_len)}'
-                                  f'+{int(lock)}+{int(include_lock)}+{int(newline)}')
+        self._update_history(
+            f'sd={max_dur}+{int(even_split)}+{int(force_len)}+{int(lock)}+{int(include_lock)}+{int(newline)}'
+        )
         return self
 
     def clamp_max(
@@ -1864,9 +1928,7 @@ class WhisperResult:
                 for i, word in enumerate(seg.words):
                     word.clamp_max(curr_max_dur, clip_start=clip_start, verbose=verbose)
 
-        if self._regroup_history:
-            self._regroup_history += '_'
-        self._regroup_history += f'cm={medium_factor}+{max_dur or ""}+{clip_start or ""}+{int(verbose)}'
+        self._update_history(f'cm={medium_factor}+{max_dur or ""}+{clip_start or ""}+{int(verbose)}')
         return self
 
     def lock(
@@ -1928,19 +1990,20 @@ class WhisperResult:
                         part.lock_right()
                     if left:
                         part.lock_left()
-        if self._regroup_history:
-            self._regroup_history += '_'
         startswith_str = (startswith if isinstance(startswith, str) else '/'.join(startswith)) if startswith else ""
         endswith_str = (endswith if isinstance(endswith, str) else '/'.join(endswith)) if endswith else ""
-        self._regroup_history += (f'l={startswith_str}+{endswith_str}'
-                                  f'+{int(right)}+{int(left)}+{int(case_sensitive)}+{int(strip)}')
+        self._update_history(
+            f'l={startswith_str}+{endswith_str}'
+            f'+{int(right)}+{int(left)}+{int(case_sensitive)}+{int(strip)}'
+        )
         return self
 
     def remove_word(
             self,
             word: Union[WordTiming, Tuple[int, int]],
             reassign_ids: bool = True,
-            verbose: bool = True
+            verbose: bool = True,
+            record: bool = True
     ) -> 'WhisperResult':
         """
         Remove a word.
@@ -1953,6 +2016,8 @@ class WhisperResult:
             Whether to reassign segment and word ids (indices) after removing ``word``.
         verbose : bool, default True
             Whether to print detail of the removed word.
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------
@@ -1966,7 +2031,7 @@ class WhisperResult:
                     raise ValueError('word not in result')
             seg_id, word_id = word.segment_id, word.id
         else:
-            seg_id, word_id = word
+            seg_id, word_id = map(int, word.split(',')) if isinstance(word, str) else word
         if verbose:
             print(f'Removed: {self[seg_id][word_id].to_dict()}')
         del self.segments[seg_id].words[word_id]
@@ -1976,13 +2041,16 @@ class WhisperResult:
             self[seg_id].reassign_ids()
         else:
             self.remove_no_word_segments()
+        if record:
+            self._update_history(f'rw={seg_id},{word_id}+{int(reassign_ids)}+{int(verbose)}')
         return self
 
     def remove_segment(
             self,
             segment: Union[Segment, int],
             reassign_ids: bool = True,
-            verbose: bool = True
+            verbose: bool = True,
+            record: bool = True
     ) -> 'WhisperResult':
         """
         Remove a segment.
@@ -1995,6 +2063,8 @@ class WhisperResult:
             Whether to reassign segment IDs (indices) after removing ``segment``.
         verbose : bool, default True
             Whether to print detail of the removed word.
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------
@@ -2013,6 +2083,8 @@ class WhisperResult:
         if not reassign_ids:
             return self
         self.reassign_ids(True, start=segment)
+        if record:
+            self._update_history(f'rs={segment}+{int(reassign_ids)}+{int(verbose)}')
         return self
 
     def remove_repetition(
@@ -2080,7 +2152,7 @@ class WhisperResult:
                 for j in reversed(range(s, i)):
                     if verbose:
                         temp_changes.append(f'- {all_words[j].to_dict()}')
-                    self.remove_word(all_words[j], False, verbose=False)
+                    self.remove_word(all_words[j], False, verbose=False, record=False)
                 if temp_changes:
                     changes.append(
                         f'Remove: [{format_timestamp(all_words[s].start)} -> {format_timestamp(all_words[i-1].end)}] '
@@ -2099,7 +2171,10 @@ class WhisperResult:
 
             self.remove_no_word_segments(reassign_ids=False)
         self.reassign_ids()
-
+        self._update_history(
+            f'rp={max_words}+{int(case_sensitive)}+{int(strip)}'
+            f'+{ignore_punctuations}+{int(extend_duration)}+{int(verbose)}'
+        )
         return self
 
     def remove_words_by_str(
@@ -2144,6 +2219,9 @@ class WhisperResult:
             return self
         if isinstance(words, str):
             words = [words]
+        elif words == 0:
+            words = None
+        filters = _get_content(self, filters)
         all_words = self.all_words()
         all_words_str = [w.word for w in all_words]
         if strip:
@@ -2167,11 +2245,15 @@ class WhisperResult:
             ):
                 if verbose:
                     changes.append(f'Removed: {all_words[i].to_dict()}')
-                self.remove_word(all_words[i], False, verbose=False)
+                self.remove_word(all_words[i], False, verbose=False, record=False)
         if changes:
             print('\n'.join(reversed(changes)))
         self.remove_no_word_segments()
-
+        words = 0 if words is None else '/'.join(words)
+        self._update_history(
+            f'rws={words}+{int(case_sensitive)}+{int(strip)}'
+            f'+{ignore_punctuations}+{min_prob}+{_store_content(self, filters)}+{int(verbose)}'
+        )
         return self
 
     def fill_in_gaps(
@@ -2212,8 +2294,12 @@ class WhisperResult:
         """
         if len(self.segments) < 2:
             return self
+        other_result = _get_content(self, other_result)
         if isinstance(other_result, str):
+            other_path = other_result
             other_result = WhisperResult(other_result)
+        else:
+            other_path = _store_content(self, other_result)
 
         if strip:
             def strip_space(w):
@@ -2273,7 +2359,9 @@ class WhisperResult:
         if changes:
             print('\n'.join(reversed(changes)))
         self.reassign_ids()
-
+        self._update_history(
+            f'fg={other_path}+{min_gap}+{int(case_sensitive)}+{int(strip)}+{ignore_punctuations}+{int(verbose)}'
+        )
         return self
 
     def adjust_gaps(
@@ -2292,7 +2380,8 @@ class WhisperResult:
         ----------
         duration_threshold : float, default 0.75
             Only ``nonspeech_sections`` with duration >= ``duration_threshold`` * duration of the longest section that
-            overlaps the existing gap between segments are considered for that gap.
+            overlaps the existing gap between segments are considered for that gap. The Lower the value the more
+            ``nonspeech_sections`` are considered.
         one_section : bool, default False
             Whether to use only one section of ``nonspeech_sections`` for each gap between segments.
             Recommend ``True`` when there are no sounds in the gaps.
@@ -2387,7 +2476,7 @@ class WhisperResult:
             new_start = nonspeech_sections[best_next_score_idx][1]
             if next_part is not None and new_start < next_end:
                 next_part.start = new_start
-
+        self._update_history(f'ag={duration_threshold}+{int(one_section)}')
         return self
 
     def convert_to_segment_level(self) -> "WhisperResult":
@@ -2410,6 +2499,247 @@ class WhisperResult:
         """
         for seg in self.segments:
             seg.convert_to_segment_level()
+        self._update_history('csl')
+        return self
+
+    def custom_operation(
+            self,
+            key: str,
+            operator: Union[str, Callable],
+            value,
+            method: Union[str, Callable],
+            word_level: Optional[bool] = None
+    ) -> "WhisperResult":
+        """
+        Perform custom operation on words/segments that satisfy specified conditions.
+
+        Parameters
+        ----------
+        key : str
+            Attribute of words/segments to get value for comparing with ``value``.
+            If ``key`` is empty string, directly use the instance of ``WordTiming``/``Segment`` object for comparison.
+            All " " in ``key`` will be replaced with "_".
+            Start with "len=" to get length of the attribute.
+        operator : str or Callable
+            Operator or function for comparing vaLue of ``key`` and ``value``.
+            Built-in operators: ==, >, >=, <, <=, is, in, start, end
+            Function must return a boolean and accept two arguments: vaLue of ``key``, ``value``.
+        value : any
+            Value to compare with vaLue of ``key``.
+            To express multiple values as a string:
+                -start string with "all=" or "any=" followed with values separated by ','
+                -use "\" to escape values with "," in values
+                -these values can only be conbination of str, int, float
+                -start with "all=": all values are required to meet the condition to be satisfied
+                -start with "any=": only require one of the values to meet the conditions to be satified
+        method : str or Callable
+            Operation or function to check if words/segments meet conditions.
+            Built-in operations:
+                mergeleft, mergeright, merge, lockright, lockleft, lock, splitright, splitleft, split, remove
+            Function must accept three arguments: this instance of `WhisperResult`, segment index, word index.
+        word_level : bool, default None, meaning True if this instance has word-timestamps
+            Whether to operate on words. Operate on segments if ``False``.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Examples
+        --------
+        Split on the right of words that end with "." or "," or "?":
+        >>>result.custom_operation('word', 'end', 'any=.,\,,?', 'splitright', word_level=True)
+
+        Merge with next segment if the current segment is less than 15 chars:
+        >>>result.custom_operation('len=text', '<', 15, 'mergeright', word_level=False)
+
+        If there is split after the word " Mr." or " Ms." or " Mrs.", merge with next segment:
+        >>>result.custom_operation('word', 'in', (' Mr.', ' Ms.', ' Mrs.'), 'mergeright', word_level=True)
+        same as:
+        >>>result.custom_operation('word', '==', 'any= Mr., Ms., Mrs', 'mergeright', word_level=True)
+
+        Replace 'y' with 'ie' for capitalized words:
+        >>>def is_match(word, value):
+        >>>    text = word.word.strip().lower()
+        >>>    return text == 'one' and word.probability < value
+        >>>def replace_one(result, seg_index, word_index):
+        >>>    word = result[seg_index][word_index]
+        >>>    word.word = word.word.lower().replace('one', '1')
+        >>>result.custom_operation('', is_match, 0.5, replace_one, word_level=True)
+
+        """
+        if self.has_words:
+            if word_level is None:
+                word_level = True
+        elif word_level:
+            raise ValueError(f'result is missing word timestamps and not compatible with ``word_level=True``')
+
+        value = _get_content(self, value, strict=False)
+
+        methods = (
+            'mergeleft', 'mergeright', 'merge',
+            'lockright', 'lockleft', 'lock',
+            'splitright', 'splitleft', 'split',
+            'remove'
+        )
+        method = _get_content(self, method)
+        is_builtin_method = isinstance(method, str)
+        if is_builtin_method:
+            if method not in methods:
+                raise ValueError(f"invalid method: '{method}'. Valid methods: {method}")
+        elif not callable(method):
+            raise TypeError(f"'{type(method)}' object is not callable")
+        key = key.replace(' ', '_')
+        operator = _get_content(self, operator)
+        if isinstance(operator, str):
+            operators = {
+                '==': lambda a, b: a == b,
+                '>': lambda a, b: a > b,
+                '>=': lambda a, b: a >= b,
+                '<': lambda a, b: a < b,
+                '<=': lambda a, b: a <= b,
+                'is': lambda a, b: a is b,
+                'in': lambda a, b: a in b,
+                'start': str.startswith,
+                'end': str.endswith
+            }
+            if operator not in operators:
+                raise ValueError(f"invalid operator: '{operators}'. Valid operators: {tuple(operators.keys())}")
+            operator_str = operator
+            operator = operators[operator]
+        else:
+            operator_str = _store_content(self, operator)
+
+        method_str = method
+        if not is_builtin_method:
+            method_str = _store_content(self, method)
+        elif method.startswith('merge'):
+
+            def get_left_indices(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                if seg_idx == 0 or (word_idx is not None and word_idx != 0):
+                    return []
+                return [(seg_idx - 1, seg_idx)]
+
+            def get_right_indices(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                if (
+                        seg_idx + 1 >= len(result.segments) or
+                        (word_idx is not None and word_idx != len(result[seg_idx].words) -1)
+                ):
+                    return []
+                return [(seg_idx, seg_idx + 1)]
+
+            if method == 'mergeright':
+                get_indices = get_right_indices
+            elif method == 'mergeleft':
+                get_indices = get_left_indices
+            else:
+                def get_indices(*args):
+                    return get_right_indices(*args) + get_left_indices(*args)
+
+            def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                indices = get_indices(result, seg_idx, word_idx)
+                for idxs in indices:
+                    result.add_segments(*idxs, inplace=True, reassign_ids=False)
+
+        elif method.startswith('lock'):
+            if method == 'lockright':
+                def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                    if word_idx is None:
+                        result[seg_idx].lock_right()
+                    else:
+                        result[seg_idx][word_idx].lock_right()
+            elif method == 'lockleft':
+                def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                    if word_idx is None:
+                        result[seg_idx].lock_left()
+                    else:
+                        result[seg_idx][word_idx].lock_left()
+            else:
+                def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                    if word_idx is None:
+                        result[seg_idx].lock_right()
+                        result[seg_idx].lock_left()
+                    else:
+                        result[seg_idx][word_idx].lock_right()
+                        result[seg_idx][word_idx].lock_left()
+
+        elif method.startswith('split'):
+            if word_level is None:
+                raise ValueError('Segment-level result is not compatible with split actions.')
+            elif not word_level:
+                raise ValueError('``word_level=False`` is not compatible with split actions.')
+
+            if method == 'splitright':
+                def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                    if word_idx == len(result[seg_idx].words) + 1:
+                        return
+                    result.split_segment_by_index(result[seg_idx], word_idx, reassign_ids=False)
+            elif method == 'splitleft':
+                def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                    if word_idx == 0:
+                        return
+                    result.split_segment_by_index(result[seg_idx], word_idx - 1, reassign_ids=False)
+            else:
+                def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                    indices = []
+                    if word_idx != 0:
+                        indices.append(word_idx - 1)
+                    if word_idx < len(result[seg_idx].words) + 1:
+                        indices.append(word_idx)
+                    result.split_segment_by_index(result[seg_idx], indices, reassign_ids=False)
+
+        else:  # remove
+            def method(result: "WhisperResult", seg_idx: int, word_idx: int = None):
+                if word_idx is None:
+                    result.remove_segment(result[seg_idx], reassign_ids=False, record=False)
+                else:
+                    result.remove_word(result[seg_idx][word_idx], reassign_ids=False, record=False)
+
+        if key.startswith('len='):
+            key_ = key[4:]
+
+            def get_value(obj):
+                return len(getattr(obj, key_))
+        elif key == '':
+            def get_value(obj):
+                return obj
+        else:
+            def get_value(obj):
+                return getattr(obj, key)
+
+        if isinstance(value, str) and (value.startswith('all=') or value.startswith('any=')):
+            check = any if value.startswith('any=') else all
+            values = [val.replace('\\,', ',') for val in re.split(r'(?<!\\),', value[4:])]
+
+            def is_satisfied(obj):
+                return check(operator(get_value(obj), val) for val in values)
+        else:
+            def is_satisfied(obj):
+                return operator(get_value(obj), value)
+
+        if word_level:
+            for segment_index in range(len(self.segments)-1, -1, -1):
+                for word_index in range(len(self.segments[segment_index].words)-1, -1, -1):
+                    word = self[segment_index][word_index]
+                    if not is_satisfied(word):
+                        continue
+                    method(self, segment_index, word_index)
+        else:
+            for segment_index in range(len(self.segments) - 1, -1, -1):
+                segment = self[segment_index]
+                if not is_satisfied(segment):
+                    continue
+                method(self, segment_index, None)
+
+        self.reassign_ids()
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            if isinstance(value, bool):
+                value = f'<{value}>'
+            else:
+                value = _store_content(self, value)
+        self._update_history(
+            f'co={key.replace("_", " ")}+{operator_str}+{value}+{method_str}+{int(word_level)}'
+        )
         return self
 
     def regroup(
@@ -2458,6 +2788,7 @@ class WhisperResult:
                 p: pad
                 ag: adjust_gaps
                 csl: convert_to_segment_level
+                co: custom_operation
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -2468,6 +2799,8 @@ class WhisperResult:
             -arguments are parsed positionally
             -if no argument is provided, the default ones will be used
             -use 1 or 0 to represent True or False
+            -use a space to in place of _ for ``key`` of ``custom_operation`` to avoid conflict with the metacharacter
+            -use strings "<True>" or "<False>" to represent True or False for ``value`` of ``custom_operation``
             Example 1:
                 merge_by_gap(.2, 10, lock=True)
                 mg=.2+10+++1
@@ -2478,6 +2811,9 @@ class WhisperResult:
             Example 3:
                 merge_all_segments().split_by_gap(.5).merge_by_gap(.15, 3)
                 ms_sg=.5_mg=.15+3
+            Examples 4:
+                custom_operation('compression_ratio', '>', 3.0, 'remove', word_level=False)
+                co=compression ratio+>+3.0+remove+0
         """
         if regroup_algo is False:
             return self
@@ -2511,7 +2847,8 @@ class WhisperResult:
             fg=self.fill_in_gaps,
             p=self.pad,
             ag=self.adjust_gaps,
-            csl=self.convert_to_segment_level
+            csl=self.convert_to_segment_level,
+            co=self.custom_operation,
         )
         if not regroup_algo:
             return []
