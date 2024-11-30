@@ -870,10 +870,11 @@ def modify_model(model: "Whisper"):
     model.transcribe = MethodType(transcribe_stable, model)
     model.transcribe_minimal = MethodType(transcribe_minimal, model)
     model.transcribe_original = MethodType(whisper.transcribe, model)
-    from ..alignment import align, refine, locate
+    from ..alignment import align, refine, locate, align_words
     model.align = MethodType(align, model)
     model.refine = MethodType(refine, model)
     model.locate = MethodType(locate, model)
+    model.align_words = MethodType(align_words, model)
 
 
 # modified version of whisper.load_model

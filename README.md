@@ -832,9 +832,19 @@ new_result = model.align('audio.mp3', result, language='en')
 ```commandline
 stable-ts audio.mp3 --align text.txt --language en
 ```
-`--align` can also a JSON file of a result 
+`--align` can also be a JSON file of a result
 
 </details>
+
+Another alternative is `align_words`. 
+This a faster version of ``align()`` that confines the word-timestamp in the range between the existing start and end of each segment.
+```python
+result = [dict(start=0.0, end=0.5, text='hello world 1'), dict(start=0.5, end=1.0, text='hello world 2')]
+result = model.align_words('audio.mp3', result, 'English')
+# or to re-align the words of any result
+result = model.transcribe('audio.mp3')
+result = model.align_words('audio.mp3', result, 'English')
+```
 
 Docstring:
 <details>
@@ -970,6 +980,111 @@ Docstring:
     >>> result = model.align('helloworld.mp3', 'Hello, World!', 'English')
     >>> result.to_srt_vtt('helloword.srt')
     Saved 'helloworld.srt'
+
+</details>
+
+<details>
+<summary>align_words()</summary>
+
+    Align segments of plain text or tokens with audio at word-level at specified start and end of each segment.
+
+    This is a version of ``align()`` that confines each segment to a range of timestamps which eliminates the need
+    for the fallback mechanisms used in ``align()``. This makes this method draticastilly faster than ``align()`` and
+    reduces word-timstamp errors if the provided start and end timestamps of each segment is accurate.
+
+    Parameters
+    ----------
+    model : "Whisper"
+        The Whisper ASR model modified instance
+    audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
+        Path/URL to the audio file, the audio waveform, or bytes of audio file or
+        instance of :class:`stable_whisper.audio.AudioLoader`.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+    result : stable_whisper.result.WhisperResult or list of dict
+        Instance of :class:`stable_whisper.result.WhisperResult` or List of dictionaries with start, end, and text.
+    language : str, default None, uses ``language`` in ``text`` if it is a :class:`stable_whisper.result.WhisperResult`
+        Language of ``text``. Required if ``text`` does not contain ``language``.
+    tokenizer : "Tokenizer", default None, meaning a new tokenizer is created according ``language`` and ``model``
+        A tokenizer to used tokenizer text and detokenize tokens.
+    stream : bool or None, default None
+        Whether to loading ``audio`` in chunks of 30 seconds until the end of file/stream.
+        If ``None`` and ``audio`` is a string then set to ``True`` else ``False``.
+    verbose : bool or None, default False
+        Whether to display the text being decoded to the console.
+        Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
+    regroup : bool or str, default True, meaning the default regroup algorithm
+        String for customizing the regrouping algorithm. False disables regrouping.
+        Ignored if ``word_timestamps = False``.
+    suppress_silence : bool, default True
+        Whether to enable timestamps adjustments based on the detected silence.
+    suppress_word_ts : bool, default True
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
+    q_levels : int, default 20
+        Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
+        Acts as a threshold to marking sound as silent.
+        Fewer levels will increase the threshold of volume at which to mark a sound as silent.
+    k_size : int, default 5
+        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
+        Recommend 5 or 3; higher sizes will reduce detection of silence.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
+    vad : bool or dict, default False
+        Whether to use Silero VAD to generate timestamp suppression mask.
+        Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
+        Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
+    vad_threshold : float, default 0.35
+        Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
+    nonspeech_error : float, default 0.1
+        Relative error of non-speech sections that appear in between a word for silence suppression.
+    only_voice_freq : bool, default False
+        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
+    prepend_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Punctuations to prepend to next word.
+    append_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Punctuations to append to previous word.
+    progress_callback : Callable, optional
+        A function that will be called when transcription progress is updated.
+        The callback need two parameters.
+        The first parameter is a float for seconds of the audio that has been transcribed.
+        The second parameter is a float for total duration of audio in seconds.
+    ignore_compatibility : bool, default False
+        Whether to ignore warnings for compatibility issues with the detected Whisper version.
+    extra_models : list of whisper.model.Whisper, optional
+        List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
+    presplit : bool or list of str, default True meaning ['.', '。', '?', '？']
+        List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
+        but segmentation of final output is unnaffected unless ``original_split=True``.
+        If ``original_split=True``, the original split is used instead of split from ``presplit``.
+        Ignored if ``model`` is a faster-whisper model.
+    gap_padding : str, default ' ...'
+        Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
+        Used to reduce the probability of model predicting timestamps earlier than the first utterance.
+        Ignored if ``model`` is a faster-whisper model.
+    dynamic_heads : bool or int or str, optional
+        Whether to find optimal cross-attention heads during runtime instead of using the predefined heads for
+        word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
+        To specify number of iterations for finding the optimal heads,
+        use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    normalize_text : bool or dict, default True
+        Whether to normalize text of each segment.
+    inplace : bool, default True
+        Whether to add word-timestamps to ``result`` if it is instance of :class:`stable_whisper.result.WhisperResult`.
+
+    Returns
+    -------
+    stable_whisper.result.WhisperResult
+        All timestamps, words, probabilities, and other data from the alignment of ``audio``.
+        Same object as ``result`` if ``inplace=True`` (default) and ``result`` is a ``WhisperResult``.
 
 </details>
 

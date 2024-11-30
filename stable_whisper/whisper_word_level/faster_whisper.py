@@ -242,7 +242,8 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
     faster_model.model_size_or_path = model_size_or_path
 
     faster_model.transcribe_stable = MethodType(faster_transcribe, faster_model)
-    from ..alignment import align
+    from ..alignment import align, align_words
     faster_model.align = MethodType(align, faster_model)
+    faster_model.align_words = MethodType(align_words, faster_model)
 
     return faster_model

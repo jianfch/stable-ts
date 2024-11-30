@@ -7,7 +7,7 @@ import numpy as np
 from tqdm import tqdm
 from typing import TYPE_CHECKING, Union, List, Callable, Optional, Tuple
 
-from .result import WhisperResult, Segment
+from .result import WhisperResult, Segment, WordTiming
 from .timing import add_word_timestamps_stable, split_word_tokens
 from .audio import prep_audio, AudioLoader, audioloader_not_supported, convert_demucs_kwargs
 from .utils import safe_print, format_timestamp
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from .whisper_compatibility import Whisper
     from .whisper_compatibility import Tokenizer
 
-__all__ = ['align', 'refine', 'locate']
+__all__ = ['align', 'refine', 'locate', 'align_words']
 
 
 def align(
@@ -299,6 +299,7 @@ def align(
 
     if is_faster_model:
         from .whisper_compatibility import is_faster_whisper_on_pt
+        from faster_whisper.version import __version__ as fw_ver
 
         def timestamp_words():
             temp_segment = dict(
@@ -315,7 +316,7 @@ def align(
             encoder_output = model.encode(features[:, : model.feature_extractor.nb_max_frames])
 
             model.add_word_timestamps(
-                segments=[[temp_segment]] if is_on_pt else [temp_segment],
+                segments=[[temp_segment]] if is_on_pt or not fw_ver.startswith('1.0') else [temp_segment],
                 tokenizer=tokenizer,
                 encoder_output=encoder_output,
                 num_frames=round(segment_samples / model.feature_extractor.hop_length),
@@ -386,7 +387,7 @@ def align(
             if curr_tk_count + len(m) + tk_count + m_count > token_step and w:
                 break
             if pad_mask and pad_mask[-(remaining_len-len(words[0])+1)]:
-                    m.append(i+1)
+                m.append(i+1)
             remaining_len -= len(words[0])
             w.append(words.pop(0))
             wt.append(word_tokens.pop(0))
@@ -472,7 +473,7 @@ def align(
             if need_refresh:
                 tqdm_pbar.refresh()
             if progress_callback is not None:
-                progress_callback(seek=tqdm_pbar.n, total=tqdm_pbar.total)
+                progress_callback(tqdm_pbar.n, tqdm_pbar.total)
 
         def update_curr_words():
             if temp_data['temp_word'] is not None:
@@ -716,6 +717,349 @@ def align(
     return result
 
 
+def align_words(
+       model: "Whisper",
+        audio: Union[str, np.ndarray, torch.Tensor, bytes, AudioLoader],
+        result: Union[WhisperResult, List[dict]],
+        language: str = None,
+        *,
+        verbose: Optional[bool] = False,
+        regroup: bool = True,
+        suppress_silence: bool = True,
+        suppress_word_ts: bool = True,
+        use_word_position: bool = True,
+        min_word_dur: Optional[float] = None,
+        min_silence_dur: Optional[float] = None,
+        nonspeech_error: float = 0.1,
+        q_levels: int = 20,
+        k_size: int = 5,
+        vad: Union[bool, dict] = False,
+        vad_threshold: float = 0.35,
+        denoiser: Optional[str] = None,
+        denoiser_options: Optional[dict] = None,
+        only_voice_freq: bool = False,
+        prepend_punctuations: Optional[str] = None,
+        append_punctuations: Optional[str] = None,
+        progress_callback: Callable = None,
+        ignore_compatibility: bool = False,
+        tokenizer: "Tokenizer" = None,
+        stream: Optional[bool] = None,
+        extra_models: Optional[List["Whisper"]] = None,
+        presplit: Union[bool, List[str]] = True,
+        gap_padding: str = ' ...',
+        dynamic_heads: Optional[Union[bool, int, str]] = None,
+        normalize_text: bool = True,
+        inplace: bool = True
+) -> Union[WhisperResult, None]:
+    """
+    Align segments of plain text or tokens with audio at word-level at specified start and end of each segment.
+
+    This is a version of ``align()`` that confines each segment to a range of timestamps which eliminates the need
+    for the fallback mechanisms used in ``align()``. This makes this method draticastilly faster than ``align()`` and
+    reduces word-timstamp errors if the provided start and end timestamps of each segment is accurate.
+
+    Parameters
+    ----------
+    model : "Whisper"
+        The Whisper ASR model modified instance
+    audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
+        Path/URL to the audio file, the audio waveform, or bytes of audio file or
+        instance of :class:`stable_whisper.audio.AudioLoader`.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+    result : stable_whisper.result.WhisperResult or list of dict
+        Instance of :class:`stable_whisper.result.WhisperResult` or List of dictionaries with start, end, and text.
+    language : str, default None, uses ``language`` in ``text`` if it is a :class:`stable_whisper.result.WhisperResult`
+        Language of ``text``. Required if ``text`` does not contain ``language``.
+    tokenizer : "Tokenizer", default None, meaning a new tokenizer is created according ``language`` and ``model``
+        A tokenizer to used tokenizer text and detokenize tokens.
+    stream : bool or None, default None
+        Whether to loading ``audio`` in chunks of 30 seconds until the end of file/stream.
+        If ``None`` and ``audio`` is a string then set to ``True`` else ``False``.
+    verbose : bool or None, default False
+        Whether to display the text being decoded to the console.
+        Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
+    regroup : bool or str, default True, meaning the default regroup algorithm
+        String for customizing the regrouping algorithm. False disables regrouping.
+        Ignored if ``word_timestamps = False``.
+    suppress_silence : bool, default True
+        Whether to enable timestamps adjustments based on the detected silence.
+    suppress_word_ts : bool, default True
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
+    q_levels : int, default 20
+        Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
+        Acts as a threshold to marking sound as silent.
+        Fewer levels will increase the threshold of volume at which to mark a sound as silent.
+    k_size : int, default 5
+        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
+        Recommend 5 or 3; higher sizes will reduce detection of silence.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
+    vad : bool or dict, default False
+        Whether to use Silero VAD to generate timestamp suppression mask.
+        Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
+        Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
+    vad_threshold : float, default 0.35
+        Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
+    nonspeech_error : float, default 0.1
+        Relative error of non-speech sections that appear in between a word for silence suppression.
+    only_voice_freq : bool, default False
+        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
+    prepend_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Punctuations to prepend to next word.
+    append_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Punctuations to append to previous word.
+    progress_callback : Callable, optional
+        A function that will be called when transcription progress is updated.
+        The callback need two parameters.
+        The first parameter is a float for seconds of the audio that has been transcribed.
+        The second parameter is a float for total duration of audio in seconds.
+    ignore_compatibility : bool, default False
+        Whether to ignore warnings for compatibility issues with the detected Whisper version.
+    extra_models : list of whisper.model.Whisper, optional
+        List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
+    presplit : bool or list of str, default True meaning ['.', '。', '?', '？']
+        List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
+        but segmentation of final output is unnaffected unless ``original_split=True``.
+        If ``original_split=True``, the original split is used instead of split from ``presplit``.
+        Ignored if ``model`` is a faster-whisper model.
+    gap_padding : str, default ' ...'
+        Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
+        Used to reduce the probability of model predicting timestamps earlier than the first utterance.
+        Ignored if ``model`` is a faster-whisper model.
+    dynamic_heads : bool or int or str, optional
+        Whether to find optimal cross-attention heads during runtime instead of using the predefined heads for
+        word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
+        To specify number of iterations for finding the optimal heads,
+        use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    normalize_text : bool or dict, default True
+        Whether to normalize text of each segment.
+    inplace : bool, default True
+        Whether to add word-timestamps to ``result`` if it is instance of :class:`stable_whisper.result.WhisperResult`.
+
+    Returns
+    -------
+    stable_whisper.result.WhisperResult
+        All timestamps, words, probabilities, and other data from the alignment of ``audio``.
+        Same object as ``result`` if ``inplace=True`` (default) and ``result`` is a ``WhisperResult``.
+
+    Examples
+    --------
+    >>> import stable_whisper
+    >>> model = stable_whisper.load_model('base')
+    >>> result = [dict(start=0.0, end=0.5, text='hello world 1'), dict(start=0.5, end=1.0, text='hello world 2')]
+    >>> result = model.align_words('audio.mp3', result, 'English')
+    """
+    prepend_punctuations = get_prepend_punctuations(prepend_punctuations)
+    append_punctuations = get_append_punctuations(append_punctuations)
+    is_faster_model = model.__module__.startswith('faster_whisper.')
+    if not is_faster_model:
+        warn_compatibility_issues(whisper, ignore_compatibility)
+    if language is None:
+        if not isinstance(result, WhisperResult):
+            raise TypeError('expected argument for language')
+        language = result.language
+    if tokenizer is None:
+        tokenizer = get_tokenizer(model, is_faster_model=is_faster_model, language=language, task='transcribe')
+    segment_tokens = None
+    if isinstance(result, WhisperResult):
+        if not inplace:
+            result = copy.deepcopy(result)
+    else:
+        if result and not result[0]['text'] and result[0]['tokens']:
+            segment_tokens = [seg['tokens'] for seg in result]
+            for seg in result:
+                seg['text'] = tokenizer.encode(seg['tokens'])
+        result = WhisperResult(result)
+
+    if any(seg.duration == 0 for seg in result):
+        raise ValueError(f'cannot align result with segment(s) of 0 seconds in duration')
+
+    if normalize_text:
+        def norm_text(text: str):
+            text = re.sub(r'\s', ' ', text)
+            if not text.startswith(' '):
+                text = ' ' + text
+            return text
+    else:
+        def norm_text(text: str):
+            return text
+
+    max_segment_tokens = model.max_length if is_faster_model else model.dims.n_text_ctx
+    if segment_tokens is None:
+        segment_tokens = [tokenizer.encode(norm_text(seg.text)) for seg in result]
+    segment_exceed_max = [i for i, tokens in enumerate(segment_tokens) if len(tokens) > max_segment_tokens]
+    if segment_exceed_max:
+        raise RuntimeError(f'found segments at following indices exceeding max length for model: {segment_exceed_max}')
+
+    if isinstance(audio, AudioLoader):
+        audio.validate_external_args(
+            sr=SAMPLE_RATE,
+            vad=vad,
+            stream=stream,
+            denoiser=denoiser,
+            denoiser_options=denoiser_options,
+            only_voice_freq=only_voice_freq
+        )
+    else:
+        audio = AudioLoader(
+            audio,
+            sr=SAMPLE_RATE,
+            denoiser=denoiser,
+            denoiser_options=denoiser_options,
+            only_voice_freq=only_voice_freq,
+            verbose=verbose,
+            new_chunk_divisor=512,
+            stream=stream
+        )
+
+    nonspeech_predictor = NonSpeechPredictor(
+        vad=vad if suppress_silence else None,
+        mask_pad_func=pad_or_trim,
+        get_mask=True,
+        min_word_dur=min_word_dur,
+        q_levels=q_levels,
+        k_size=k_size,
+        vad_threshold=vad_threshold,
+        vad_window=audio.new_chunk_divisor,
+        sampling_rate=SAMPLE_RATE,
+        verbose=None if audio.stream else verbose,
+        store_timings=True,
+        ignore_is_silent=True,
+        min_silence_dur=min_silence_dur
+    )
+    audio.update_post_prep_callback(nonspeech_predictor.get_on_prep_callback(audio.stream))
+
+    if is_faster_model:
+        from .whisper_compatibility import is_faster_whisper_on_pt
+        from faster_whisper.version import __version__ as fw_ver
+
+        sample_rate = model.feature_extractor.sampling_rate
+
+        def timestamp_words():
+
+            temp_segment = dict(
+                seek=0,
+                start=0.0,
+                end=round(segment_samples / model.feature_extractor.sampling_rate, 3),
+                tokens=[t for wt in curr_word_tokens for t in wt],
+            )
+            is_on_pt = is_faster_whisper_on_pt()
+            if is_on_pt:
+                features = model.feature_extractor(audio_segment)
+            else:
+                features = model.feature_extractor(audio_segment.cpu().numpy())
+            encoder_output = model.encode(features[:, : model.feature_extractor.nb_max_frames])
+
+            model.add_word_timestamps(
+                segments=[[temp_segment]] if is_on_pt or not fw_ver.startswith('1.0') else [temp_segment],
+                tokenizer=tokenizer,
+                encoder_output=encoder_output,
+                num_frames=round(segment_samples / model.feature_extractor.hop_length),
+                prepend_punctuations=prepend_punctuations,
+                append_punctuations=append_punctuations,
+                last_speech_timestamp=temp_segment['start'],
+            )
+
+            cumsum_lens = np.cumsum([len(w) for w in curr_words]).tolist()
+            final_cumsum_lens = np.cumsum([len(w['word']) for w in temp_segment['words']]).tolist()
+
+            assert not (set(final_cumsum_lens) - set(cumsum_lens)), 'word mismatch'
+            prev_l_idx = 0
+            for w_idx, cs_len in enumerate(final_cumsum_lens):
+                temp_segment['words'][w_idx]['start'] = round(temp_segment['words'][w_idx]['start'] + time_offset, 3)
+                temp_segment['words'][w_idx]['end'] = round(temp_segment['words'][w_idx]['end'] + time_offset, 3)
+                l_idx = cumsum_lens.index(cs_len)+1
+                temp_segment['words'][w_idx]['tokens'] = [t for wt in curr_word_tokens[prev_l_idx:l_idx] for t in wt]
+                prev_l_idx = l_idx
+
+            return temp_segment['words']
+
+    else:
+        sample_rate = SAMPLE_RATE
+
+        def timestamp_words():
+            temp_segments = [dict(seek=time_offset, tokens=(curr_words, curr_word_tokens))]
+            sample_padding = max(N_SAMPLES - audio_segment.shape[-1], 0)
+            mel_segment = log_mel_spectrogram(audio_segment, model.dims.n_mels, padding=sample_padding)
+            mel_segment = pad_or_trim(mel_segment, N_FRAMES).to(device=model.device)
+
+            add_word_timestamps_stable(
+                segments=temp_segments,
+                model=model,
+                tokenizer=tokenizer,
+                mel=mel_segment,
+                num_samples=segment_samples,
+                split_callback=(lambda x, _: x),
+                prepend_punctuations=prepend_punctuations,
+                append_punctuations=append_punctuations,
+                gap_padding=gap_padding if presplit else None,
+                extra_models=extra_models,
+                dynamic_heads=dynamic_heads
+            )
+            return temp_segments[0]['words']
+
+    initial_duration = audio.get_duration(2)
+
+    with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc='Align Words') as tqdm_pbar:
+
+        def update_pbar(finish: bool = False):
+            curr_total = audio.get_duration(2)
+            if need_refresh := curr_total != tqdm_pbar.total:
+                tqdm_pbar.total = curr_total
+            tqdm_pbar.update((curr_total if finish else min(round(end, 2), curr_total)) - tqdm_pbar.n)
+            if need_refresh:
+                tqdm_pbar.refresh()
+            if progress_callback is not None:
+                progress_callback(tqdm_pbar.n, tqdm_pbar.total)
+
+        for segment, curr_tokens in zip(result.segments, segment_tokens):
+            time_offset = segment.start
+            seek = round(segment.start * sample_rate)
+            end = segment.end
+            segment_samples = round(segment.duration * sample_rate)
+            audio_segment = audio.next_chunk(seek, segment_samples)
+            if audio_segment is None:
+                break
+            nonspeech_predictor.predict(audio=audio_segment, offset=time_offset)
+
+            curr_words, curr_word_tokens = split_word_tokens([dict(tokens=curr_tokens)], tokenizer)[1]
+            words_timings = timestamp_words()
+            words_timings = [WordTiming(**w) for w in words_timings]
+            segment.words = words_timings
+            update_pbar()
+        update_pbar(True)
+
+    audio.terminate()
+    nonspeech_predictor.finalize_timings()
+    result.reassign_ids()
+
+    if suppress_silence and (nonspeech_timings := nonspeech_predictor.nonspeech_timings) is not None:
+        result.suppress_silence(
+            *nonspeech_timings,
+            min_word_dur=min_word_dur,
+            word_level=suppress_word_ts,
+            nonspeech_error=nonspeech_error,
+            use_word_position=use_word_position,
+            verbose=verbose is not None
+        )
+        result.update_nonspeech_sections(*nonspeech_timings)
+        result.set_current_as_orig()
+
+    result.regroup(regroup)
+
+    return result
+
+
 def refine(
         model: "Whisper",
         audio: Union[str, np.ndarray, torch.Tensor, bytes],
@@ -810,10 +1154,15 @@ def refine(
     >>> result.to_srt_vtt('audio.srt')
     Saved 'audio.srt'
     """
-    if result and not all(part.tokens for part in result.all_words_or_segments()):
-        raise NotImplementedError('The are missing tokens in the result. '
-                                  'Refinement currently only supports results produced by '
-                                  '``transcribe()`` on vanilla Whisper models.')
+    if result:
+        if not result.has_words:
+            if not result.language:
+                raise RuntimeError(f'cannot add word-timestamps to result with missing language')
+            align_words(model, audio, result)
+        elif not all(word.tokens for word in result.all_words()):
+            tokenizer = get_tokenizer(model)
+            for word in result.all_words():
+                word.tokens = tokenizer.encode(word.word)
     audioloader_not_supported(audio)
     if not steps:
         steps = 'se'
@@ -821,8 +1170,6 @@ def refine(
         precision = 0.1
     if invalid_steps := steps.replace('s', '').replace('e', ''):
         raise ValueError(f'Invalid step(s): {", ".join(invalid_steps)}')
-    if not result.has_words:
-        raise NotImplementedError(f'Result must have word timestamps.')
 
     if not inplace:
         result = copy.deepcopy(result)
