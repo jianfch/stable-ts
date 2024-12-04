@@ -746,8 +746,52 @@ class Segment:
 
         return sorted(set(indices) - set(self.get_locked_indices()))
 
-    def get_length_indices(self, max_chars: int = None, max_words: int = None, even_split: bool = True,
-                           include_lock: bool = False):
+    def _get_special_period_indices(self, extra_indices: Optional[List[int]] = None) -> List[int]:
+        indices = [
+            i for i, word in enumerate(self.words)
+            if re.search('^[A-Z0-9]', word) is not None and
+            len(re.sub('[.A-Z0-9]', '', word)) < 3
+        ]
+        if extra_indices:
+            indices = sorted(set(indices + extra_indices))
+        return indices
+
+    def _get_even_split_indices(
+            self,
+            cumsum: np.ndarray,
+            parts_per_split: np.ndarray,
+            splits: np.ndarray,
+            excluded_indices: Optional[List[int]] = None
+    ):
+        if excluded_indices:
+            cumsum_idxs = np.arange(len(cumsum))
+            max_word_i = len(self.words) - 1
+            for i in sorted(set(excluded_indices)):
+                if i == max_word_i:
+                    break
+                cumsum[i] = cumsum[i + 1]
+                cumsum_idxs[i] = cumsum_idxs[i + 1]
+            indices = [
+                cumsum_idxs[np.abs(cumsum - (i * parts_per_split)).argmin()]
+                for i in range(1, int(splits))
+            ]
+            indices = sorted(set(indices))
+        else:
+            indices = [
+                np.abs(cumsum - (i * parts_per_split)).argmin()
+                for i in range(1, int(splits))
+            ]
+
+        return indices
+
+    def get_length_indices(
+            self,
+            max_chars: int = None,
+            max_words: int = None,
+            even_split: bool = True,
+            include_lock: bool = False,
+            ignore_special_periods: bool = False
+    ):
         # for splitting
         if not self.has_words or (max_chars is None and max_words is None):
             return []
@@ -756,6 +800,9 @@ class Segment:
         if len(self.words) < 2:
             return []
         indices = []
+        locked_indices = self.get_locked_indices() if include_lock else []
+        if ignore_special_periods:
+            locked_indices = self._get_special_period_indices(locked_indices)
         if even_split:
             char_count = -1 if max_chars is None else sum(map(len, self.words))
             word_count = -1 if max_words is None else len(self.words)
@@ -765,10 +812,12 @@ class Segment:
                 splits = np.ceil(char_count / max_chars)
                 chars_per_split = char_count / splits
                 cum_char_count = np.cumsum([len(w.word) for w in self.words[:-1]])
-                indices = [
-                    (np.abs(cum_char_count-(i*chars_per_split))).argmin()
-                    for i in range(1, int(splits))
-                ]
+                indices = self._get_even_split_indices(
+                    cum_char_count,
+                    chars_per_split,
+                    splits,
+                    locked_indices
+                )
                 if max_words is not None:
                     exceed_words = any(j-i+1 > max_words for i, j in zip([0]+indices, indices+[len(self.words)]))
 
@@ -776,17 +825,16 @@ class Segment:
                 splits = np.ceil(word_count / max_words)
                 words_per_split = word_count / splits
                 cum_word_count = np.array(range(1, len(self.words)+1))
-                indices = [
-                    np.abs(cum_word_count-(i*words_per_split)).argmin()
-                    for i in range(1, int(splits))
-                ]
+                indices = self._get_even_split_indices(
+                    cum_word_count,
+                    words_per_split,
+                    splits,
+                    locked_indices
+                )
 
         else:
             curr_words = 0
             curr_chars = 0
-            locked_indices = []
-            if include_lock:
-                locked_indices = self.get_locked_indices()
             for i, word in enumerate(self.words):
                 curr_words += 1
                 curr_chars += len(word)
@@ -801,21 +849,31 @@ class Segment:
                         curr_chars = len(word)
         return indices
 
-    def get_duration_indices(self, max_dur: float, even_split: bool = True, include_lock: bool = False):
+    def get_duration_indices(
+            self,
+            max_dur: float,
+            even_split: bool = True,
+            include_lock: bool = False,
+            ignore_special_periods: bool = False
+    ):
         if not self.has_words or (total_duration := np.sum([w.duration for w in self.words])) <= max_dur:
             return []
+        locked_indices = self.get_locked_indices() if include_lock else []
+        if ignore_special_periods:
+            locked_indices = self._get_special_period_indices(locked_indices)
         if even_split:
             splits = np.ceil(total_duration / max_dur)
             dur_per_split = total_duration / splits
             cum_dur = np.cumsum([w.duration for w in self.words[:-1]])
-            indices = [
-                (np.abs(cum_dur - (i * dur_per_split))).argmin()
-                for i in range(1, int(splits))
-            ]
+            indices = self._get_even_split_indices(
+                cum_dur,
+                dur_per_split,
+                splits,
+                locked_indices
+            )
         else:
             indices = []
             curr_total_dur = 0.0
-            locked_indices = self.get_locked_indices() if include_lock else []
             for i, word in enumerate(self.words):
                 curr_total_dur += word.duration
                 if i != 0:
@@ -887,6 +945,7 @@ class WhisperResult:
             self.force_order()
         self.raise_for_unsorted(check_sorted, show_unsorted)
         self.remove_no_word_segments(any(seg.has_words for seg in self.segments))
+        self._ignore_special_periods = False
 
     def __getitem__(self, index: int) -> Segment:
         return self.segments[index]
@@ -1365,13 +1424,35 @@ class WhisperResult:
         if reassign_ids:
             self.reassign_ids(True)
 
-    def _split_segments(self, get_indices, args: list = None, *, lock: bool = False, newline: bool = False):
+    def _remove_special_period_indices(self, indices: List[int], segment_idx: int):
+        segment = self.segments[segment_idx]
+        for i in range(len(indices)-1, -1, -1):
+            word_idx = indices[i]
+            if not segment[word_idx].word.endswith('.'):
+                continue
+            word = segment[word_idx].word.strip()
+            if re.search('^[A-Z0-9]', word) is None:
+                continue
+            if len(re.sub('[.A-Z0-9]', '', word)) < 3:
+                indices.pop(i)
+
+    def _split_segments(
+            self,
+            get_indices,
+            args: list = None,
+            *,
+            lock: bool = False,
+            newline: bool = False,
+            ignore_special_periods: bool = False
+    ):
         if args is None:
             args = []
         no_words = False
         for i in reversed(range(0, len(self.segments))):
             no_words = no_words or not self.segments[i].has_words
             indices = sorted(set(get_indices(self.segments[i], *args)))
+            if ignore_special_periods:
+                self._remove_special_period_indices(indices, i)
             if not indices:
                 continue
             if newline:
@@ -1494,11 +1575,33 @@ class WhisperResult:
 
         return [c for c in contents if is_in_range(c)]
 
+    def ignore_special_periods(
+            self,
+            enable: bool = True
+    ) -> "WhisperResult":
+        """
+        Set ``enable`` as default for ``ignore_special_periods`` in all methods with ``ignore_special_periods``.
+
+        Parameters
+        ----------
+        enable : bool, default True
+            Value to set ``ignore_special_periods`` for methods that has this option.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+        """
+        self._ignore_special_periods = enable
+        self._update_history(f'isp={int(enable)}')
+        return self
+
     def split_by_gap(
             self,
             max_gap: float = 0.1,
             lock: bool = False,
-            newline: bool = False
+            newline: bool = False,
+            ignore_special_periods: bool = False
     ) -> "WhisperResult":
         """
         Split (in-place) any segment where the gap between two of its words is greater than ``max_gap``.
@@ -1511,14 +1614,22 @@ class WhisperResult:
             Whether to prevent future splits/merges from altering changes made by this method.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
-        self._split_segments(lambda x: x.get_gap_indices(max_gap), lock=lock, newline=newline)
-        self._update_history(f'sg={max_gap}+{int(lock)}+{int(newline)}')
+        ignore_special_periods = self._ignore_special_periods or ignore_special_periods
+        self._split_segments(
+            lambda x: x.get_gap_indices(max_gap),
+            lock=lock,
+            newline=newline,
+            ignore_special_periods=ignore_special_periods
+        )
+        self._update_history(f'sg={max_gap}+{int(lock)}+{int(newline)}+{int(ignore_special_periods)}')
         return self
 
     def merge_by_gap(
@@ -1575,7 +1686,8 @@ class WhisperResult:
             newline: bool = False,
             min_words: Optional[int] = None,
             min_chars: Optional[int] = None,
-            min_dur: Optional[int] = None
+            min_dur: Optional[int] = None,
+            ignore_special_periods: bool = False
     ) -> "WhisperResult":
         """
         Split (in-place) segments at words that start/end with ``punctuation``.
@@ -1593,7 +1705,9 @@ class WhisperResult:
         min_chars : int, optional
             Split segments with characters >= ``min_chars``.
         min_dur : int, optional
-            split segments with duration (in seconds) >= ``min_dur``.
+            Split segments with duration (in seconds) >= ``min_dur``.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1612,10 +1726,17 @@ class WhisperResult:
         def _get_indices(x: Segment):
             return x.get_punctuation_indices(punctuation) if indices is None or x.id in indices else []
 
-        self._split_segments(_get_indices, lock=lock, newline=newline)
+        ignore_special_periods = self._ignore_special_periods or ignore_special_periods
+        self._split_segments(
+            _get_indices,
+            lock=lock,
+            newline=newline,
+            ignore_special_periods=ignore_special_periods
+        )
         punct_str = '/'.join(p if isinstance(p, str) else '*'.join(p) for p in punctuation)
         self._update_history(
-            f'sp={punct_str}+{int(lock)}+{int(newline)}+{min_words or ""}+{min_chars or ""}+{min_dur or ""}'.rstrip('+')
+            f'sp={punct_str}+{int(lock)}+{int(newline)}+{min_words or ""}'
+            f'+{min_chars or ""}+{min_dur or ""}+{int(ignore_special_periods)}'
         )
         return self
 
@@ -1732,9 +1853,17 @@ class WhisperResult:
         )
         return self
 
-    def merge_all_segments(self) -> "WhisperResult":
+    def merge_all_segments(
+            self,
+            record: bool = True
+    ) -> "WhisperResult":
         """
         Merge all segments into one segment.
+
+        Parameters
+        ----------
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------
@@ -1753,7 +1882,8 @@ class WhisperResult:
             new_seg.end = self.segments[-1].end
         self.segments = [new_seg]
         self.reassign_ids()
-        self._update_history('ms')
+        if record:
+            self._update_history('ms')
         return self
 
     def split_by_length(
@@ -1764,7 +1894,8 @@ class WhisperResult:
             force_len: bool = False,
             lock: bool = False,
             include_lock: bool = False,
-            newline: bool = False
+            newline: bool = False,
+            ignore_special_periods: bool = False
     ) -> "WhisperResult":
         """
         Split (in-place) any segment that exceeds ``max_chars`` or ``max_words`` into smaller segments.
@@ -1787,6 +1918,8 @@ class WhisperResult:
             Splitting will be done after the first non-locked word > ``max_chars`` / ``max_words``.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1795,11 +1928,12 @@ class WhisperResult:
 
         Notes
         -----
-        If ``even_split = True``, segments can still exceed ``max_chars`` and locked words will be ignored to avoid
+        If ``even_split = True``, segments can still exceed ``max_chars``.
         uneven splitting.
         """
         if force_len:
-            self.merge_all_segments()
+            self.merge_all_segments(record=False)
+        ignore_special_periods = self._ignore_special_periods or ignore_special_periods
         self._split_segments(
             lambda x: x.get_length_indices(
                 max_chars=max_chars,
@@ -1808,11 +1942,12 @@ class WhisperResult:
                 include_lock=include_lock
             ),
             lock=lock,
-            newline=newline
+            newline=newline,
+            ignore_special_periods=ignore_special_periods
         )
         self._update_history(
             f'sl={max_chars or ""}+{max_words or ""}+{int(even_split)}+{int(force_len)}'
-            f'+{int(lock)}+{int(include_lock)}+{int(newline)}'
+            f'+{int(lock)}+{int(include_lock)}+{int(newline)}+{int(ignore_special_periods)}'
         )
         return self
 
@@ -1823,7 +1958,8 @@ class WhisperResult:
             force_len: bool = False,
             lock: bool = False,
             include_lock: bool = False,
-            newline: bool = False
+            newline: bool = False,
+            ignore_special_periods: bool = False
     ) -> "WhisperResult":
         """
         Split (in-place) any segment that exceeds ``max_dur`` into smaller segments.
@@ -1844,6 +1980,8 @@ class WhisperResult:
             Splitting will be done after the first non-locked word > ``max_dur``.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1852,11 +1990,12 @@ class WhisperResult:
 
         Notes
         -----
-        If ``even_split = True``, segments can still exceed ``max_dur`` and locked words will be ignored to avoid
+        If ``even_split = True``, segments can still exceed ``max_dur``.`
         uneven splitting.
         """
         if force_len:
-            self.merge_all_segments()
+            self.merge_all_segments(record=False)
+        ignore_special_periods = self._ignore_special_periods or ignore_special_periods
         self._split_segments(
             lambda x: x.get_duration_indices(
                 max_dur=max_dur,
@@ -1864,10 +2003,12 @@ class WhisperResult:
                 include_lock=include_lock
             ),
             lock=lock,
-            newline=newline
+            newline=newline,
+            ignore_special_periods=ignore_special_periods
         )
         self._update_history(
-            f'sd={max_dur}+{int(even_split)}+{int(force_len)}+{int(lock)}+{int(include_lock)}+{int(newline)}'
+            f'sd={max_dur}+{int(even_split)}+{int(force_len)}'
+            f'+{int(lock)}+{int(include_lock)}+{int(newline)}+{int(ignore_special_periods)}'
         )
         return self
 
@@ -2779,7 +2920,7 @@ class WhisperResult:
                 cm: clamp_max
                 l: lock
                 us: unlock_all_segments
-                da: default algorithm (cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                da: default algorithm (isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70)
                 rw: remove_word
                 rs: remove_segment
                 rp: remove_repetition
@@ -2789,6 +2930,7 @@ class WhisperResult:
                 ag: adjust_gaps
                 csl: convert_to_segment_level
                 co: custom_operation
+                isp: ignore_special_periods
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -2849,13 +2991,14 @@ class WhisperResult:
             ag=self.adjust_gaps,
             csl=self.convert_to_segment_level,
             co=self.custom_operation,
+            isp=self.ignore_special_periods,
         )
         if not regroup_algo:
             return []
 
         calls = regroup_algo.split('_')
         if 'da' in calls:
-            default_calls = 'cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？'.split('_')
+            default_calls = 'isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70'.split('_')
             calls = chain.from_iterable(default_calls if method == 'da' else [method] for method in calls)
         operations = []
         for method in calls:

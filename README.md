@@ -1229,13 +1229,15 @@ result0 = model.transcribe('audio.mp3', regroup=True) # regroup is True by defau
 result1 = model.transcribe('audio.mp3', regroup=False)
 (
     result1
+    .ignore_special_periods()
     .clamp_max()
-    .split_by_punctuation([(',', ' '), '，'])
+    .split_by_punctuation([('.', ' '), (',', ' '), '，'])
     .split_by_gap(.5)
     .merge_by_gap(.3, max_words=3)
-    .split_by_punctuation([('.', ' '), '。', '?', '？'])
+    .split_by_punctuation(['。', '?', '？'])
+    .split_by_length(70)
 )
-result2 = model.transcribe('audio.mp3', regroup='cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？')
+result2 = model.transcribe('audio.mp3', regroup='isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70')
 ```
 All chainable methods (i.e. all [Regrouping Method](#regrouping-methods) and [Editing Methods](#editing)) 
 are recorded in `result.regroup_history` as a string. 
@@ -1285,7 +1287,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
                 cm: clamp_max
                 l: lock
                 us: unlock_all_segments
-                da: default algorithm (cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                da: default algorithm (isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70)
                 rw: remove_word
                 rs: remove_segment
                 rp: remove_repetition
@@ -1295,6 +1297,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
                 ag: adjust_gaps
                 csl: convert_to_segment_level
                 co: custom_operation
+                isp: ignore_special_periods
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -1336,6 +1339,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Whether to prevent future splits/merges from altering changes made by this method.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1363,6 +1368,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Split segments with characters >= ``min_chars``.
         min_dur : int, optional
             split segments with duration (in seconds) >= ``min_dur``.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1394,6 +1401,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Splitting will be done after the first non-locked word > ``max_chars`` / ``max_words``.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1402,7 +1411,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
         Notes
         -----
-        If ``even_split = True``, segments can still exceed ``max_chars`` and locked words will be ignored to avoid
+        If ``even_split = True``, segments can still exceed ``max_chars``.
         uneven splitting.
 
 </details>
@@ -1428,6 +1437,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Splitting will be done after the first non-locked word > ``max_dur``.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1436,7 +1447,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
         Notes
         -----
-        If ``even_split = True``, segments can still exceed ``max_dur`` and locked words will be ignored to avoid
+        If ``even_split = True``, segments can still exceed ``max_dur``.
         uneven splitting.
 
 </details>
@@ -1501,6 +1512,11 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 <summary>merge_all_segments()</summary>
 
         Merge all segments into one segment.
+
+        Parameters
+        ----------
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------
@@ -1590,6 +1606,24 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             The current instance after the changes.
 
 </details>
+
+<details>
+<summary>ignore_special_periods()</summary>
+
+        Set ``enable`` as default for ``ignore_special_periods`` in all methods with ``ignore_special_periods``.
+
+        Parameters
+        ----------
+        enable : bool, default True
+            Value to set ``ignore_special_periods`` for methods that has this option.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+</details>
+
 
 #### Custom Method
 A custom method can replicate the operations of all the [Regrouping Methods](#regrouping-methods) 
