@@ -1231,13 +1231,13 @@ result1 = model.transcribe('audio.mp3', regroup=False)
     result1
     .ignore_special_periods()
     .clamp_max()
-    .split_by_punctuation([('.', ' '), (',', ' '), '，'])
+    .split_by_punctuation([('.', ' '), '。', '?', '？'])
     .split_by_gap(.5)
-    .merge_by_gap(.3, max_words=3)
-    .split_by_punctuation(['。', '?', '？'])
+    .split_by_punctuation([(',', ' '), '，'], min_chars=50)
     .split_by_length(70)
+    .clamp_max()
 )
-result2 = model.transcribe('audio.mp3', regroup='isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70')
+result2 = model.transcribe('audio.mp3', regroup='isp_cm_sp=.* /。/?/？_sg=.5_sp=,* /，++++50_sl=70_cm')
 ```
 All chainable methods (i.e. all [Regrouping Method](#regrouping-methods) and [Editing Methods](#editing)) 
 are recorded in `result.regroup_history` as a string. 
@@ -1287,7 +1287,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
                 cm: clamp_max
                 l: lock
                 us: unlock_all_segments
-                da: default algorithm (isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70)
+                da: default algorithm (isp_cm_sp=.* /。/?/？_sg=.5_sp=,* /，++++50_sl=70_cm)
                 rw: remove_word
                 rs: remove_segment
                 rp: remove_repetition
@@ -1536,7 +1536,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
         ----------
         medium_factor : float, default 2.5
             Clamp durations above (``medium_factor`` * medium duration) per segment.
-            If ``medium_factor = None/0`` or segment has less than 3 words, it will be ignored and use only ``max_dur``.
+            If ``medium_factor = None/0`` or segment has less than 2 words, it will be ignored and use only ``max_dur``.
         max_dur : float, optional
             Clamp durations above ``max_dur``.
         clip_start : bool or None, default None

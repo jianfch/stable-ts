@@ -749,8 +749,9 @@ class Segment:
     def _get_special_period_indices(self, extra_indices: Optional[List[int]] = None) -> List[int]:
         indices = [
             i for i, word in enumerate(self.words)
-            if re.search('^[A-Z0-9]', word) is not None and
-            len(re.sub('[.A-Z0-9]', '', word)) < 3
+            if re.search('^[A-Z0-9]', word.word) is not None and
+            not word.word.endswith('..') and
+            len(re.sub('[.A-Z0-9]', '', word.word)) < 3
         ]
         if extra_indices:
             indices = sorted(set(indices + extra_indices))
@@ -2028,7 +2029,7 @@ class WhisperResult:
         ----------
         medium_factor : float, default 2.5
             Clamp durations above (``medium_factor`` * medium duration) per segment.
-            If ``medium_factor = None/0`` or segment has less than 3 words, it will be ignored and use only ``max_dur``.
+            If ``medium_factor = None/0`` or segment has less than 2 words, it will be ignored and use only ``max_dur``.
         max_dur : float, optional
             Clamp durations above ``max_dur``.
         clip_start : bool or None, default None
@@ -2051,10 +2052,10 @@ class WhisperResult:
 
         for seg in self.segments:
             curr_max_dur = None
-            if medium_factor and len(seg.words) > 2:
+            if medium_factor and len(seg.words) > 1:
                 durations = np.array([word.duration for word in seg.words])
                 durations.sort()
-                curr_max_dur = medium_factor * durations[len(durations)//2 + 1]
+                curr_max_dur = medium_factor * durations[len(durations)//2]
 
             if max_dur and (not curr_max_dur or curr_max_dur > max_dur):
                 curr_max_dur = max_dur
@@ -2920,7 +2921,7 @@ class WhisperResult:
                 cm: clamp_max
                 l: lock
                 us: unlock_all_segments
-                da: default algorithm (isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70)
+                da: default algorithm (isp_cm_sp=.* /。/?/？_sg=.5_sp=,* /，++++50_sl=70_cm)
                 rw: remove_word
                 rs: remove_segment
                 rp: remove_repetition
@@ -2998,7 +2999,7 @@ class WhisperResult:
 
         calls = regroup_algo.split('_')
         if 'da' in calls:
-            default_calls = 'isp_cm_sp=.* /,* /，_sg=.5_mg=.3+3_sp=。/?/？_sl=70'.split('_')
+            default_calls = 'isp_cm_sp=.* /。/?/？_sg=.5_sp=,* /，++++50_sl=70_cm'.split('_')
             calls = chain.from_iterable(default_calls if method == 'da' else [method] for method in calls)
         operations = []
         for method in calls:
