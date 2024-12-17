@@ -17,7 +17,7 @@ from .audio.utils import audio_to_tensor_resample
 from .default import get_min_word_dur, get_append_punctuations, get_prepend_punctuations
 
 
-__all__ = ['WhisperResult', 'Segment']
+__all__ = ['WhisperResult', 'Segment', 'WordTiming']
 
 
 def _combine_attr(obj: object, other_obj: object, attr: str):

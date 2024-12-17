@@ -1,18 +1,19 @@
+import io
 import os
 import warnings
-import io
+from typing import Callable, Union, Optional
+
+import numpy as np
 import torch
 import torchaudio
-import numpy as np
-from typing import Union, Callable, Optional
 
-from .audio import AudioLoader, get_denoiser_func, convert_demucs_kwargs
-from .audio.utils import load_source, load_audio, voice_freq_filter, get_samplerate, resample, audio_to_tensor_resample
-from .result import WhisperResult
-from .utils import update_options
+from ..result import WhisperResult
+from ..audio import AudioLoader, convert_demucs_kwargs, load_source, get_samplerate, get_denoiser_func, \
+    voice_freq_filter, load_audio
+from ..audio.utils import audio_to_tensor_resample, resample
+from ..utils import update_options
 
 AUDIO_TYPES = ('str', 'byte', 'torch', 'numpy')
-
 AUDIO_TYPE_BY_CLASS = {
     str: 'str',
     bytes: 'bytes',
