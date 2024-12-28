@@ -277,10 +277,16 @@ def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
     """
     if is_faster_model:
         import faster_whisper.tokenizer
+        from faster_whisper.tokenizer import _LANGUAGE_CODES
         tokenizer = faster_whisper.tokenizer.Tokenizer
         params = get_func_parameters(tokenizer)
         if model is not None and 'tokenizer' not in kwargs:
             kwargs['tokenizer'] = model.hf_tokenizer
+        if 'language' in kwargs and kwargs['language'] not in _LANGUAGE_CODES:
+            for k, v in LANGUAGES.items():
+                if v == kwargs['language'] and k in _LANGUAGE_CODES:
+                    kwargs['language'] = k
+                    break
     else:
         tokenizer = whisper.tokenizer.get_tokenizer
         params = _TOKENIZER_PARAMS
