@@ -436,11 +436,13 @@ def transcribe_stable(
 
     with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc=task.title()) as tqdm_pbar:
 
-        def update_pbar(new_total=None):
+        def update_pbar(curr_total_duration=None):
             nonlocal audio_features
             audio_features = None
-            curr_total_duration = audio.get_duration(2) if new_total is None else new_total
-            if curr_total_duration != tqdm_pbar.total:
+            if curr_total_duration is None:
+                curr_total_duration = audio.get_duration()
+            curr_total_duration = round(curr_total_duration, 2)
+            if curr_total_duration != tqdm_pbar.total and curr_total_duration >= tqdm_pbar.n:
                 tqdm_pbar.total = curr_total_duration
                 tqdm_pbar.refresh()
             seek_duration = min(curr_total_duration, round(seek_sample / SAMPLE_RATE, 2))
