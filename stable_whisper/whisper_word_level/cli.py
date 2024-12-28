@@ -475,8 +475,6 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             raise NotImplementedError(f'--refine is not supported for {model_type_name} models.')
         if strings_to_locate:
             raise NotImplementedError(f'--locate is not supported for {model_type_name} models.')
-        if is_faster_whisper:
-            args['transcribe_method'] = 'transcribe_stable'
 
     if regroup:
         try:
@@ -690,7 +688,7 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             transcribe_options = isolate_useful_options(args, transcribe_method)
             if not text and not is_hf_whisper:
                 decoding_options = (
-                    isolate_useful_options(args, model.transcribe if is_faster_whisper else DecodingOptions)
+                    isolate_useful_options(args, model.transcribe_original if is_faster_whisper else DecodingOptions)
                 )
                 if is_faster_whisper:
                     if decoding_options['suppress_tokens']:

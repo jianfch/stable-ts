@@ -379,7 +379,11 @@ pip install -U stable-ts[fw]
 ```python
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
+
+# For version 2.18.0+:
+result = model.transcribe('audio.mp3')
 ```
+Note: `model.transcribe_stable()` is deprecated in 2.18.0 and will be removed in future versions.
 ```commandline
 stable-ts audio.mp3 -o audio.srt -fw
 ```
@@ -401,13 +405,12 @@ Docstring:
     Returns
     -------
     faster_whisper.WhisperModel
-        A modified instance with :func:`stable_whisper.whisper_word_level.load_faster_whisper.faster_transcribe`
-        assigned to :meth:`faster_whisper.WhisperModel.transcribe_stable`.
+        A modified instance of :class:`faster_whisper.WhisperModel`.
 
 </details>
 
 <details>
-<summary>transcribe_stable()</summary>
+<summary>transcribe()</summary>
 
     Transcribe audio using faster-whisper (https://github.com/guillaumekln/faster-whisper).
 
@@ -489,7 +492,7 @@ Docstring:
     --------
     >>> import stable_whisper
     >>> model = stable_whisper.load_faster_whisper('base')
-    >>> result = model.transcribe_stable('audio.mp3', vad=True)
+    >>> result = model.transcribe('audio.mp3', vad=True)
     >>> result.to_srt_vtt('audio.srt')
     Saved: audio.srt
 
@@ -942,7 +945,7 @@ Docstring:
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
     extra_models : list of whisper.model.Whisper, optional
         List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
-    presplit : bool or list of str, default True meaning ['.', '。', '?', '？']
+    presplit : bool or list of str, default True meaning same as ``append_punctuations``
         List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
         but segmentation of final output is unnaffected unless ``original_split=True``.
         If ``original_split=True``, the original split is used instead of split from ``presplit``.
@@ -1061,7 +1064,7 @@ Docstring:
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
     extra_models : list of whisper.model.Whisper, optional
         List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
-    presplit : bool or list of str, default True meaning ['.', '。', '?', '？']
+    presplit : bool or list of str, default True meaning same as ``append_punctuations``
         List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
         but segmentation of final output is unnaffected unless ``original_split=True``.
         If ``original_split=True``, the original split is used instead of split from ``presplit``.
@@ -1202,6 +1205,8 @@ Docstring:
     Notes
     -----
     The lower the ``precision``, the longer the processing time.
+
+    Faster-Whisper models are significantly slower than vanilla models with this function.
 
     Examples
     --------
