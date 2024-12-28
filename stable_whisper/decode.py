@@ -26,10 +26,8 @@ class DecodingTaskStable(DecodingTask):
 
     def _get_audio_features(self, mel: torch.Tensor):
         if self.audio_features is None:
-            audio_features = super()._get_audio_features(mel)
-            self.audio_features = audio_features.detach().clone()
-            return audio_features
-        return self.audio_features.clone()
+            self.audio_features = super()._get_audio_features(mel)
+        return self.audio_features
 
     # modified version of whisper.DecodingTask._main_loop
     def _main_loop(self, audio_features: torch.Tensor, tokens: torch.Tensor):

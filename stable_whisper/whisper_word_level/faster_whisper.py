@@ -1,3 +1,4 @@
+import warnings
 from types import MethodType
 from typing import Union, Optional, Callable
 
@@ -121,7 +122,7 @@ def faster_transcribe(
     --------
     >>> import stable_whisper
     >>> model = stable_whisper.load_faster_whisper('base')
-    >>> result = model.transcribe_stable('audio.mp3', vad=True)
+    >>> result = model.transcribe('audio.mp3', vad=True)
     >>> result.to_srt_vtt('audio.srt')
     Saved: audio.srt
     """
@@ -183,7 +184,8 @@ def _inner_transcribe(model, audio, verbose, **faster_transcribe_options):
         import io
         audio = io.BytesIO(audio)
     progress_callback = faster_transcribe_options.pop('progress_callback', None)
-    segments, info = model.transcribe(audio, **faster_transcribe_options)
+    transcribe = model.transcribe_original if hasattr(model, 'transcribe_original') else model.transcribe
+    segments, info = transcribe(audio, **faster_transcribe_options)
     language = LANGUAGES.get(info.language, info.language)
     if verbose is not None:
         print(f'Detected Language: {language}')
@@ -203,7 +205,7 @@ def _inner_transcribe(model, audio, verbose, **faster_transcribe_options):
         for segment in segments:
             segment = segment._asdict()
             if (words := segment.get('words')) is not None:
-                segment['words'] = [w._asdict() for w in words]
+                segment['words'] = [w if isinstance(w, dict) else w._asdict() for w in words]
             else:
                 del segment['words']
             if verbose:
@@ -216,6 +218,15 @@ def _inner_transcribe(model, audio, verbose, **faster_transcribe_options):
         print(f'Completed transcription with faster-whisper ({model.model_size_or_path}).')
 
     return dict(language=language, segments=final_segments)
+
+
+def deprecated_transcribe(model, *args, **kwargs):
+    warnings.warn(
+        '``model.transcribe_stable()`` is deprecated and will be removed in future versions. '
+        'Use ``model.transcribe()`` instead. '
+        '``model.transcribe()`` have been replaced with ``model.transcribe_original()``'
+    )
+    return model.transcribe(*args, **kwargs)
 
 
 def load_faster_whisper(model_size_or_path: str, **model_init_options):
@@ -234,15 +245,18 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
     Returns
     -------
     faster_whisper.WhisperModel
-        A modified instance with :func:`stable_whisper.whisper_word_level.faster_whisper.faster_transcribe`
-        assigned to :meth:`faster_whisper.WhisperModel.transcribe_stable`.
+        A modified instance of :class:`faster_whisper.WhisperModel`.
     """
     from faster_whisper import WhisperModel
     faster_model = WhisperModel(model_size_or_path, **model_init_options)
     faster_model.model_size_or_path = model_size_or_path
 
-    faster_model.transcribe_stable = MethodType(faster_transcribe, faster_model)
-    from ..alignment import align
+    faster_model.transcribe_original = faster_model.transcribe
+    faster_model.transcribe = MethodType(faster_transcribe, faster_model)
+    faster_model.transcribe_stable = MethodType(deprecated_transcribe, faster_model)
+    from ..alignment import align, align_words, refine
     faster_model.align = MethodType(align, faster_model)
+    faster_model.align_words = MethodType(align_words, faster_model)
+    faster_model.refine = MethodType(refine, faster_model)
 
     return faster_model

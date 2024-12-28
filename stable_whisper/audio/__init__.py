@@ -2,7 +2,7 @@ import subprocess
 import warnings
 import torch
 import numpy as np
-from typing import Union, Optional, Tuple
+from typing import Union, Optional, Tuple, List
 
 from .utils import (
     is_ytdlp_available, load_source, load_audio, voice_freq_filter, get_samplerate, get_metadata
@@ -167,6 +167,8 @@ class AudioLoader:
             only_voice_freq: bool = False,
             demucs: Optional[str] = None,
             demucs_options: Optional[dict] = None,
+            load_sections: Optional[List[Tuple[float, Union[float, None]]]] = None,
+            negate_load: bool = False,
     ):
         if stream and not isinstance(source, str):
             raise NotImplementedError(f'``stream=True`` only supported for string ``source`` but got {type(source)}.')
@@ -175,6 +177,11 @@ class AudioLoader:
             from whisper.audio import SAMPLE_RATE
             sr = SAMPLE_RATE
         self._sr = sr
+        self.load_sections = (
+            self.negate_ts_sections(load_sections) if (negate_load and load_sections) else load_sections
+        )
+        self._curr_load_section_index = -1
+        self._curr_load_section_seeks = (0, 0)
         if buffer_size is None:
             buffer_size = (sr * 30)
         self._buffer_size = self._valid_buffer_size(self.parse_chunk_size(buffer_size))
@@ -206,7 +213,12 @@ class AudioLoader:
         self._prev_unprep_samples = np.array([])
         self._process = self._audio_loading_process()
         if test_first_chunk and self.next_chunk(0) is None:
-            raise RuntimeError(f'FFmpeg failed to read "{source}".')
+            if self._extra_process is not None:
+                _, err = self._extra_process.communicate()
+                err = err.decode('utf-8', errors='ignore').strip('\n')
+            else:
+                err = f'FFmpeg failed to read "{source}".'
+            raise RuntimeError(err)
 
     @property
     def buffer_size(self):
@@ -228,6 +240,14 @@ class AudioLoader:
     def prev_seek(self):
         return self._prev_seek
 
+    @property
+    def curr_load_section_index(self):
+        return self._curr_load_section_index
+
+    @property
+    def curr_load_section_seeks(self):
+        return self._curr_load_section_seeks
+
     @buffer_size.setter
     def buffer_size(self, size: int):
         self._buffer_size = self._valid_buffer_size(size)
@@ -238,6 +258,21 @@ class AudioLoader:
         if size < 0:
             raise ValueError('buffer size must be at least 0')
         return size
+
+    @staticmethod
+    def negate_ts_sections(ts_sections: List[Tuple[Union[float], Union[float, None]]]) \
+            -> List[Tuple[Union[float], Union[float, None]]]:
+        new_sections = [(s0[1], s1[0]) for s0, s1 in zip(ts_sections[:-1], ts_sections[1:])]
+        new_sections.insert(0, (0.0, ts_sections[0][0]))
+        new_sections.append((ts_sections[-1][1], None))
+        new_sections = [s for s in new_sections if s[0] != s[1]]
+        return new_sections
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.terminate()
 
     def parse_chunk_size(self, chunk_size: Union[int, str]) -> int:
         if isinstance(chunk_size, int):
@@ -376,6 +411,35 @@ class AudioLoader:
 
         return samples if len(samples) else None
 
+    def next_valid_chunk(self, seek: int, size: Optional[int] = None) -> Tuple[Union[torch.Tensor, None], int]:
+        if self.load_sections:
+            while (max_seek := self.curr_load_section_seeks[1]) is not None and seek + 1 >= max_seek:
+                if not self.skip_to_next_section():
+                    return None, seek
+                if seek < self.curr_load_section_seeks[0]:
+                    seek = self.curr_load_section_seeks[0]
+            chunk = self.next_chunk(seek, size=size)
+            if chunk is None:
+                return None, seek
+            size = chunk.size(-1)
+            max_seek = self.curr_load_section_seeks[1]
+            if max_seek is not None and seek + size > max_seek:
+                chunk = chunk[..., :max_seek - seek]
+            return chunk, seek
+        return self.next_chunk(seek, size=size), seek
+
+    def skip_to_next_section(self) -> bool:
+        if not self.load_sections or self.curr_load_section_index + 1 >= len(self.load_sections):
+            return False
+        self._curr_load_section_index += 1
+        start, end = self.load_sections[self._curr_load_section_index]
+        if start is not None:
+            start = round(start * self.sr)
+        if end is not None:
+            end = round(end * self.sr)
+        self._curr_load_section_seeks = (start, end)
+        return True
+
     def _get_prep_func(self):
 
         if self._denoiser:
@@ -480,7 +544,7 @@ class AudioLoader:
             self._extra_process.terminate()
         if getattr(self, '_process', None) is not None and self._process.poll() is None:
             self._process.terminate()
-        if getattr(self, '_denoised_save_path'):
+        if getattr(self, '_denoised_save_path', None):
             self.save_denoised_audio()
         if getattr(self, '_final_save_path', None):
             self.save_final_audio()

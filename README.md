@@ -15,6 +15,7 @@ https://github.com/jianfch/stable-ts/assets/28970749/7adf0540-3620-4b2b-b2d4-e31
   * [Editing](#editing)
   * [Locating Words](#locating-words)
   * [Silence Suppression](#silence-suppression)
+    * [Gap Adjustment](#gap-adjustment)
   * [Tips](#tips)
   * [Visualizing Suppression](#visualizing-suppression)
   * [Encode Comparison](#encode-comparison)
@@ -378,7 +379,11 @@ pip install -U stable-ts[fw]
 ```python
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
+
+# For version 2.18.0+:
+result = model.transcribe('audio.mp3')
 ```
+Note: `model.transcribe_stable()` is deprecated in 2.18.0 and will be removed in future versions.
 ```commandline
 stable-ts audio.mp3 -o audio.srt -fw
 ```
@@ -400,13 +405,12 @@ Docstring:
     Returns
     -------
     faster_whisper.WhisperModel
-        A modified instance with :func:`stable_whisper.whisper_word_level.load_faster_whisper.faster_transcribe`
-        assigned to :meth:`faster_whisper.WhisperModel.transcribe_stable`.
+        A modified instance of :class:`faster_whisper.WhisperModel`.
 
 </details>
 
 <details>
-<summary>transcribe_stable()</summary>
+<summary>transcribe()</summary>
 
     Transcribe audio using faster-whisper (https://github.com/guillaumekln/faster-whisper).
 
@@ -488,7 +492,7 @@ Docstring:
     --------
     >>> import stable_whisper
     >>> model = stable_whisper.load_faster_whisper('base')
-    >>> result = model.transcribe_stable('audio.mp3', vad=True)
+    >>> result = model.transcribe('audio.mp3', vad=True)
     >>> result.to_srt_vtt('audio.srt')
     Saved: audio.srt
 
@@ -831,9 +835,19 @@ new_result = model.align('audio.mp3', result, language='en')
 ```commandline
 stable-ts audio.mp3 --align text.txt --language en
 ```
-`--align` can also a JSON file of a result 
+`--align` can also be a JSON file of a result
 
 </details>
+
+Another alternative is `align_words`. 
+This a faster version of ``align()`` that confines the word-timestamp in the range between the existing start and end of each segment.
+```python
+result = [dict(start=0.0, end=0.5, text='hello world 1'), dict(start=0.5, end=1.0, text='hello world 2')]
+result = model.align_words('audio.mp3', result, 'English')
+# or to re-align the words of any result
+result = model.transcribe('audio.mp3')
+result = model.align_words('audio.mp3', result, 'English')
+```
 
 Docstring:
 <details>
@@ -931,7 +945,7 @@ Docstring:
         Whether to ignore warnings for compatibility issues with the detected Whisper version.
     extra_models : list of whisper.model.Whisper, optional
         List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
-    presplit : bool or list of str, default True meaning ['.', '。', '?', '？']
+    presplit : bool or list of str, default True meaning same as ``append_punctuations``
         List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
         but segmentation of final output is unnaffected unless ``original_split=True``.
         If ``original_split=True``, the original split is used instead of split from ``presplit``.
@@ -969,6 +983,111 @@ Docstring:
     >>> result = model.align('helloworld.mp3', 'Hello, World!', 'English')
     >>> result.to_srt_vtt('helloword.srt')
     Saved 'helloworld.srt'
+
+</details>
+
+<details>
+<summary>align_words()</summary>
+
+    Align segments of plain text or tokens with audio at word-level at specified start and end of each segment.
+
+    This is a version of ``align()`` that confines each segment to a range of timestamps which eliminates the need
+    for the fallback mechanisms used in ``align()``. This makes this method draticastilly faster than ``align()`` and
+    reduces word-timstamp errors if the provided start and end timestamps of each segment is accurate.
+
+    Parameters
+    ----------
+    model : "Whisper"
+        The Whisper ASR model modified instance
+    audio : str or numpy.ndarray or torch.Tensor or bytes or AudioLoader
+        Path/URL to the audio file, the audio waveform, or bytes of audio file or
+        instance of :class:`stable_whisper.audio.AudioLoader`.
+        If audio is :class:`numpy.ndarray` or :class:`torch.Tensor`, the audio must be already at sampled to 16kHz.
+    result : stable_whisper.result.WhisperResult or list of dict
+        Instance of :class:`stable_whisper.result.WhisperResult` or List of dictionaries with start, end, and text.
+    language : str, default None, uses ``language`` in ``text`` if it is a :class:`stable_whisper.result.WhisperResult`
+        Language of ``text``. Required if ``text`` does not contain ``language``.
+    tokenizer : "Tokenizer", default None, meaning a new tokenizer is created according ``language`` and ``model``
+        A tokenizer to used tokenizer text and detokenize tokens.
+    stream : bool or None, default None
+        Whether to loading ``audio`` in chunks of 30 seconds until the end of file/stream.
+        If ``None`` and ``audio`` is a string then set to ``True`` else ``False``.
+    verbose : bool or None, default False
+        Whether to display the text being decoded to the console.
+        Displays all the details if ``True``. Displays progressbar if ``False``. Display nothing if ``None``.
+    regroup : bool or str, default True, meaning the default regroup algorithm
+        String for customizing the regrouping algorithm. False disables regrouping.
+        Ignored if ``word_timestamps = False``.
+    suppress_silence : bool, default True
+        Whether to enable timestamps adjustments based on the detected silence.
+    suppress_word_ts : bool, default True
+        Whether to adjust word timestamps based on the detected silence. Only enabled if ``suppress_silence = True``.
+    use_word_position : bool, default True
+        Whether to use position of the word in its segment to determine whether to keep end or start timestamps if
+        adjustments are required. If it is the first word, keep end. Else if it is the last word, keep the start.
+    q_levels : int, default 20
+        Quantization levels for generating timestamp suppression mask; ignored if ``vad = true``.
+        Acts as a threshold to marking sound as silent.
+        Fewer levels will increase the threshold of volume at which to mark a sound as silent.
+    k_size : int, default 5
+        Kernel size for avg-pooling waveform to generate timestamp suppression mask; ignored if ``vad = true``.
+        Recommend 5 or 3; higher sizes will reduce detection of silence.
+    denoiser : str, optional
+        String of the denoiser to use for preprocessing ``audio``.
+        See ``stable_whisper.audio.SUPPORTED_DENOISERS`` for supported denoisers.
+    denoiser_options : dict, optional
+        Options to use for ``denoiser``.
+    vad : bool or dict, default False
+        Whether to use Silero VAD to generate timestamp suppression mask.
+        Instead of ``True``, using a dict of keyword arguments will load the VAD with the arguments.
+        Silero VAD requires PyTorch 1.12.0+. Official repo, https://github.com/snakers4/silero-vad.
+    vad_threshold : float, default 0.35
+        Threshold for detecting speech with Silero VAD. Low threshold reduces false positives for silence detection.
+    min_word_dur : float or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Shortest duration each word is allowed to reach for silence suppression.
+    min_silence_dur : float, optional
+        Shortest duration of silence allowed for silence suppression.
+    nonspeech_error : float, default 0.1
+        Relative error of non-speech sections that appear in between a word for silence suppression.
+    only_voice_freq : bool, default False
+        Whether to only use sound between 200 - 5000 Hz, where majority of human speech are.
+    prepend_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Punctuations to prepend to next word.
+    append_punctuations : str or None, default None meaning use ``stable_whisper.default.DEFAULT_VALUES``
+        Punctuations to append to previous word.
+    progress_callback : Callable, optional
+        A function that will be called when transcription progress is updated.
+        The callback need two parameters.
+        The first parameter is a float for seconds of the audio that has been transcribed.
+        The second parameter is a float for total duration of audio in seconds.
+    ignore_compatibility : bool, default False
+        Whether to ignore warnings for compatibility issues with the detected Whisper version.
+    extra_models : list of whisper.model.Whisper, optional
+        List of additional Whisper model instances to use for computing word-timestamps along with ``model``.
+    presplit : bool or list of str, default True meaning same as ``append_punctuations``
+        List of ending punctuation used to split ``text`` into segments for applying ``gap_padding``,
+        but segmentation of final output is unnaffected unless ``original_split=True``.
+        If ``original_split=True``, the original split is used instead of split from ``presplit``.
+        Ignored if ``model`` is a faster-whisper model.
+    gap_padding : str, default ' ...'
+        Only if ``presplit=True``, ``gap_padding`` is prepended to each segments for word timing alignment.
+        Used to reduce the probability of model predicting timestamps earlier than the first utterance.
+        Ignored if ``model`` is a faster-whisper model.
+    dynamic_heads : bool or int or str, optional
+        Whether to find optimal cross-attention heads during runtime instead of using the predefined heads for
+        word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
+        To specify number of iterations for finding the optimal heads,
+        use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    normalize_text : bool or dict, default True
+        Whether to normalize text of each segment.
+    inplace : bool, default True
+        Whether to add word-timestamps to ``result`` if it is instance of :class:`stable_whisper.result.WhisperResult`.
+
+    Returns
+    -------
+    stable_whisper.result.WhisperResult
+        All timestamps, words, probabilities, and other data from the alignment of ``audio``.
+        Same object as ``result`` if ``inplace=True`` (default) and ``result`` is a ``WhisperResult``.
 
 </details>
 
@@ -1087,6 +1206,8 @@ Docstring:
     -----
     The lower the ``precision``, the longer the processing time.
 
+    Faster-Whisper models are significantly slower than vanilla models with this function.
+
     Examples
     --------
     >>> import stable_whisper
@@ -1113,18 +1234,30 @@ result0 = model.transcribe('audio.mp3', regroup=True) # regroup is True by defau
 result1 = model.transcribe('audio.mp3', regroup=False)
 (
     result1
+    .ignore_special_periods()
     .clamp_max()
-    .split_by_punctuation([(',', ' '), '，'])
-    .split_by_gap(.5)
-    .merge_by_gap(.3, max_words=3)
     .split_by_punctuation([('.', ' '), '。', '?', '？'])
+    .split_by_gap(.5)
+    .split_by_punctuation([(',', ' '), '，'], min_chars=50)
+    .split_by_length(70)
+    .clamp_max()
 )
-result2 = model.transcribe('audio.mp3', regroup='cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？')
-
-# To undo all regrouping operations:
-result0.reset()
+result2 = model.transcribe('audio.mp3', regroup='isp_cm_sp=.* /。/?/？_sg=.5_sp=,* /，++++50_sl=70_cm')
 ```
-Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162)
+All chainable methods (i.e. all [Regrouping Method](#regrouping-methods) and [Editing Methods](#editing)) 
+are recorded in `result.regroup_history` as a string. 
+This string can be used to reproduce the same operations on another result or same result after a reset.
+
+```python
+history = result.regroup_history
+# To undo all operations (including ones applied by `transcribe()`):
+result.reset()
+# reapply all previous operations
+result.regroup(history)
+```
+_Note: `regroup_history` from operations that use non-primitive types (e.g. functions) for arguments cannot be used on another result_
+<br>
+Any regrouping algorithm can be expressed as a string. Please feel free share your strings [here](https://github.com/jianfch/stable-ts/discussions/162).
 #### Regrouping Methods
 <details>
 <summary>regroup()</summary>
@@ -1159,12 +1292,17 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
                 cm: clamp_max
                 l: lock
                 us: unlock_all_segments
-                da: default algorithm (cm_sp=,* /，_sg=.5_mg=.3+3_sp=.* /。/?/？)
+                da: default algorithm (isp_cm_sp=.* /。/?/？_sg=.5_sp=,* /，++++50_sl=70_cm)
                 rw: remove_word
                 rs: remove_segment
                 rp: remove_repetition
                 rws: remove_words_by_str
                 fg: fill_in_gaps
+                p: pad
+                ag: adjust_gaps
+                csl: convert_to_segment_level
+                co: custom_operation
+                isp: ignore_special_periods
             Metacharacters:
                 = separates a method key and its arguments (not used if no argument)
                 _ separates method keys (after arguments if there are any)
@@ -1175,6 +1313,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             -arguments are parsed positionally
             -if no argument is provided, the default ones will be used
             -use 1 or 0 to represent True or False
+            -use a space to in place of _ for ``key`` of ``custom_operation`` to avoid conflict with the metacharacter
+            -use strings "<True>" or "<False>" to represent True or False for ``value`` of ``custom_operation``
             Example 1:
                 merge_by_gap(.2, 10, lock=True)
                 mg=.2+10+++1
@@ -1185,6 +1325,9 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Example 3:
                 merge_all_segments().split_by_gap(.5).merge_by_gap(.15, 3)
                 ms_sg=.5_mg=.15+3
+            Examples 4:
+                custom_operation('compression_ratio', '>', 3.0, 'remove', word_level=False)
+                co=compression ratio+>+3.0+remove+0
 
 </details>
 
@@ -1201,6 +1344,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Whether to prevent future splits/merges from altering changes made by this method.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1228,6 +1373,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Split segments with characters >= ``min_chars``.
         min_dur : int, optional
             split segments with duration (in seconds) >= ``min_dur``.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1259,6 +1406,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Splitting will be done after the first non-locked word > ``max_chars`` / ``max_words``.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1267,7 +1416,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
         Notes
         -----
-        If ``even_split = True``, segments can still exceed ``max_chars`` and locked words will be ignored to avoid
+        If ``even_split = True``, segments can still exceed ``max_chars``.
         uneven splitting.
 
 </details>
@@ -1293,6 +1442,8 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
             Splitting will be done after the first non-locked word > ``max_dur``.
         newline: bool, default False
             Whether to insert line break at the split points instead of splitting into separate segments.
+        ignore_special_periods : bool, default False
+            Whether to avoid splitting at periods that is likely not an indication of the end of a sentence.
 
         Returns
         -------
@@ -1301,7 +1452,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
         Notes
         -----
-        If ``even_split = True``, segments can still exceed ``max_dur`` and locked words will be ignored to avoid
+        If ``even_split = True``, segments can still exceed ``max_dur``.
         uneven splitting.
 
 </details>
@@ -1367,6 +1518,11 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
         Merge all segments into one segment.
 
+        Parameters
+        ----------
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
+
         Returns
         -------
         stable_whisper.result.WhisperResult
@@ -1385,7 +1541,7 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
         ----------
         medium_factor : float, default 2.5
             Clamp durations above (``medium_factor`` * medium duration) per segment.
-            If ``medium_factor = None/0`` or segment has less than 3 words, it will be ignored and use only ``max_dur``.
+            If ``medium_factor = None/0`` or segment has less than 2 words, it will be ignored and use only ``max_dur``.
         max_dur : float, optional
             Clamp durations above ``max_dur``.
         clip_start : bool or None, default None
@@ -1456,6 +1612,99 @@ Any regrouping algorithm can be expressed as a string. Please feel free share yo
 
 </details>
 
+<details>
+<summary>ignore_special_periods()</summary>
+
+        Set ``enable`` as default for ``ignore_special_periods`` in all methods with ``ignore_special_periods``.
+
+        Parameters
+        ----------
+        enable : bool, default True
+            Value to set ``ignore_special_periods`` for methods that has this option.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+</details>
+
+
+#### Custom Method
+A custom method can replicate the operations of all the [Regrouping Methods](#regrouping-methods) 
+and more complexity logic with minimal code.
+
+```python
+# Split on the right of words that end with "." or "," or "?":
+result.custom_operation('word', 'end', 'any=.,\,,?', 'splitright', word_level=True)
+
+# Merge with next segment if the current segment is less than 15 chars:
+result.custom_operation('len=text', '<', 15, 'mergeright', word_level=False)
+
+# If there is split after the word " Mr." or " Ms." or " Mrs.", merge with next segment:
+result.custom_operation('word', 'in', (' Mr.', ' Ms.', ' Mrs.'), 'mergeright', word_level=True)
+# same as:
+result.custom_operation('word', '==', 'any= Mr., Ms., Mrs', 'mergeright', word_level=True)
+
+# Replace "one" with "1" if the word has probability below 0.5 
+def is_match(word, value):
+    text = word.word.strip().lower()
+    return text == 'one' and word.probability < value
+def replace_one(result, seg_index, word_index):
+    word = result[seg_index][word_index]
+    word.word = word.word.lower().replace('one', '1')
+result.custom_operation('', is_match, 0.5, replace_one, word_level=True)
+```
+`custom_operation()` is chainable with other [Regrouping Methods](#regrouping-methods). 
+It can be represented with just a string for `regroup()`.
+```python
+result.custom_operation('len=text', '<', 15, 'mergeright', word_level=False)
+
+# the above produces result as same below:
+result.regroup('co=len=text+<+15+mergeright+0')
+```
+
+
+Docstrings:
+<details>
+<summary>custom_operation()</summary>
+
+        Perform custom operation on words/segments that satisfy specified conditions.
+
+        Parameters
+        ----------
+        key : str
+            Attribute of words/segments to get value for comparing with ``value``.
+            If ``key`` is empty string, directly use the instance of ``WordTiming``/``Segment`` object for comparison.
+            All " " in ``key`` will be replaced with "_".
+            Start with "len=" to get length of the attribute.
+        operator : str or Callable
+            Operator or function for comparing vaLue of ``key`` and ``value``.
+            Built-in operators: ==, >, >=, <, <=, is, in, start, end
+            Function must return a boolean and accept two arguments: vaLue of ``key``, ``value``.
+        value : any
+            Value to compare with vaLue of ``key``.
+            To express multiple values as a string:
+                -start string with "all=" or "any=" followed with values separated by ','
+                -use "\" to escape values with "," in values
+                -these values can only be conbination of str, int, float
+                -start with "all=": all values are required to meet the condition to be satisfied
+                -start with "any=": only require one of the values to meet the conditions to be satified
+        method : str or Callable
+            Operation or function to check if words/segments meet conditions.
+            Built-in operations:
+                mergeleft, mergeright, merge, lockright, lockleft, lock, splitright, splitleft, split, remove
+            Function must accept three arguments: this instance of `WhisperResult`, segment index, word index.
+        word_level : bool, default None, meaning True if this instance has word-timestamps
+            Whether to operate on words. Operate on segments if ``False``.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+</details>
+
 ### Editing
 The editing methods in stable-ts can be chained with [Regrouping Methods](#regrouping-methods) and used in `regroup()`.
 
@@ -1487,6 +1736,8 @@ Docstrings:
             Whether to reassign segment and word ids (indices) after removing ``word``.
         verbose : bool, default True
             Whether to print detail of the removed word.
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------
@@ -1508,6 +1759,8 @@ Docstrings:
             Whether to reassign segment IDs (indices) after removing ``segment``.
         verbose : bool, default True
             Whether to print detail of the removed word.
+        record : bool , default True
+            Whether to record this operation in ``regroup_history``.
 
         Returns
         -------
@@ -1840,6 +2093,98 @@ As a result, the start of 'Hello' is changed to 0.375s instead of 0.625s.
 Furthermore, the default setting, `use_word_position=True`, also ensures the start is adjusted for the first word 
 and the end is adjusted for the last word of the segment as long as one of the conditions is true.
 
+#### Gap Adjustment
+Generally, the initial timestamps are accurate enough for captioning/subtitling purposes. 
+However, starting/ending 200ms earlier/later than the actual time the words are actually spoken 
+makes the timestamps not viable for tasks that require greater accuracy, such as audio editing.
+
+Gap Adjustment makes use of timestamps that accurately if not exactly marks the boundary of utterances.
+These timestamps, `nonspeech_sections`, are computed during transcription / alignment and used for [Silence Suppression](#silence-suppression).
+Since the initial timestamps are not pinpoint accuracy, they tend to overlap with `nonspeech_sections` 
+which is what the approach exploits. 
+Unlike [Silence Suppression](#silence-suppression) which only clips timestamps, 
+Gap Adjustment sets the segment timestamps to the timestamps of an ideal section in `nonspeech_sections` 
+(i.e. nonspeech start to segment end and nonspeech end to segment start). 
+
+This only applies to segment timestamps because there more prominent gaps between segments than between words.
+Therefore, it is recommended to use Gap Adjustment before any regrouping operations that split segments at places that are unlikely to have gaps. 
+And the opposite is recommended to be applied (e.g. splitting by gaps or punctuations that indicate a pause) before Gap Adjustment .
+
+```python
+result = model.transcribe('audio.mp3')
+result.adjust_gaps()
+```
+_Note: `.adjust_gaps()` can be chained with regrouping methods_
+
+The reliability of the `nonspeech_sections` varies by audio and settings.
+It is generally recommended to use `vad=False` for audio with no sound in the gaps and `vad=True` otherwise.
+Their respective sensitivities can be tuned. See [Visualizing Suppression](#visualizing-suppression).
+
+If the result contains word-level data (i.e. word-timestamps), 
+only `nonspeech_sections` that overlap the duration of the gap and words adjacent to the gap are considered to avoid clipping
+other words of the segments.
+There are cases, such as when timestamps are less accurate than usual, where the ideal `nonspeech_sections` does not overlap the aforementioned duration. 
+In such cases, it recommended to apply Gap Adjustment after converting the result from word-level to segment-level.
+
+```python
+result.convert_to_segment_level().adjust_gaps()
+```
+Note: `.convert_to_segment_level()` can be chained with regrouping methods
+
+
+Docstring:
+<details>
+<summary>adjust_gaps()</summary>
+
+        Set segment timestamps to the timestamps of overlapping``nonspeech_sections`` within ``duration_threshold``.
+
+        For results with segments split by gaps or punctuations that indicate pauses in speech, the timestamps of these
+        gaps are replaced with those in ``nonspeech_sections`` which overlap. These timestamps tend to be more accurate
+        if not exact timestamps of the start and end of utterances, especially for audio with no sounds in the gaps.
+
+        Parameters
+        ----------
+        duration_threshold : float, default 0.75
+            Only ``nonspeech_sections`` with duration >= ``duration_threshold`` * duration of the longest section that
+            overlaps the existing gap between segments are considered for that gap.
+        one_section : bool, default False
+            Whether to use only one section of ``nonspeech_sections`` for each gap between segments.
+            Recommend ``True`` when there are no sounds in the gaps.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        The reliability of this approach hinges on the accuracy of the ``nonspeech_sections`` which is computed when
+        ``vad`` is ``False`` or ``True`` for transcription and alignment. The accuracy increases with cleaner audio.
+        Results produced by ``vad=True`` will work better with less clean audio (i.e. audio with non-speech sounds).
+
+</details>
+
+<details>
+<summary>convert_to_segment_level()</summary>
+
+        Remove all word-level data.
+
+        Converting from word-level to segment-level is useful when the word-level data restricts certain operations that
+        need to be performed at the segment-level or when the segment-level results of operations are more desirable.
+
+        Returns
+        -------
+        stable_whisper.result.WhisperResult
+            The current instance after the changes.
+
+        Notes
+        -----
+        Since many regrouping operations require word-timestamps, it is recommended to only use this method after the
+        result has been regrouped into its final segments.
+
+</details>
+
+
 ### Tips
 - do not disable word timestamps with `word_timestamps=False` for reliable segment timestamps
 - use `vad=True` for more accurate non-speech detection
@@ -1854,20 +2199,21 @@ and the end is adjusted for the last word of the segment as long as one of the c
 
 ### Visualizing Suppression
 You can visualize which parts of the audio will likely be suppressed (i.e. marked as silent). 
+The computed timestamps for any result can be found in `result.nonspeech_sections`.
 Requires: [Pillow](https://github.com/python-pillow/Pillow) or [opencv-python](https://github.com/opencv/opencv-python).
 
 #### Without VAD
 ```python
 import stable_whisper
 # regions on the waveform colored red are where it will likely be suppressed and marked as silent
-# [q_levels]=20 and [k_size]=5 (default)
+# ``q_levels=20`` and ``k_size=5`` (default)
 stable_whisper.visualize_suppression('audio.mp3', 'image.png', q_levels=20, k_size = 5) 
 ```
 ![novad](https://user-images.githubusercontent.com/28970749/225825408-aca63dbf-9571-40be-b399-1259d98f93be.png)
 
 #### With [Silero VAD](https://github.com/snakers4/silero-vad)
 ```python
-# [vad_threshold]=0.35 (default)
+# ``vad_threshold=0.35`` (default)
 stable_whisper.visualize_suppression('audio.mp3', 'image.png', vad=True, vad_threshold=0.35)
 ```
 ![vad](https://user-images.githubusercontent.com/28970749/225825446-980924a5-7485-41e1-b0d9-c9b069d605f2.png)

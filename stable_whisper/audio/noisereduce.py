@@ -69,7 +69,7 @@ def noisereduce_audio(
         audio = audio.repeat_interleave(2, -2)
 
     noisereduce_options.pop('progress', None)  # not implemented
-    denoised_audio = model(audio=audio, device=device, **noisereduce_options).mean(dim=0)
+    denoised_audio = model(audio=audio, device=device, **noisereduce_options).nan_to_num().mean(dim=0)
 
     if 'cuda' in str(device):
         torch.cuda.empty_cache()

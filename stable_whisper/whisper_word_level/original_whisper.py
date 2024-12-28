@@ -72,6 +72,7 @@ def transcribe_stable(
         ignore_compatibility: bool = False,
         extra_models: Optional[List["Whisper"]] = None,
         dynamic_heads: Optional[Union[bool, int, str]] = None,
+        clip_timestamps: Optional[Union[str, List[float]]] = None,
         **decode_options) \
         -> WhisperResult:
     """
@@ -197,6 +198,9 @@ def transcribe_stable(
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    clip_timestamps : str or list of float
+        Comma-separated list start,end,start,end,... timestamps (in seconds) of clips to process.
+        The last end timestamp defaults to the end of the file.
     decode_options
         Keyword arguments to construct class:`whisper.decode.DecodingOptions` instances.
 
@@ -266,6 +270,15 @@ def transcribe_stable(
         denoiser, denoiser_options, demucs=demucs, demucs_options=demucs_options
     )
 
+    if isinstance(clip_timestamps, str):
+        clip_timestamps = [
+            float(ts) for ts in (clip_timestamps.split(",") if clip_timestamps else [])
+        ]
+    if clip_timestamps:
+        clip_timestamps = [clip_timestamps[i:i+2] for i in range(0, len(clip_timestamps), 2)]
+        if len(clip_timestamps[-1]) == 1:
+            clip_timestamps[-1] = [clip_timestamps[-1][0], None]
+
     if isinstance(audio, AudioLoader):
         audio.validate_external_args(
             sr=SAMPLE_RATE,
@@ -275,6 +288,7 @@ def transcribe_stable(
             denoiser_options=denoiser_options,
             only_voice_freq=only_voice_freq
         )
+        audio.load_sections = clip_timestamps
     else:
         denoiser_options = update_options(denoiser_options, device=device)
         audio = AudioLoader(
@@ -285,7 +299,8 @@ def transcribe_stable(
             only_voice_freq=only_voice_freq,
             only_ffmpeg=only_ffmpeg,
             verbose=verbose,
-            new_chunk_divisor=512 if vad else None
+            new_chunk_divisor=512 if vad else None,
+            load_sections=clip_timestamps
         )
     tokenizer = None
     language = None
@@ -421,18 +436,20 @@ def transcribe_stable(
 
     with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc=task.title()) as tqdm_pbar:
 
-        def update_pbar():
+        def update_pbar(curr_total_duration=None):
             nonlocal audio_features
             audio_features = None
-            curr_total_duration = audio.get_duration(2)
-            if curr_total_duration != tqdm_pbar.total:
+            if curr_total_duration is None:
+                curr_total_duration = audio.get_duration()
+            curr_total_duration = round(curr_total_duration, 2)
+            if curr_total_duration != tqdm_pbar.total and curr_total_duration >= tqdm_pbar.n:
                 tqdm_pbar.total = curr_total_duration
                 tqdm_pbar.refresh()
             seek_duration = min(curr_total_duration, round(seek_sample / SAMPLE_RATE, 2))
             if not tqdm_pbar.disable:
                 tqdm_pbar.update(seek_duration - tqdm_pbar.n)
             if progress_callback is not None:
-                progress_callback(seek=seek_duration, total=curr_total_duration)
+                progress_callback(seek_duration, curr_total_duration)
 
         def update_seek():
             nonlocal seek_sample
@@ -444,9 +461,12 @@ def transcribe_stable(
             update_pbar()
 
         while True:
-            audio_segment = audio.next_chunk(seek_sample, N_SAMPLES)
+            audio_segment, new_seek = audio.next_valid_chunk(seek_sample, N_SAMPLES)
             if audio_segment is None:
                 break
+            if new_seek != seek_sample:
+                seek_sample = new_seek
+                update_pbar()
             time_offset = seek_sample / SAMPLE_RATE
             segment_samples = audio_segment.shape[-1]
             segment_duration = segment_samples / SAMPLE_RATE
@@ -658,7 +678,7 @@ def transcribe_stable(
             fast_forward()
 
         # final update
-        update_pbar()
+        update_pbar(seek_sample / SAMPLE_RATE)
 
     if model.device != torch.device('cpu'):
         torch.cuda.empty_cache()
@@ -852,10 +872,11 @@ def modify_model(model: "Whisper"):
     model.transcribe = MethodType(transcribe_stable, model)
     model.transcribe_minimal = MethodType(transcribe_minimal, model)
     model.transcribe_original = MethodType(whisper.transcribe, model)
-    from ..alignment import align, refine, locate
+    from ..alignment import align, refine, locate, align_words
     model.align = MethodType(align, model)
     model.refine = MethodType(refine, model)
     model.locate = MethodType(locate, model)
+    model.align_words = MethodType(align_words, model)
 
 
 # modified version of whisper.load_model
