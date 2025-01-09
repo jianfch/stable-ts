@@ -508,7 +508,7 @@ class Aligner:
                 split_indices_by_char = np.cumsum(
                     [sum(len(w.word) for w in seg.words) for seg in text.segments]
                 ).tolist()
-            text = text.all_tokens() if text.has_words and all(w.tokens for w in text.all_words()) else text.text
+            text = text.text
         elif isinstance(text, str):
             if original_split and '\n' in text:
                 text_split = [
@@ -572,7 +572,7 @@ class Aligner:
             presplit = get_append_punctuations(self.options.post.append_punctuations)
         if len(self._split_indices_by_char):
             pad_mask = []
-            cumsums = self._split_indices_by_char
+            cumsums = self._split_indices_by_char.copy()
             cumsum_len = 0
             for word in self._all_word_tokens:
                 cumsum_len += len(word.word)

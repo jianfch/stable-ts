@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 2.18.1
+* fixed `align()` throwing `TypeError` for `language` when `text` is not a `WhisperResult` ([8e12ee4](https://github.com/jianfch/stable-ts/commit/8e12ee413a55059944e4529d400a4373211f48bd))
+* fixed `original_split=True` not working ([c446d43](https://github.com/jianfch/stable-ts/commit/c446d432b241fd4fad4cdd71813214cc57e8ed1b))
+* fixed alignment incorrectly encoding `text` result from another model ([c446d43](https://github.com/jianfch/stable-ts/commit/c446d432b241fd4fad4cdd71813214cc57e8ed1b))
+* changed `align()` to no longer require `language` for EN models ([8e12ee4](https://github.com/jianfch/stable-ts/commit/8e12ee413a55059944e4529d400a4373211f48bd))
+
 ## 2.18.0
 * deprecated `transcribe_stable()` for Faster-Whisper models and replaced it with `transcribe()` ([de0b42e](https://github.com/jianfch/stable-ts/commit/de0b42e301a015aba94d1fa3e6364e6787b1fd9e))
 * removed redundant copying of encoder output in `DecodingTaskStable._get_audio_features()` ([9fefdb8](https://github.com/jianfch/stable-ts/commit/9fefdb8406be811674a9f34eb09df72a582c0a4e))

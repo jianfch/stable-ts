@@ -180,8 +180,17 @@ def align(
     elif token_step > max_token_step:
         raise ValueError(f'The max value for [token_step] is {max_token_step} but got {token_step}.')
 
+    if is_faster_model:
+        supported_languages = model.supported_languages
+    else:
+        supported_languages = None if model.is_multilingual else ['en']
+
     if tokenizer is None:
-        if (language := getattr(text, 'language', None)) is None:
+        if (
+                not language and
+                (supported_languages is None or len(supported_languages) > 1) and
+                (language := getattr(text, 'language', None)) is None
+        ):
             raise TypeError('expected argument for language')
         tokenizer = get_tokenizer(model, is_faster_model=is_faster_model, language=language, task='transcribe')
 
@@ -212,6 +221,8 @@ def align(
     result = aligner.align(audio, text)
     result.language = \
         tokenizer.language_code if hasattr(tokenizer, 'language_code') else getattr(tokenizer, 'language', language)
+    if not result.language and supported_languages and len(supported_languages) == 1:
+        result.language = supported_languages[0]
 
     return result
 
