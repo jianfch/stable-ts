@@ -180,19 +180,7 @@ def align(
     elif token_step > max_token_step:
         raise ValueError(f'The max value for [token_step] is {max_token_step} but got {token_step}.')
 
-    if is_faster_model:
-        supported_languages = model.supported_languages
-    else:
-        supported_languages = None if model.is_multilingual else ['en']
-
-    if tokenizer is None:
-        if (
-                not language and
-                (supported_languages is None or len(supported_languages) > 1) and
-                (language := getattr(text, 'language', None)) is None
-        ):
-            raise TypeError('expected argument for language')
-        tokenizer = get_tokenizer(model, is_faster_model=is_faster_model, language=language, task='transcribe')
+    tokenizer, supported_languages = get_alignment_tokenizer(model, is_faster_model, text, language, tokenizer)
 
     options = AllOptions(options, vanilla_align=not is_faster_model)
     split_words_by_space = getattr(tokenizer, 'language_code', tokenizer.language) not in {"zh", "ja", "th", "lo", "my"}
@@ -219,10 +207,7 @@ def align(
     )
 
     result = aligner.align(audio, text)
-    result.language = \
-        tokenizer.language_code if hasattr(tokenizer, 'language_code') else getattr(tokenizer, 'language', language)
-    if not result.language and supported_languages and len(supported_languages) == 1:
-        result.language = supported_languages[0]
+    set_result_language(result, tokenizer, language, supported_languages)
 
     return result
 
@@ -351,10 +336,7 @@ def align_words(
     is_faster_model = model.__module__.startswith('faster_whisper.')
     if not is_faster_model:
         warn_compatibility_issues(whisper, ignore_compatibility)
-    if tokenizer is None:
-        if (language := getattr(result, 'language', None)) is None:
-            raise TypeError('expected argument for language')
-        tokenizer = get_tokenizer(model, is_faster_model=is_faster_model, language=language, task='transcribe')
+    tokenizer, supported_languages = get_alignment_tokenizer(model, is_faster_model, result, language, tokenizer)
 
     options = AllOptions(options)
     split_words_by_space = getattr(tokenizer, 'language_code', tokenizer.language) not in {"zh", "ja", "th", "lo", "my"}
@@ -373,10 +355,34 @@ def align_words(
         all_options=options
     )
     result = aligner.align_words(audio, result, normalize_text, inplace)
-    result.language = \
-        tokenizer.language_code if hasattr(tokenizer, 'language_code') else getattr(tokenizer, 'language', language)
+    set_result_language(result, tokenizer, language, supported_languages)
 
     return result
+
+
+def get_alignment_tokenizer(model, is_faster_model: bool, text, language=None, tokenizer=None):
+    if is_faster_model:
+        supported_languages = model.supported_languages
+    else:
+        supported_languages = None if model.is_multilingual else ['en']
+
+    if tokenizer is None:
+        if (
+                not language and
+                (supported_languages is None or len(supported_languages) > 1) and
+                (language := getattr(text, 'language', None)) is None
+        ):
+            raise TypeError('expected argument for language')
+        tokenizer = get_tokenizer(model, is_faster_model=is_faster_model, language=language, task='transcribe')
+
+    return tokenizer, supported_languages
+
+
+def set_result_language(result: WhisperResult, tokenizer, language, supported_languages):
+    result.language = \
+        tokenizer.language_code if hasattr(tokenizer, 'language_code') else getattr(tokenizer, 'language', language)
+    if not result.language and supported_languages and len(supported_languages) == 1:
+        result.language = supported_languages[0]
 
 
 def get_whisper_alignment_func(
