@@ -23,7 +23,7 @@ def check_result(result, orig_result, expect_change: bool = True):
     assert timing_checked
 
 
-def test_transcribe(model0_name: str, model1_name: str):
+def test_refine(model0_name: str, model1_name: str):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model0 = stable_whisper.load_model(model0_name, device=device)
     audio_path = os.path.join(os.path.dirname(__file__), "jfk.flac")
@@ -40,7 +40,7 @@ def test_transcribe(model0_name: str, model1_name: str):
 
 
 def test():
-    test_transcribe('tiny.en', 'tiny')
+    test_refine('tiny.en', 'tiny')
 
 
 if __name__ == '__main__':
