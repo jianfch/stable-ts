@@ -328,5 +328,5 @@ def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
                 (model.num_languages if hasattr(model, 'num_languages') else model.model.num_languages)
     elif 'num_languages' in kwargs:
         del kwargs['num_languages']
-    kwargs['language'] = get_valid_language(kwargs.get('language'))
+    kwargs['language'] = get_valid_language(kwargs.get('language'), is_faster_model, model)
     return tokenizer(**kwargs)
