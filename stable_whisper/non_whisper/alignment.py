@@ -644,7 +644,7 @@ class Aligner:
         self._pad_mask = self._get_pad_mask(self.options.align.presplit)
         self._total_words = len(self._all_word_tokens)
         self._remaining_len = sum(len(w.word) for w in self._all_word_tokens)
-        self.failure_count = self._total_words * (self.failure_threshold or 1)
+        self.failure_count = 0
         self.max_fail = self._total_words * (self.failure_threshold or 1)
 
     def _compute_timestamps(
