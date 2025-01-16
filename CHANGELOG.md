@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 2.18.2
+* fixed `align_words()` throwing `TypeError` for `language` when `text` is not a `WhisperResult` ([fe15241](https://github.com/jianfch/stable-ts/commit/fe15241e4a814f8210e17cbc6fb9b3887ab53430))
+* fixed `failure_threshold` for `Aligner` and `align()` ([ee64fd3](https://github.com/jianfch/stable-ts/commit/ee64fd3d8604c403fd194f935c5b852b73d7a059))
+* fixed `locate()` compatibility with Whisper 20240930+ ([7338f85](https://github.com/jianfch/stable-ts/commit/7338f859bbc412e0ee347767e35fb7782e6c1cf4))
+* changed `align_words()` to no longer require `language` for EN models ([fe15241](https://github.com/jianfch/stable-ts/commit/fe15241e4a814f8210e17cbc6fb9b3887ab53430))
+* updated `language` to ignore case and accept language labels and codes ([cd9232e](https://github.com/jianfch/stable-ts/commit/cd9232edeb50781b7b822ff667afb50048c55efa))
+
 ## 2.18.1
 * fixed `align()` throwing `TypeError` for `language` when `text` is not a `WhisperResult` ([8e12ee4](https://github.com/jianfch/stable-ts/commit/8e12ee413a55059944e4529d400a4373211f48bd))
 * fixed `original_split=True` not working ([c446d43](https://github.com/jianfch/stable-ts/commit/c446d432b241fd4fad4cdd71813214cc57e8ed1b))
