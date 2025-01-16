@@ -46,3 +46,4 @@ jobs:
       - run: python test/test_transcribe.py
       - run: python test/test_align.py
       - run: python test/test_refine.py
+      - run: python test/test_locate.py
