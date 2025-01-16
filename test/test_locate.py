@@ -14,7 +14,7 @@ def test_locate(model_names):
         assert 'americans' in words, words
         matches = model.locate(audio_path, 'americans', 'en', mode=1)
         assert len(matches), len(matches)
-        any(['americans' in match['duration_window_text'].lower() for match in matches])
+        assert any(['americans' in match['duration_window_text'].lower() for match in matches])
 
 
 def test():
