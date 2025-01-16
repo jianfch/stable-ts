@@ -7,7 +7,7 @@ from .result import WhisperResult, Segment
 from .timing import add_word_timestamps_stable, split_word_tokens
 from .audio import prep_audio, AudioLoader, audioloader_not_supported
 from .utils import safe_print, format_timestamp
-from .whisper_compatibility import warn_compatibility_issues, get_tokenizer
+from .whisper_compatibility import warn_compatibility_issues, get_tokenizer, disable_sdpa
 from .non_whisper.alignment import Aligner, WordToken
 from .non_whisper.refinement import Refiner
 from .options import AllOptions
@@ -825,7 +825,7 @@ def locate(
             for i, block in enumerate(model.decoder.blocks)
         ]
         tokens = torch.tensor([initial_tokens + text_tokens]).to(model.device)
-        with torch.no_grad():
+        with torch.no_grad(), disable_sdpa():
             audio_features = model.encoder(mel_segment.unsqueeze(0))
             model.decoder(tokens, audio_features)
 
