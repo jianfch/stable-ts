@@ -270,6 +270,40 @@ def warn_compatibility_issues(
             warnings.warn(compatibility_warning)
 
 
+def get_valid_language(language: str, is_faster_model: bool, model=None):
+    if language is None:
+        if model is None:
+            return language
+        if is_faster_model:
+            return model.supported_languages[0] if len(model.supported_languages) == 1 else language
+        return language if model.is_multilingual else 'en'
+
+    if is_faster_model:
+        from faster_whisper.tokenizer import _LANGUAGE_CODES
+        if language in _LANGUAGE_CODES:
+            return language
+        faster_language_code_lower = {code.lower(): code for code in _LANGUAGE_CODES}
+        if language.lower() in faster_language_code_lower:
+            return faster_language_code_lower[language.lower()]
+        for k, v in LANGUAGES.items():
+            if v.lower() == language.lower() and k.lower() in faster_language_code_lower:
+                return faster_language_code_lower[k.lower()]
+
+        raise ValueError(f'{language} is not a valid language or language code. '
+                         f'Available languages: {tuple(_LANGUAGE_CODES.keys())}')
+    else:
+        if language in LANGUAGES:
+            return language
+        language_codes_lower = {code.lower(): code for code in LANGUAGES}
+        if language.lower() in language_codes_lower:
+            return language_codes_lower[language.lower()]
+        for k, v in LANGUAGES.items():
+            if v.lower() == language.lower():
+                return k
+        raise ValueError(f'{language} is not a valid language or language code. '
+                         f'Available languages: {tuple(LANGUAGES.keys())}')
+
+
 def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
     """
     Backward compatible wrapper of :func:`whisper.tokenizer.get_tokenizer` and
@@ -282,11 +316,6 @@ def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
         params = get_func_parameters(tokenizer)
         if model is not None and 'tokenizer' not in kwargs:
             kwargs['tokenizer'] = model.hf_tokenizer
-        if 'language' in kwargs and kwargs['language'] not in _LANGUAGE_CODES:
-            for k, v in LANGUAGES.items():
-                if v == kwargs['language'] and k in _LANGUAGE_CODES:
-                    kwargs['language'] = k
-                    break
     else:
         tokenizer = whisper.tokenizer.get_tokenizer
         params = _TOKENIZER_PARAMS
@@ -299,4 +328,5 @@ def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
                 (model.num_languages if hasattr(model, 'num_languages') else model.model.num_languages)
     elif 'num_languages' in kwargs:
         del kwargs['num_languages']
+    kwargs['language'] = get_valid_language(kwargs.get('language'), is_faster_model, model)
     return tokenizer(**kwargs)
