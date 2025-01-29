@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 2.18.3
+* fixed alignment skipping sections of speech ([fc0d0da](https://github.com/jianfch/stable-ts/commit/fc0d0daf3e4c8ce39c18568b71ee336c5fd87ea9))
+* fixed `'last_ts' referenced before assignment` error for alignment ([fc0d0da](https://github.com/jianfch/stable-ts/commit/fc0d0daf3e4c8ce39c18568b71ee336c5fd87ea9))
+
 ## 2.18.2
 * fixed `align_words()` throwing `TypeError` for `language` when `text` is not a `WhisperResult` ([fe15241](https://github.com/jianfch/stable-ts/commit/fe15241e4a814f8210e17cbc6fb9b3887ab53430))
 * fixed `failure_threshold` for `Aligner` and `align()` ([ee64fd3](https://github.com/jianfch/stable-ts/commit/ee64fd3d8604c403fd194f935c5b852b73d7a059))
