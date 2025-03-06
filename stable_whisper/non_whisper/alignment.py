@@ -875,13 +875,14 @@ class Aligner:
             return audio_segment
 
         segment_samples = audio_segment.size(-1)
+        segment_duration = segment_samples / self.sample_rate
 
         max_time_offset = self._time_offset + self.options.post.min_word_dur
         min_time_offset = self._time_offset - self.options.post.min_word_dur
 
         if (
                 (segment_nonspeech_timings[0][0] < max_time_offset) and
-                (segment_nonspeech_timings[1][0] > min_time_offset + segment_samples)
+                (segment_nonspeech_timings[1][0] > min_time_offset + segment_duration)
         ):
             # entire audio segment is within first nonspeech section
             self._seek_sample += segment_samples
