@@ -370,12 +370,14 @@ Docstrings:
 
 <br>
 <details>
-<summary>faster-whisper</summary>
+<summary>Faster-Whisper</summary>
 
-Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper):
+Use with [Faster-Whisper](https://github.com/guillaumekln/faster-whisper):
 ```
 pip install -U stable-ts[fw]
 ```
+* [Refinement](#refinement) is not supported on Faster-Whisper models
+* [Alignment](#alignment) is slower on Faster-Whisper models than on vanilla models (i.e. ones loaded with `stable_whisper.load_model()`) 
 ```python
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe_stable('audio.mp3')
@@ -508,6 +510,7 @@ Run Whisper up to 9x faster with [Hugging Face Transformer](https://huggingface.
 ```
 pip install -U stable-ts[hf]
 ```
+* [Alignment](#alignment) and [Refinement](#refinement) are not supported on Hugging Face models
 ```python
 model = stable_whisper.load_hf_whisper('base')
 result = model.transcribe('audio.mp3')
