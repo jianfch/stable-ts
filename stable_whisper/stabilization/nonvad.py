@@ -45,7 +45,7 @@ def wav2mask(
         q_levels: int = 20,
         k_size: int = 5,
         sr: int = None
-) -> (Tuple[torch.Tensor, Tuple[np.ndarray, np.ndarray]], None):
+) -> (torch.Tensor, None):
     """
     Generate 1D mask from waveform for suppressing timestamp tokens.
     """
