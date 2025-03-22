@@ -504,17 +504,22 @@ Docstring:
 
 
 <details>
-<summary>Hugging Face Transformers (~9x faster)</summary>
+<summary>Hugging Face Transformers</summary>
 
-Run Whisper up to 9x faster with [Hugging Face Transformer](https://huggingface.co/openai/whisper-large-v3):
+Transcribe up to 9x faster with [Hugging Face Transformer](https://huggingface.co/openai/whisper-large-v3):
 ```
 pip install -U stable-ts[hf]
 ```
-* [Alignment](#alignment) and [Refinement](#refinement) are not supported on Hugging Face models
+
 ```python
 model = stable_whisper.load_hf_whisper('base')
 result = model.transcribe('audio.mp3')
 ```
+Supports the [various versions on Hugging Face](https://huggingface.co/models?other=whisper&sort=downloads):
+```python
+model = stable_whisper.load_hf_whisper('openai/whisper-base.en')
+```
+
 
 <details>
 <summary>CLI</summary>

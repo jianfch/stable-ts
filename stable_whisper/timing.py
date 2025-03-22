@@ -82,6 +82,8 @@ def _compute_atten_weights(
     if cache['qks'] is None:
         _compute_qks(model, tokenizer, text_tokens, mel, tokens, cache)
     QKs = cache['qks']
+    if getattr(model, 'missing_alignment_heads', False) and not dynamic_heads_count:
+        dynamic_heads_count = 6
     if dynamic_heads_count:
         max_qk_len = round(num_samples / N_SAMPLES_PER_TOKEN)
         if not cache.get('is_processed_qks'):

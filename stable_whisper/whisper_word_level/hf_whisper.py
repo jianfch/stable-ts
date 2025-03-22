@@ -7,6 +7,8 @@ from ..audio import convert_demucs_kwargs, prep_audio
 from ..non_whisper import transcribe_any
 from ..utils import isolate_useful_options
 
+from ..alignment import align, align_words, refine
+
 
 HF_MODELS = {
     "tiny.en": "openai/whisper-tiny.en",
@@ -23,6 +25,29 @@ HF_MODELS = {
     "large": "openai/whisper-large-v3",
     "large-v3-turbo": "openai/whisper-large-v3-turbo",
     "turbo": "openai/whisper-large-v3-turbo"
+}
+
+WHISPER_TO_HF_MAPPING = {
+    "blocks": "layers",
+    "mlp.0": "fc1",
+    "mlp.2": "fc2",
+    "mlp_ln": "final_layer_norm",
+    ".attn.query": ".self_attn.q_proj",
+    ".attn.key": ".self_attn.k_proj",
+    ".attn.value": ".self_attn.v_proj",
+    ".attn_ln": ".self_attn_layer_norm",
+    ".attn.out": ".self_attn.out_proj",
+    ".cross_attn.query": ".encoder_attn.q_proj",
+    ".cross_attn.key": ".encoder_attn.k_proj",
+    ".cross_attn.value": ".encoder_attn.v_proj",
+    ".cross_attn_ln": ".encoder_attn_layer_norm",
+    ".cross_attn.out": ".encoder_attn.out_proj",
+    "decoder.ln.": "decoder.layer_norm.",
+    "encoder.ln.": "encoder.layer_norm.",
+    "token_embedding": "embed_tokens",
+    "encoder.positional_embedding": "encoder.embed_positions.weight",
+    "decoder.positional_embedding": "decoder.embed_positions.weight",
+    "ln_post": "layer_norm",
 }
 
 
@@ -81,6 +106,7 @@ class WhisperHF:
         self._pipe = load_hf_pipe(self._model_name, device, flash=flash, **pipeline_kwargs) if pipeline is None \
             else pipeline
         self._model_name = getattr(self._pipe.model, 'name_or_path', self._model_name)
+        self._vanilla_model = None
 
     @property
     def sampling_rate(self):
@@ -262,6 +288,70 @@ class WhisperHF:
             check_sorted=check_sorted,
             **transcribe_any_options
         )
+
+    def as_vanilla_model(self):
+        """
+        Return a vanilla Whisper model instance with current weights.
+
+        The new instance is only loaded once. Most weights share the same memory as this Hugging Face model instance.
+        """
+        if self._vanilla_model is not None:
+            return self._vanilla_model
+
+        from ..whisper_compatibility import ModelDimensions, Whisper, ln_to_fp32
+        from .original_whisper import modify_model
+        try:
+            from transformers.models.whisper.convert_openai_to_hf import WHISPER_MAPPING
+            whisper2hf_mapping = WHISPER_MAPPING
+        except (ImportError, ModuleNotFoundError):
+            whisper2hf_mapping = WHISPER_TO_HF_MAPPING
+
+        hf_mapping = {v: k for k, v in whisper2hf_mapping.items()}
+        assert len(whisper2hf_mapping) == len(hf_mapping)
+
+        state_dict = self._pipe.model.model.state_dict()
+        config = self._pipe.model.config
+
+        if 'encoder.layer_norm.' in hf_mapping:
+            hf_mapping['encoder.layer_norm.'] = 'encoder.ln_post.'
+        for key in list(state_dict.keys()):
+            new_key = key
+            for k, v in hf_mapping.items():
+                if k in key:
+                    new_key = new_key.replace(k, v)
+            if new_key != key:
+                state_dict[new_key] = state_dict.pop(key)
+
+        dims = ModelDimensions(
+            n_mels=config.num_mel_bins,
+            n_audio_ctx=config.max_source_positions,
+            n_audio_state=config.d_model,
+            n_audio_head=config.encoder_attention_heads,
+            n_audio_layer=config.encoder_layers,
+            n_vocab=config.vocab_size,
+            n_text_ctx=config.max_target_positions,
+            n_text_state=self._pipe.model.model.decoder.embed_positions.embedding_dim,
+            n_text_head=config.decoder_attention_heads,
+            n_text_layer=config.decoder_layers
+        )
+        new_model = Whisper(dims)
+        if alignment_heads := getattr(self._pipe.model.generation_config, 'alignment_heads', None):
+            alignment_heads = torch.as_tensor(alignment_heads).T
+            final_heads = torch.zeros(new_model.dims.n_text_layer, new_model.dims.n_text_head, dtype=torch.bool)
+            final_heads[alignment_heads[0], alignment_heads[1]] = True
+            new_model.register_buffer("alignment_heads", final_heads.to_sparse(), persistent=False)
+        else:
+            setattr(new_model, 'missing_alignment_heads', True)
+        new_model.load_state_dict(state_dict, strict=True, assign=True)
+        new_model.to(device=self._pipe.model.device)
+        ln_to_fp32(new_model)
+        modify_model(new_model)
+        self._vanilla_model = new_model
+        return self._vanilla_model
+
+    align = align
+    align_words = align_words
+    refine = refine
 
 
 def load_hf_whisper(model_name: str, device: str = None, flash: bool = False, pipeline=None, **pipeline_kwargs):

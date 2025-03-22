@@ -14,7 +14,7 @@ from .options import AllOptions
 
 from .whisper_compatibility import (
     SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES,
-    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper, TOKENS_PER_SECOND
+    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper, TOKENS_PER_SECOND, as_vanilla
 )
 
 if TYPE_CHECKING:
@@ -171,6 +171,7 @@ def align(
     >>> result.to_srt_vtt('helloword.srt')
     Saved 'helloworld.srt'
     """
+    model = as_vanilla(model)
     is_faster_model = model.__module__.startswith('faster_whisper.')
     if not is_faster_model:
         warn_compatibility_issues(whisper, ignore_compatibility)
@@ -333,6 +334,7 @@ def align_words(
     >>> result = [dict(start=0.0, end=0.5, text='hello world 1'), dict(start=0.5, end=1.0, text='hello world 2')]
     >>> result = model.align_words('audio.mp3', result, 'English')
     """
+    model = as_vanilla(model)
     is_faster_model = model.__module__.startswith('faster_whisper.')
     if not is_faster_model:
         warn_compatibility_issues(whisper, ignore_compatibility)
@@ -544,6 +546,7 @@ def refine(
     >>> result.to_srt_vtt('audio.srt')
     Saved 'audio.srt'
     """
+    model = as_vanilla(model)
     if result:
         if not result.has_words:
             if not result.language:
