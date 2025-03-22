@@ -140,12 +140,15 @@ class WhisperHF:
             print(f'Transcribing with Hugging Face Whisper ({self.model_name})...')
         pipe_kwargs = dict(
             generate_kwargs=generate_kwargs,
-            return_timestamps='word' if word_timestamps else True
+            return_timestamps='word' if word_timestamps else True,
+            return_language=True
         )
         if batch_size is not None:
             pipe_kwargs['batch_size'] = batch_size
         output = self._pipe(audio, **pipe_kwargs)
         result = output['chunks']
+        if not language and result and 'language' in result[0]:
+            language = result[0]['language']
         if verbose is not None:
             print(f'Transcription completed.')
 
@@ -200,13 +203,24 @@ class WhisperHF:
                 for word in result
             ]
             replace_none_ts(words)
-            return [words]
-        segs = [
-            dict(start=seg['timestamp'][0], end=seg['timestamp'][1], text=seg['text'])
-            for seg in result
-        ]
-        replace_none_ts(segs)
-        return segs
+            if words:
+                segs = [
+                        dict(
+                            start=words[0]['start'],
+                            end=words[-1]['end'],
+                            text=''.join(w['word'] for w in words),
+                            words=words
+                        )
+                ]
+            else:
+                segs = []
+        else:
+            segs = [
+                dict(start=seg['timestamp'][0], end=seg['timestamp'][1], text=seg['text'])
+                for seg in result
+            ]
+            replace_none_ts(segs)
+        return dict(segments=segs, language=language)
 
     def transcribe(
             self,
