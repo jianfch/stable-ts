@@ -370,23 +370,30 @@ Docstrings:
 
 <br>
 <details>
-<summary>faster-whisper</summary>
+<summary>Faster-Whisper</summary>
 
-Use with [faster-whisper](https://github.com/guillaumekln/faster-whisper):
+Use with [Faster-Whisper](https://github.com/guillaumekln/faster-whisper):
 ```
 pip install -U stable-ts[fw]
 ```
+* [Refinement](#refinement) is slower on Faster-Whisper models than on vanilla models (i.e. ones loaded with `stable_whisper.load_model()`)
 ```python
 model = stable_whisper.load_faster_whisper('base')
-result = model.transcribe_stable('audio.mp3')
-
-# For version 2.18.0+:
 result = model.transcribe('audio.mp3')
+
+# For versions < 2.18.0:
+result = model.transcribe_stable('audio.mp3')
 ```
-Note: `model.transcribe_stable()` is deprecated in 2.18.0 and will be removed in future versions.
+
+<details>
+<summary>CLI</summary>
+
 ```commandline
 stable-ts audio.mp3 -o audio.srt -fw
 ```
+
+</details>
+
 Docstring:
 <details>
 <summary>load_faster_whisper()</summary>
@@ -502,16 +509,22 @@ Docstring:
 
 
 <details>
-<summary>Hugging Face Transformers (~9x faster)</summary>
+<summary>Hugging Face Transformers</summary>
 
-Run Whisper up to 9x faster with [Hugging Face Transformer](https://huggingface.co/openai/whisper-large-v3):
+Transcribe up to 9x faster with [Hugging Face Transformer](https://huggingface.co/openai/whisper-large-v3):
 ```
 pip install -U stable-ts[hf]
 ```
+
 ```python
 model = stable_whisper.load_hf_whisper('base')
 result = model.transcribe('audio.mp3')
 ```
+Supports the [various versions on Hugging Face](https://huggingface.co/models?other=whisper&sort=downloads):
+```python
+model = stable_whisper.load_hf_whisper('openai/whisper-base.en')
+```
+
 
 <details>
 <summary>CLI</summary>

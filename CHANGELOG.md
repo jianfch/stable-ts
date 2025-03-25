@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2.19.0
+* fixed `fill_in_gaps()` ([650cc4b](https://github.com/jianfch/stable-ts/commit/650cc4be7185d4fbf4bd9fb9bc7efc8d4d22ad5d))
+* fixed `align()` failing skip audio segment without speech ([cc2d6bf](https://github.com/jianfch/stable-ts/commit/cc2d6bf088e2b09b7be7337e83246289f34c0318))
+* fixed `denoiser="demucs"` + `suppress_silence=False` causing pytorch to numpy conversion error ([fefaf46](https://github.com/jianfch/stable-ts/commit/fefaf46aab091c312e6ef1cb1b1f1a14caab210d))
+* fixed `refine()` failing due to missing word tokens/probabilities in input `result` ([78a223f](https://github.com/jianfch/stable-ts/commit/78a223f3a85b2deb98b2b124ac1a5069802b0887))
+* added alignment and refinement support for Hugging Face models ([751b041](https://github.com/jianfch/stable-ts/commit/751b041ae25674853c040a317c510684380f955f))
+* updated README.md ([a44ebf3](https://github.com/jianfch/stable-ts/commit/a44ebf39d9d43511745520759f7265ca8c362b7e), [78a223f](https://github.com/jianfch/stable-ts/commit/78a223f3a85b2deb98b2b124ac1a5069802b0887))
+* updated Hugging Face models transcription to always return language ([78a223f](https://github.com/jianfch/stable-ts/commit/78a223f3a85b2deb98b2b124ac1a5069802b0887), [4232dd4](https://github.com/jianfch/stable-ts/commit/4232dd4b14ab9fbad58bf68deff09081476324d8))
+* updated Hugging Face model loading process to warn BetterTransformer conversion failure ([4232dd4](https://github.com/jianfch/stable-ts/commit/4232dd4b14ab9fbad58bf68deff09081476324d8))
+* improved compatibility of Hugging Face models with certain old versions of PyTorch ([4232dd4](https://github.com/jianfch/stable-ts/commit/4232dd4b14ab9fbad58bf68deff09081476324d8))
+
 ## 2.18.3
 * fixed alignment skipping sections of speech ([fc0d0da](https://github.com/jianfch/stable-ts/commit/fc0d0daf3e4c8ce39c18568b71ee336c5fd87ea9))
 * fixed `'last_ts' referenced before assignment` error for alignment ([fc0d0da](https://github.com/jianfch/stable-ts/commit/fc0d0daf3e4c8ce39c18568b71ee336c5fd87ea9))

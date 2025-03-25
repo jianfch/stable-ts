@@ -2459,9 +2459,9 @@ class WhisperResult:
             strip_punctuations = strip_space
 
         if case_sensitive:
-            strip = strip_punctuations
+            _strip = strip_punctuations
         else:
-            def strip(w):
+            def _strip(w):
                 return strip_punctuations(w).lower()
 
         seg_pairs = list(enumerate(zip(self.segments[:-1], self.segments[1:])))
@@ -2477,10 +2477,10 @@ class WhisperResult:
             if end - start <= min_gap:
                 continue
             gap_words = other_result.get_content_by_time((start, end))
-            if first_word is not None and gap_words and strip(first_word.word) == strip(gap_words[0].word):
+            if first_word is not None and gap_words and _strip(first_word.word) == _strip(gap_words[0].word):
                 first_word.end = gap_words[0].end
                 gap_words = gap_words[1:]
-            if last_word is not None and gap_words and strip(last_word.word) == strip(gap_words[-1].word):
+            if last_word is not None and gap_words and _strip(last_word.word) == _strip(gap_words[-1].word):
                 last_word.start = gap_words[-1].start
                 gap_words = gap_words[:-1]
             if not gap_words:

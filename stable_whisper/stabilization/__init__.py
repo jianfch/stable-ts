@@ -98,7 +98,8 @@ class NonSpeechPredictor:
     def _silent_mask_test(self, mask, min_unit_per_word) -> bool:
         if self.ignore_is_silent or mask is None:
             return False
-        non_silent_unit_count = mask.shape[-1] - np.flatnonzero(mask).shape[-1]
+        nonzero_count = torch.count_nonzero(mask) if torch.is_tensor(mask) else np.count_nonzero(mask)
+        non_silent_unit_count = mask.shape[-1] - nonzero_count
         return non_silent_unit_count < min_unit_per_word
 
     def _append_timings(self, timings: np.ndarray):

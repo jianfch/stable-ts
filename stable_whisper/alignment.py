@@ -14,7 +14,7 @@ from .options import AllOptions
 
 from .whisper_compatibility import (
     SAMPLE_RATE, N_FRAMES, N_FFT, pad_or_trim, log_mel_spectrogram, FRAMES_PER_SECOND, CHUNK_LENGTH, N_SAMPLES,
-    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper, TOKENS_PER_SECOND
+    median_filter, DecodingTask, DecodingOptions, SuppressTokens, whisper, TOKENS_PER_SECOND, as_vanilla
 )
 
 if TYPE_CHECKING:
@@ -171,6 +171,7 @@ def align(
     >>> result.to_srt_vtt('helloword.srt')
     Saved 'helloworld.srt'
     """
+    model = as_vanilla(model)
     is_faster_model = model.__module__.startswith('faster_whisper.')
     if not is_faster_model:
         warn_compatibility_issues(whisper, ignore_compatibility)
@@ -333,6 +334,7 @@ def align_words(
     >>> result = [dict(start=0.0, end=0.5, text='hello world 1'), dict(start=0.5, end=1.0, text='hello world 2')]
     >>> result = model.align_words('audio.mp3', result, 'English')
     """
+    model = as_vanilla(model)
     is_faster_model = model.__module__.startswith('faster_whisper.')
     if not is_faster_model:
         warn_compatibility_issues(whisper, ignore_compatibility)
@@ -544,19 +546,19 @@ def refine(
     >>> result.to_srt_vtt('audio.srt')
     Saved 'audio.srt'
     """
-    if result:
-        if not result.has_words:
-            if not result.language:
-                raise RuntimeError(f'cannot add word-timestamps to result with missing language')
-            align_words(model, audio, result)
-        elif not all(word.tokens for word in result.all_words()):
-            tokenizer = get_tokenizer(model)
-            for word in result.all_words():
-                word.tokens = tokenizer.encode(word.word)
-    tokenizer = get_tokenizer(model, language=result.language, task='transcribe')
+    model = as_vanilla(model)
+    is_faster_model = model.__module__.startswith('faster_whisper.')
+    if result and (not result.has_words or any(word.probability is None for word in result.all_words())):
+        if not result.language:
+            raise RuntimeError(f'cannot align words with result missing language')
+        align_words(model, audio, result)
+    tokenizer = get_tokenizer(model, is_faster_model=is_faster_model, language=result.language, task='transcribe')
+    if result and not all(word.tokens for word in result.all_words()):
+        for word in result.all_words():
+            word.tokens = tokenizer.encode(word.word)
 
     options = AllOptions(options, post=False, silence=False, align=False)
-    model_type = 'fw' if (is_faster_model := model.__module__.startswith('faster_whisper.')) else None
+    model_type = 'fw' if is_faster_model else None
     inference_func = get_whisper_refinement_func(model, tokenizer, model_type, single_batch)
     max_inference_tokens = (model.max_length if is_faster_model else model.dims.n_text_ctx) - 6
 

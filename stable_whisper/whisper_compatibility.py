@@ -67,7 +67,7 @@ if IS_WHISPER_AVAILABLE:
     from whisper.tokenizer import get_tokenizer as get_whisper_tokenizer
 
     from whisper.tokenizer import Tokenizer
-    from whisper.model import Whisper
+    from whisper.model import Whisper, ModelDimensions, LayerNorm
     from whisper.decoding import DecodingTask, DecodingOptions, DecodingResult, SuppressTokens
     try:
         from whisper.model import disable_sdpa
@@ -90,7 +90,9 @@ else:
 
     log_mel_spectrogram = median_filter = dtw = merge_punctuations = get_whisper_tokenizer \
         = whisper_not_available
-    Tokenizer = Whisper = DecodingTask = DecodingOptions = DecodingResult = SuppressTokens = Unavailable
+    Tokenizer = Whisper = ModelDimensions = LayerNorm = \
+        DecodingTask = DecodingOptions = DecodingResult = SuppressTokens \
+        = Unavailable
     LANGUAGES = {
         "en": "english",
         "zh": "chinese",
@@ -330,3 +332,20 @@ def get_tokenizer(model=None, is_faster_model: bool = False, **kwargs):
         del kwargs['num_languages']
     kwargs['language'] = get_valid_language(kwargs.get('language'), is_faster_model, model)
     return tokenizer(**kwargs)
+
+
+def as_vanilla(model):
+    return model.as_vanilla_model() if hasattr(model, 'as_vanilla_model') else model
+
+
+def ln_to_fp32(module):
+    """
+    Convert all parameters in LayerNorm of model to float32.
+    """
+    for child in module.children():
+        if isinstance(child, LayerNorm):
+            child.weight.data = child.weight.data.float()
+            if child.bias is not None:
+                child.bias.data = child.bias.data.float()
+        else:
+            ln_to_fp32(child)
