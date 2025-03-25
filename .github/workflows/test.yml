@@ -67,3 +67,7 @@ jobs:
       - run: python test/test_transcribe.py load_hf_whisper
       - run: python test/test_align.py load_hf_whisper
       - run: python test/test_refine.py load_hf_whisper
+      - run: pip3 install .["mlx"] 'transformers<=4.46.3'
+      - run: python test/test_transcribe.py load_mlx_whisper
+      - run: python test/test_align.py load_mlx_whisper
+      - run: python test/test_refine.py load_mlx_whisper

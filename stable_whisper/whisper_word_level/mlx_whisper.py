@@ -27,7 +27,7 @@ MLX_MODELS = {
 }
 
 
-def load_mlx_model(model_name: str, dtype=None):
+def load_mlx_model(model_name: str, dtype=None, **model_kwargs):
     from mlx_whisper import load_models
     import mlx.core as mx
 
@@ -42,9 +42,9 @@ def load_mlx_model(model_name: str, dtype=None):
 
 class WhisperMLX:
 
-    def __init__(self, model_name: str, dtype=None):
+    def __init__(self, model_name: str, dtype=None, **model_kwargs):
         self._model_name = model_name
-        self._model = load_mlx_model(self._model_name, dtype=dtype)
+        self._model = load_mlx_model(self._model_name, dtype=dtype, **model_kwargs)
         self._model_name = getattr(self._model, 'name_or_path', self._model_name)
 
     @property
@@ -275,5 +275,5 @@ class WhisperMLX:
     refine = refine
 
 
-def load_mlx_whisper(model_name: str, dtype=None):
-    return WhisperMLX(model_name, dtype=dtype)
+def load_mlx_whisper(model_name: str, dtype=None, **model_kwargs):
+    return WhisperMLX(model_name, dtype=dtype, **model_kwargs)
