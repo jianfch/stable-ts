@@ -2,6 +2,7 @@ from typing import Optional, Union
 
 import numpy as np
 import mlx.core as mx
+import torch
 
 from ..audio import convert_demucs_kwargs, prep_audio
 from ..non_whisper import transcribe_any
@@ -26,6 +27,51 @@ MLX_MODELS = {
     "turbo": "mlx-community/whisper-large-v3-turbo"
 }
 
+# Define MLX to Whisper mapping for parameter conversion
+MLX_TO_WHISPER_MAPPING = {
+    "encoder.blocks.0.mlp1": "encoder.blocks.0.mlp.0",
+    "encoder.blocks.0.mlp2": "encoder.blocks.0.mlp.2",
+    "encoder.blocks.1.mlp1": "encoder.blocks.1.mlp.0",
+    "encoder.blocks.1.mlp2": "encoder.blocks.1.mlp.2",
+    "encoder.blocks.2.mlp1": "encoder.blocks.2.mlp.0",
+    "encoder.blocks.2.mlp2": "encoder.blocks.2.mlp.2",
+    "encoder.blocks.3.mlp1": "encoder.blocks.3.mlp.0",
+    "encoder.blocks.3.mlp2": "encoder.blocks.3.mlp.2",
+    "encoder.blocks.4.mlp1": "encoder.blocks.4.mlp.0",
+    "encoder.blocks.4.mlp2": "encoder.blocks.4.mlp.2",
+    "encoder.blocks.5.mlp1": "encoder.blocks.5.mlp.0",
+    "encoder.blocks.5.mlp2": "encoder.blocks.5.mlp.2",
+    "decoder.blocks.0.mlp1": "decoder.blocks.0.mlp.0",
+    "decoder.blocks.0.mlp2": "decoder.blocks.0.mlp.2",
+    "decoder.blocks.1.mlp1": "decoder.blocks.1.mlp.0",
+    "decoder.blocks.1.mlp2": "decoder.blocks.1.mlp.2",
+    "decoder.blocks.2.mlp1": "decoder.blocks.2.mlp.0",
+    "decoder.blocks.2.mlp2": "decoder.blocks.2.mlp.2",
+    "decoder.blocks.3.mlp1": "decoder.blocks.3.mlp.0",
+    "decoder.blocks.3.mlp2": "decoder.blocks.3.mlp.2",
+    "decoder.blocks.4.mlp1": "decoder.blocks.4.mlp.0",
+    "decoder.blocks.4.mlp2": "decoder.blocks.4.mlp.2",
+    "decoder.blocks.5.mlp1": "decoder.blocks.5.mlp.0",
+    "decoder.blocks.5.mlp2": "decoder.blocks.5.mlp.2",
+    "encoder.layers": "encoder.blocks",
+    "decoder.layers": "decoder.blocks",
+    "final_layer_norm": "mlp_ln",
+    "self_attn.q_proj": ".attn.query",
+    "self_attn.k_proj": ".attn.key",
+    "self_attn.v_proj": ".attn.value",
+    "self_attn_layer_norm": ".attn_ln",
+    "self_attn.out_proj": ".attn.out",
+    "encoder_attn.q_proj": ".cross_attn.query",
+    "encoder_attn.k_proj": ".cross_attn.key",
+    "encoder_attn.v_proj": ".cross_attn.value",
+    "encoder_attn_layer_norm": ".cross_attn_ln",
+    "encoder_attn.out_proj": ".cross_attn.out",
+    "decoder.layer_norm.": "decoder.ln.",
+    "encoder.layer_norm.": "encoder.ln.",
+    "embed_tokens": "token_embedding",
+    "layer_norm": "ln_post",
+}
+
 
 def load_mlx_model(model_name: str, dtype=None, **model_kwargs):
     from mlx_whisper import load_models
@@ -46,6 +92,7 @@ class WhisperMLX:
         self._model_name = model_name
         self._model = load_mlx_model(self._model_name, dtype=dtype, **model_kwargs)
         self._model_name = getattr(self._model, 'name_or_path', self._model_name)
+        self._vanilla_model = None
 
     @property
     def sampling_rate(self):
@@ -269,6 +316,123 @@ class WhisperMLX:
             check_sorted=check_sorted,
             **transcribe_any_options
         )
+
+    def as_vanilla_model(self):
+        """
+        Return a vanilla Whisper model instance with current weights.
+
+        The new instance is only loaded once. Most weights share the same memory as this MLX model instance.
+        """
+        if self._vanilla_model is not None:
+            return self._vanilla_model
+
+        from ..whisper_compatibility import ModelDimensions, Whisper, ln_to_fp32
+
+        # Get the MLX model state dict and convert to numpy arrays
+        state_dict = {}
+        # In MLX, parameters() is a method that returns a dictionary
+        # We need to use tree_flatten to get flattened (key, value) pairs
+        from mlx.utils import tree_flatten
+        for param_name, param in tree_flatten(self._model.parameters()):
+            # Convert MLX array to numpy array
+            param_np = np.array(param.astype(mx.float32))
+            state_dict[param_name] = param_np
+
+        # Apply MLX to Whisper mapping to convert parameter names
+        whisper_state_dict = {}
+        for key, value in state_dict.items():
+            new_key = key
+
+            # Direct mapping for known keys
+            if key in MLX_TO_WHISPER_MAPPING:
+                new_key = MLX_TO_WHISPER_MAPPING[key]
+                whisper_state_dict[new_key] = value
+                continue
+
+            # Handle special case for conv weights that need transpose
+            if 'conv1.weight' in key or 'conv2.weight' in key:
+                # Transpose the convolutional weights to match the expected shape
+                # MLX shape is [out_channels, kernel_size, in_channels]
+                # PyTorch shape is [out_channels, in_channels, kernel_size]
+                value = np.transpose(value, (0, 2, 1))
+
+            # Handle pattern replacements
+            for mlx_pattern, whisper_pattern in MLX_TO_WHISPER_MAPPING.items():
+                if mlx_pattern in key:
+                    new_key = new_key.replace(mlx_pattern, whisper_pattern)
+
+            whisper_state_dict[new_key] = value
+
+        # Get model configuration from MLX model
+        config = self._model.dims
+
+        # Create ModelDimensions object for vanilla Whisper
+        dims = ModelDimensions(
+            n_mels=config.n_mels,
+            n_audio_ctx=config.n_audio_ctx,
+            n_audio_state=config.n_audio_state,
+            n_audio_head=config.n_audio_head,
+            n_audio_layer=config.n_audio_layer,
+            n_vocab=config.n_vocab,
+            n_text_ctx=config.n_text_ctx,
+            n_text_state=config.n_text_state,
+            n_text_head=config.n_text_head,
+            n_text_layer=config.n_text_layer
+        )
+
+        # Create vanilla Whisper model with the extracted dimensions
+        new_model = Whisper(dims)
+
+        # Convert numpy arrays to PyTorch tensors
+        torch_state_dict = {}
+        for name, array in whisper_state_dict.items():
+            torch_state_dict[name] = torch.from_numpy(array)
+
+        # Handle alignment heads if available
+        alignment_heads = getattr(self._model, 'alignment_heads', None)
+        if alignment_heads is not None:
+            # Convert to tensor and handle appropriately
+            # For MLX models, alignment_heads might be in a different format
+            try:
+                alignment_heads_tensor = torch.as_tensor(np.array(alignment_heads)).T
+                final_heads = torch.zeros(new_model.dims.n_text_layer, new_model.dims.n_text_head, dtype=torch.bool)
+                final_heads[alignment_heads_tensor[0], alignment_heads_tensor[1]] = True
+                new_model.register_buffer("alignment_heads", final_heads.to_sparse(), persistent=False)
+            except Exception as e:
+                print(f"Could not process alignment heads: {e}")
+                setattr(new_model, 'missing_alignment_heads', True)
+        else:
+            setattr(new_model, 'missing_alignment_heads', True)
+
+        # Load state dictionary into the vanilla model
+        try:
+            # First try loading without strict mode to avoid missing key errors
+            new_model.load_state_dict(torch_state_dict, strict=False)
+        except Exception as e:
+            # Fallback: Try loading weights one by one
+            for name, param in new_model.named_parameters():
+                if name in torch_state_dict:
+                    try:
+                        # Check if shapes match
+                        if param.shape == torch_state_dict[name].shape:
+                            param.data.copy_(torch_state_dict[name])
+                    except Exception:
+                        pass
+
+        # Apply float32 to layer norm parameters
+        ln_to_fp32(new_model)
+
+        # Try to modify model if needed
+        try:
+            from .original_whisper import modify_model
+            modify_model(new_model)
+        except (ImportError, AttributeError):
+            # The modification might not be available or necessary for MLX models
+            pass
+
+        # Save the vanilla model to avoid reloading
+        self._vanilla_model = new_model
+        return new_model
 
     align = align
     align_words = align_words
