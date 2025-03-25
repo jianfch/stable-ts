@@ -80,8 +80,11 @@ def load_hf_pipe(model_name: str, device: str = None, flash: bool = False, **pip
     if not flash:
         try:
             model = model.to_bettertransformer()
-        except ValueError:
-            pass
+        except (ValueError, ImportError) as e:
+            import warnings
+            warnings.warn(
+                f'Failed convert model to BetterTransformer due to: {e}'
+            )
 
     final_pipe_kwargs = dict(
         task="automatic-speech-recognition",
@@ -147,6 +150,8 @@ class WhisperHF:
             pipe_kwargs['batch_size'] = batch_size
         output = self._pipe(audio, **pipe_kwargs)
         result = output['chunks']
+        if not language and not self._pipe.model.generation_config.is_multilingual:
+            language = 'en'
         if not language and result and 'language' in result[0]:
             language = result[0]['language']
         if verbose is not None:
@@ -356,7 +361,10 @@ class WhisperHF:
             new_model.register_buffer("alignment_heads", final_heads.to_sparse(), persistent=False)
         else:
             setattr(new_model, 'missing_alignment_heads', True)
-        new_model.load_state_dict(state_dict, strict=True, assign=True)
+        try:
+            new_model.load_state_dict(state_dict, strict=True, assign=True)
+        except TypeError:
+            new_model.load_state_dict(state_dict, strict=True)
         new_model.to(device=self._pipe.model.device)
         ln_to_fp32(new_model)
         modify_model(new_model)
