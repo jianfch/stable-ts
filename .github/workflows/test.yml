@@ -16,34 +16,54 @@ jobs:
           - python-version: '3.8'
             pytorch-version: 1.10.1
             numpy-requirement: "'numpy<2'"
+            tokenizers-requirement: "'tokenizers<=0.20.3'"
           - python-version: '3.8'
             pytorch-version: 1.13.1
             numpy-requirement: "'numpy<2'"
+            tokenizers-requirement: "'tokenizers<=0.20.3'"
           - python-version: '3.8'
             pytorch-version: 2.0.1
             numpy-requirement: "'numpy<2'"
+            tokenizers-requirement: "'tokenizers<=0.20.3'"
           - python-version: '3.9'
             pytorch-version: 2.1.2
             numpy-requirement: "'numpy<2'"
+            tokenizers-requirement: "'tokenizers'"
           - python-version: '3.10'
             pytorch-version: 2.2.2
             numpy-requirement: "'numpy<2'"
+            tokenizers-requirement: "'tokenizers'"
           - python-version: '3.11'
             pytorch-version: 2.3.1
             numpy-requirement: "'numpy'"
+            tokenizers-requirement: "'tokenizers'"
           - python-version: '3.12'
             pytorch-version: 2.4.1
             numpy-requirement: "'numpy'"
+            tokenizers-requirement: "'tokenizers'"
           - python-version: '3.12'
             pytorch-version: 2.5.0
             numpy-requirement: "'numpy'"
+            tokenizers-requirement: "'tokenizers'"
+          - python-version: '3.12'
+            pytorch-version: 2.6.0
+            numpy-requirement: "'numpy'"
+            tokenizers-requirement: "'tokenizers'"
     steps:
       - uses: conda-incubator/setup-miniconda@v3
       - run: conda install -n test ffmpeg python=${{ matrix.python-version }}
       - uses: actions/checkout@v4
       - run: echo "$CONDA/envs/test/bin" >> $GITHUB_PATH
-      - run: pip3 install .["dev"] ${{ matrix.numpy-requirement }} torch==${{ matrix.pytorch-version }}+cpu --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+      - run: pip3 install . ${{ matrix.numpy-requirement }} torch==${{ matrix.pytorch-version }}+cpu --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
       - run: python test/test_transcribe.py
       - run: python test/test_align.py
       - run: python test/test_refine.py
       - run: python test/test_locate.py
+      - run: pip3 install .["fw"] ${{ matrix.tokenizers-requirement }}
+      - run: python test/test_transcribe.py load_faster_whisper
+      - run: python test/test_align.py load_faster_whisper
+      - run: python test/test_refine.py load_faster_whisper
+      - run: pip3 install .["hf"] 'transformers<=4.46.3'
+      - run: python test/test_transcribe.py load_hf_whisper
+      - run: python test/test_align.py load_hf_whisper
+      - run: python test/test_refine.py load_hf_whisper
