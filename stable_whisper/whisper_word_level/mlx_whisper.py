@@ -4,7 +4,6 @@ from typing import Optional, Union
 from functools import lru_cache
 
 import numpy as np
-import mlx.core as mx
 
 from ..audio import convert_demucs_kwargs, prep_audio
 from ..non_whisper import transcribe_any
@@ -62,8 +61,6 @@ def load_mlx_model(model_name: str, dtype=None):
     from mlx_whisper import load_models
 
     model_id = MLX_MODELS.get(model_name, model_name)
-    if dtype is None:
-        dtype = mx.float32
 
     return load_models.load_model(model_id, dtype=dtype)
 
@@ -186,6 +183,7 @@ class WhisperMLX:
             print(f'Transcribing with MLX Whisper ({model_path})...')
 
         if isinstance(audio, np.ndarray):
+            import mlx.core as mx
             audio_mx = mx.array(audio)
         else:
             audio_mx = audio
@@ -316,6 +314,7 @@ class WhisperMLX:
 
 
 def load_mlx_whisper(model_name: str, dtype=None, **model_kwargs):
+    import mlx.core as mx
     if dtype is None:
         dtype = mx.float32
 
