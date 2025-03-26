@@ -374,7 +374,8 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                              '(https://huggingface.co/openai/whisper-large-v3); '
                              'note: some features may not be available')
     parser.add_argument('--mlx_whisper', '-mlx', action='store_true',
-                        help='whether to use mlx-whisper (https://huggingface.co/mlx-community/whisper-large-v3-turbo); '
+                        help='whether to use mlx-whisper '
+                             '(https://github.com/ml-explore/mlx-examples/tree/main/whisper); '
                              'note: some features may not be available')
 
     parser.add_argument('--persist', '-p', action='store_true',

@@ -423,10 +423,13 @@ def get_whisper_alignment_func(
             )
             return [w for seg in temp_segments for w in seg['words']]
 
-
     elif model_type == 'mlx':
-        from mlx_whisper.audio import N_FRAMES as MLX_N_FRAMES, SAMPLE_RATE as MLX_SAMPLE_RATE, log_mel_spectrogram as log_mel_spectrogram_mx, \
+        from mlx_whisper.audio import (
+            N_FRAMES as MLX_N_FRAMES,
+            SAMPLE_RATE as MLX_SAMPLE_RATE,
+            log_mel_spectrogram as log_mel_spectrogram_mx,
             pad_or_trim as pad_or_trim_mx
+        )
         import mlx.core as mx
         import mlx_whisper.timing as timing
 
@@ -664,8 +667,11 @@ def get_whisper_refinement_func(
             return token_probs
 
     elif model_type == 'mlx':
-        from mlx_whisper.audio import N_FRAMES_MLX, log_mel_spectrogram as log_mel_spectrogram_mx, \
+        from mlx_whisper.audio import (
+            N_FRAMES_MLX,
+            log_mel_spectrogram as log_mel_spectrogram_mx,
             pad_or_trim as pad_or_trim_mx
+        )
         import mlx.core as mx
 
         def inference_func(audio_batch_torch: torch.Tensor, tokens: List[int]) -> torch.Tensor:

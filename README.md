@@ -537,9 +537,9 @@ stable-ts audio.mp3 -o audio.srt -hw
 </details>
 
 <details>
-<summary>MLX Whisper for Apple GPU's</summary>
+<summary>MLX Whisper (on Apple Silicon)</summary>
 
-Transcribe faster on Apple devices with [MLX Whisper](https://huggingface.co/mlx-community/whisper-large-v3-turbo):
+Transcribe faster on Apple devices with [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper):
 ```
 pip install -U stable-ts[mlx]
 ```
@@ -549,10 +549,6 @@ import stable_whisper
 
 model = stable_whisper.load_mlx_whisper('base')
 result = model.transcribe('audio.mp3')
-```
-Supports the [various versions on Hugging Face](https://huggingface.co/models?sort=downloads&search=mlx-community%2Fwhisper&sort=downloads):
-```python
-model = stable_whisper.load_hf_whisper('mlx-community/whisper-base.en-mlx')
 ```
 
 
