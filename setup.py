@@ -38,6 +38,9 @@ setup(
             "transformers>=4.23.0",
             "optimum",
             "accelerate"
+        ],
+        "mlx": [
+            "mlx-whisper"
         ]
     },
     entry_points={

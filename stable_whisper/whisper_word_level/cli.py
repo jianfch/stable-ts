@@ -52,7 +52,7 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             from whisper import available_models
         elif is_faster_whisper:
             from faster_whisper.utils import available_models
-        _models = None if is_hf_whisper or available_models is None else available_models()
+        _models = None if is_hf_whisper or is_mlx_whisper or available_models is None else available_models()
 
         if not _models or name in _models or os.path.exists(name):
             return name
@@ -373,6 +373,10 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                              ' and even more speed with Flash Attention enabled on supported GPUs'
                              '(https://huggingface.co/openai/whisper-large-v3); '
                              'note: some features may not be available')
+    parser.add_argument('--mlx_whisper', '-mlx', action='store_true',
+                        help='whether to use mlx-whisper '
+                             '(https://github.com/ml-explore/mlx-examples/tree/main/whisper); '
+                             'note: some features may not be available')
 
     parser.add_argument('--persist', '-p', action='store_true',
                         help='Keep previous model loaded for the future sets of commands in the same CLI instance')
@@ -403,12 +407,14 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             if '--model' not in args and '-m' not in args:
                 args.extend(['-m', _cache['model']['name']])
             model_type = _cache['model']['type']
-            type_arg = '--faster_whisper' in args or '-fw' in args or '--huggingface_whisper' in args or '-hw' in args
+            type_arg = '--faster_whisper' in args or '-fw' in args or '--huggingface_whisper' in args or '-hw' in args or '--mlx_whisper' in args or '-mlx' in args
             if not type_arg:
                 if model_type == 'Faster-Whisper':
                     args.append('-fw')
                 elif model_type == 'Hugging Face Whisper':
                     args.append('-hw')
+                elif model_type == 'MLX Whisper':
+                    args.append('-mlx')
 
         _, invalid_args = parser.parse_known_args(args)
         if invalid_args:
@@ -423,9 +429,12 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
         raise ValueError('langauge is required for --align / --locate')
 
     is_faster_whisper = args.pop('faster_whisper')
+    is_mlx_whisper = args.pop('mlx_whisper')
     is_hf_whisper = args.pop('huggingface_whisper')
     assert not (is_faster_whisper and is_hf_whisper), f'--huggingface_whisper cannot be used with --faster_whisper'
-    is_original_whisper = not (is_faster_whisper or is_hf_whisper)
+    assert not (is_faster_whisper and is_mlx_whisper), f'--mlx_whisper cannot be used with --faster_whisper'
+    assert not (is_hf_whisper and is_mlx_whisper), f'--mlx_whisper cannot be used with --huggingface_whisper'
+    is_original_whisper = not (is_faster_whisper or is_hf_whisper or is_mlx_whisper)
     args['language'] = valid_language(args['language'])
     model_name: str = valid_model_name(args.pop("model"))
     model_dir: str = args.pop("model_dir")
@@ -463,6 +472,10 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             model_type_name = 'Faster-Whisper'
             from .faster_whisper import load_faster_whisper as load_model_func
             model_name_kwarg = dict(model_size_or_path=model_name)
+        elif is_mlx_whisper:
+            model_type_name = 'MLX Whisper'
+            from .mlx_whisper import load_mlx_whisper as load_model_func
+            model_name_kwarg = dict(model_name=model_name)
         else:
             model_type_name = 'Hugging Face Whisper'
             from .hf_whisper import load_hf_whisper as load_model_func

@@ -173,6 +173,7 @@ def align(
     """
     model = as_vanilla(model)
     is_faster_model = model.__module__.startswith('faster_whisper.')
+    is_mlx_model = model.__module__.startswith('mlx_whisper.')
     if not is_faster_model:
         warn_compatibility_issues(whisper, ignore_compatibility)
     max_token_step = (model.max_length if is_faster_model else model.dims.n_text_ctx) - 6
@@ -185,7 +186,7 @@ def align(
 
     options = AllOptions(options, vanilla_align=not is_faster_model)
     split_words_by_space = getattr(tokenizer, 'language_code', tokenizer.language) not in {"zh", "ja", "th", "lo", "my"}
-    model_type = 'fw' if is_faster_model else None
+    model_type = 'fw' if is_faster_model else 'mlx' if is_mlx_model else None
     inference_func = get_whisper_alignment_func(model, tokenizer, model_type, options)
 
     aligner = Aligner(
@@ -336,6 +337,7 @@ def align_words(
     """
     model = as_vanilla(model)
     is_faster_model = model.__module__.startswith('faster_whisper.')
+    is_mlx_model = model.__module__.startswith('mlx_whisper.')
     if not is_faster_model:
         warn_compatibility_issues(whisper, ignore_compatibility)
     tokenizer, supported_languages = get_alignment_tokenizer(model, is_faster_model, result, language, tokenizer)
@@ -343,7 +345,7 @@ def align_words(
     options = AllOptions(options)
     split_words_by_space = getattr(tokenizer, 'language_code', tokenizer.language) not in {"zh", "ja", "th", "lo", "my"}
     max_segment_tokens = model.max_length if is_faster_model else model.dims.n_text_ctx
-    inference_func = get_whisper_alignment_func(model, tokenizer, 'fw' if is_faster_model else None, options)
+    inference_func = get_whisper_alignment_func(model, tokenizer, 'fw' if is_faster_model else 'mlx' if is_mlx_model else None, options)
 
     aligner = Aligner(
         inference_func=inference_func,
@@ -393,7 +395,7 @@ def get_whisper_alignment_func(
         model_type: Optional[str] = None,
         options: Optional[AllOptions] = None
 ):
-    assert model_type in (None, 'fw')
+    assert model_type in (None, 'fw', 'mlx')
 
     if model_type is None:
         def compute_timestamps(audio_segment: torch.Tensor, word_tokens: List[WordToken]) -> List[dict]:
@@ -420,6 +422,53 @@ def get_whisper_alignment_func(
                 dynamic_heads=options.align.dynamic_heads
             )
             return [w for seg in temp_segments for w in seg['words']]
+
+    elif model_type == 'mlx':
+        from mlx_whisper.audio import (
+            N_FRAMES as MLX_N_FRAMES,
+            SAMPLE_RATE as MLX_SAMPLE_RATE,
+            log_mel_spectrogram as log_mel_spectrogram_mx,
+            pad_or_trim as pad_or_trim_mx
+        )
+        import mlx.core as mx
+        import mlx_whisper.timing as timing
+
+        def compute_timestamps(audio_segment_torch: torch.Tensor, word_tokens: List[WordToken]) -> List[dict]:
+            audio_segment_np = audio_segment_torch.squeeze().numpy().astype('float32')
+            audio_segment_mx = mx.array(audio_segment_np)
+
+            segment_samples = audio_segment_mx.shape[-1]
+
+            temp_segment = dict(
+                seek=0,
+                start=0.0,
+                end=round(segment_samples / MLX_SAMPLE_RATE, 3),
+                tokens=[t for wt in word_tokens for t in wt.tokens],
+                words=[]
+            )
+
+            mel_segments_raw = log_mel_spectrogram_mx(
+                audio=np.array(audio_segment_mx),
+                n_mels=model.dims.n_mels,
+                padding=0
+            )
+
+            num_frames_unpadded = mel_segments_raw.shape[0]
+
+            mel_segments_padded_time = pad_or_trim_mx(mel_segments_raw.T, MLX_N_FRAMES)
+
+            mel_segments_nlc = mel_segments_padded_time.T
+
+            timing.add_word_timestamps(
+                segments=[temp_segment],
+                model=model,
+                tokenizer=tokenizer,
+                mel=mel_segments_nlc,
+                num_frames=num_frames_unpadded,
+                last_speech_timestamp=0.0
+            )
+
+            return temp_segment.get('words', [])
 
     else:
         from .whisper_compatibility import is_faster_whisper_on_pt
@@ -548,6 +597,7 @@ def refine(
     """
     model = as_vanilla(model)
     is_faster_model = model.__module__.startswith('faster_whisper.')
+    is_mlx_model = model.__module__.startswith('mlx_whisper')
     if result and (not result.has_words or any(word.probability is None for word in result.all_words())):
         if not result.language:
             raise RuntimeError(f'cannot align words with result missing language')
@@ -558,7 +608,7 @@ def refine(
             word.tokens = tokenizer.encode(word.word)
 
     options = AllOptions(options, post=False, silence=False, align=False)
-    model_type = 'fw' if is_faster_model else None
+    model_type = 'fw' if is_faster_model else 'mlx' if is_mlx_model else None
     inference_func = get_whisper_refinement_func(model, tokenizer, model_type, single_batch)
     max_inference_tokens = (model.max_length if is_faster_model else model.dims.n_text_ctx) - 6
 
@@ -588,7 +638,7 @@ def get_whisper_refinement_func(
         model_type: Optional[str] = None,
         single_batch: bool = False
 ):
-    assert model_type in (None, 'fw')
+    assert model_type in (None, 'fw', 'mlx')
 
     if model_type is None:
         def inference_func(audio_segment: torch, tokens: List[int]) -> torch.Tensor:
@@ -616,6 +666,56 @@ def get_whisper_refinement_func(
             token_probs = sampled_logits.softmax(dim=-1)
             return token_probs
 
+    elif model_type == 'mlx':
+        from mlx_whisper.audio import (
+            N_FRAMES_MLX,
+            log_mel_spectrogram as log_mel_spectrogram_mx,
+            pad_or_trim as pad_or_trim_mx
+        )
+        import mlx.core as mx
+
+        def inference_func(audio_batch_torch: torch.Tensor, tokens: List[int]) -> torch.Tensor:
+            input_tokens_mx = mx.array(
+                [
+                    *tokenizer.sot_sequence,
+                    tokenizer.no_timestamps,
+                    *tokens,
+                    tokenizer.eot,
+                ]
+            )
+
+            audio_batch_np = audio_batch_torch.numpy().astype('float32')
+            audio_batch_mx = mx.array(audio_batch_np)
+
+            mel_list = []
+            for audio_segment_mx in audio_batch_mx:
+                mel_raw = log_mel_spectrogram_mx(audio=np.array(audio_segment_mx), n_mels=model.dims.n_mels, padding=0)
+
+                mel_transposed = mel_raw.T
+
+                mel_padded_cl = pad_or_trim_mx(mel_transposed, N_FRAMES_MLX)
+
+                mel_nlc = mel_padded_cl.T
+                mel_list.append(mel_nlc)
+
+            mel_batch_nlc = mx.stack(mel_list, axis=0)
+
+            logits_list = []
+            for single_mel_nlc in mel_batch_nlc:
+                logits_single = model(single_mel_nlc[None], input_tokens_mx[None])
+                logits_list.append(logits_single)
+
+            logits = mx.concatenate(logits_list, axis=0)
+
+            sot_len = len(tokenizer.sot_sequence)
+            start_idx = sot_len + 1
+            end_idx = start_idx + len(tokens)
+
+            sampled_logits = logits[:, start_idx:end_idx, :tokenizer.eot]
+            token_probs = mx.softmax(sampled_logits, axis=-1)
+
+            token_probs_np = np.array(token_probs, copy=True)
+            return torch.from_numpy(token_probs_np)
     else:
         from .whisper_compatibility import is_faster_whisper_on_pt
         from faster_whisper.version import __version__ as fw_ver

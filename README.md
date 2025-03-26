@@ -536,6 +536,32 @@ stable-ts audio.mp3 -o audio.srt -hw
 
 </details>
 
+<details>
+<summary>MLX Whisper (on Apple Silicon)</summary>
+
+Transcribe faster on Apple devices with [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper):
+```
+pip install -U stable-ts[mlx]
+```
+
+```python
+import stable_whisper
+
+model = stable_whisper.load_mlx_whisper('base')
+result = model.transcribe('audio.mp3')
+```
+
+
+<details>
+<summary>CLI</summary>
+
+```commandline
+stable-ts audio.mp3 -o audio.srt -mlx
+```
+</details>
+
+</details>
+
 ### Output
 
 https://github.com/jianfch/stable-ts/assets/28970749/c22dcdf9-79cb-485a-ae38-184d006e513e

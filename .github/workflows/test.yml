@@ -67,3 +67,22 @@ jobs:
       - run: python test/test_transcribe.py load_hf_whisper
       - run: python test/test_align.py load_hf_whisper
       - run: python test/test_refine.py load_hf_whisper
+
+  mlx-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install FFmpeg
+        run: brew install ffmpeg
+      - name: Install Package with MLX dependencies
+        run: pip3 install .["mlx"]
+      - name: Run MLX transcribe tests
+        run: python test/test_transcribe.py load_mlx_whisper
+      - name: Run MLX align tests
+        run: python test/test_align.py load_mlx_whisper
+      - name: Run MLX refine tests
+        run: python test/test_refine.py load_mlx_whisper
