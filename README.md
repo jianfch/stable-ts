@@ -381,6 +381,9 @@ pip install -U stable-ts[fw]
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe('audio.mp3')
 
+# faster transcription with `BatchedInferencePipeline`
+result = model.transcribe('audio.mp3', batch_size=16)
+
 # For versions < 2.18.0:
 result = model.transcribe_stable('audio.mp3')
 ```
