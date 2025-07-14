@@ -18,7 +18,7 @@ setup(
     description="Modifies OpenAI's Whisper to produce more reliable timestamps.",
     long_description=read_me(),
     long_description_content_type='text/markdown',
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     author="Jian",
     url="https://github.com/jianfch/stable-ts",
     license="MIT",

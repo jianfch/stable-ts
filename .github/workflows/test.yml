@@ -15,18 +15,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - python-version: '3.8'
-            pytorch-version: 1.10.1
-            numpy-requirement: "'numpy<2'"
-            tokenizers-requirement: "'tokenizers<=0.20.3'"
-          - python-version: '3.8'
-            pytorch-version: 1.13.1
-            numpy-requirement: "'numpy<2'"
-            tokenizers-requirement: "'tokenizers<=0.20.3'"
-          - python-version: '3.8'
-            pytorch-version: 2.0.1
-            numpy-requirement: "'numpy<2'"
-            tokenizers-requirement: "'tokenizers<=0.20.3'"
           - python-version: '3.9'
             pytorch-version: 2.1.2
             numpy-requirement: "'numpy<2'"
