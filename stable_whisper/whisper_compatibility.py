@@ -16,6 +16,7 @@ _COMPATIBLE_WHISPER_VERSIONS = (
     '20231117',
     '20240927',
     '20240930',
+    '20250625',
 )
 _required_whisper_ver = _COMPATIBLE_WHISPER_VERSIONS[-1]
 
