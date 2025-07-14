@@ -86,15 +86,6 @@ def load_hf_pipe(model_name: str, device: str = None, flash: bool = False, **pip
 
     processor = AutoProcessor.from_pretrained(model_id)
 
-    # if not flash:
-    #     try:
-    #         model = model.to_bettertransformer()
-    #     except (ValueError, ImportError) as e:
-    #         import warnings
-    #         warnings.warn(
-    #             f'Failed convert model to BetterTransformer due to: {e}'
-    #         )
-
     final_pipe_kwargs = dict(
         task="automatic-speech-recognition",
         model=model,
@@ -168,9 +159,9 @@ class WhisperHF:
         if not language and hasattr(output, 'get') and 'detected_language' in output:
             language = output['detected_language']
         if not language:
-            # Use the pipeline's language detection by accessing the generated tokens
+            # HF Pipelines have broken language detection.
+            # Manually detect language by generating tokens from the first 10 seconds of the audio.
             try:
-                # Get the raw generated tokens from the model
                 import torch
                 sample_audio = audio[:int(self.sampling_rate * 10)]  # Use first 10 seconds
                 inputs = self._pipe.feature_extractor(sample_audio, sampling_rate=self.sampling_rate, return_tensors="pt")
