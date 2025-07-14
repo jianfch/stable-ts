@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - main
-      - backward
   pull_request:
     branches:
       - main
