@@ -63,7 +63,7 @@ jobs:
       - run: python test/test_transcribe.py load_faster_whisper
       - run: python test/test_align.py load_faster_whisper
       - run: python test/test_refine.py load_faster_whisper
-      - run: pip3 install .["hf"] 'transformers<=4.46.3'
+      - run: pip3 install .["hf"]
       - run: python test/test_transcribe.py load_hf_whisper
       - run: python test/test_align.py load_hf_whisper
       - run: python test/test_refine.py load_hf_whisper
