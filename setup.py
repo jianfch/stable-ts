@@ -28,14 +28,14 @@ setup(
         "torch",
         "torchaudio",
         "tqdm",
-        "openai-whisper>=20230314,<=20240930"
+        "openai-whisper>=20230314,<=20250625"
     ],
     extras_require={
         "fw": [
             "faster-whisper"
         ],
         "hf": [
-            "transformers>=4.23.0,<4.49",
+            "transformers>=4.23.0,<=4.46.3",
             "optimum",
             "accelerate"
         ],
