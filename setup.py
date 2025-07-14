@@ -35,7 +35,7 @@ setup(
             "faster-whisper"
         ],
         "hf": [
-            "transformers>=4.49",
+            "transformers>=4.23.0",
             "optimum",
             "accelerate"
         ],

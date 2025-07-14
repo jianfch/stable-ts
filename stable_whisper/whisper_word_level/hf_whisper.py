@@ -86,15 +86,6 @@ def load_hf_pipe(model_name: str, device: str = None, flash: bool = False, **pip
 
     processor = AutoProcessor.from_pretrained(model_id)
 
-    # if not flash:
-    #     try:
-    #         model = model.to_bettertransformer()
-    #     except (ValueError, ImportError) as e:
-    #         import warnings
-    #         warnings.warn(
-    #             f'Failed convert model to BetterTransformer due to: {e}'
-    #         )
-
     final_pipe_kwargs = dict(
         task="automatic-speech-recognition",
         model=model,
