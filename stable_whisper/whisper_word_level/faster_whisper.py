@@ -184,7 +184,10 @@ def _inner_transcribe(model, audio, verbose, **faster_transcribe_options):
         import io
         audio = io.BytesIO(audio)
     progress_callback = faster_transcribe_options.pop('progress_callback', None)
-    transcribe = model.transcribe_original if hasattr(model, 'transcribe_original') else model.transcribe
+    if 'batch_size' in faster_transcribe_options:
+        transcribe = model.batch_inference_pipeline.transcribe
+    else:
+        transcribe = model.transcribe_original if hasattr(model, 'transcribe_original') else model.transcribe
     segments, info = transcribe(audio, **faster_transcribe_options)
     language = LANGUAGES.get(info.language, info.language)
     if verbose is not None:
@@ -247,13 +250,15 @@ def load_faster_whisper(model_size_or_path: str, **model_init_options):
     faster_whisper.WhisperModel
         A modified instance of :class:`faster_whisper.WhisperModel`.
     """
-    from faster_whisper import WhisperModel
+    from faster_whisper import WhisperModel, BatchedInferencePipeline
     faster_model = WhisperModel(model_size_or_path, **model_init_options)
     faster_model.model_size_or_path = model_size_or_path
 
     faster_model.transcribe_original = faster_model.transcribe
     faster_model.transcribe = MethodType(faster_transcribe, faster_model)
     faster_model.transcribe_stable = MethodType(deprecated_transcribe, faster_model)
+    faster_model.batch_inference_pipeline = BatchedInferencePipeline(faster_model)
+
     from ..alignment import align, align_words, refine
     faster_model.align = MethodType(align, faster_model)
     faster_model.align_words = MethodType(align_words, faster_model)

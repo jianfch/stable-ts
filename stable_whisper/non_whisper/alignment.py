@@ -847,6 +847,7 @@ class Aligner:
             self._remaining_len += sum(len(w.word) for w in self._seg_word_tokens)
             self._all_word_tokens = self._seg_word_tokens + self._all_word_tokens
             self._curr_words = []
+            self._temp_data.word = None
         elif index != len(self._seg_word_tokens):  # redo from _idx
             self._remaining_len += sum(len(w.word) for w in self._seg_word_tokens[index:])
             self._all_word_tokens = self._seg_word_tokens[index:] + self._all_word_tokens

@@ -381,6 +381,9 @@ pip install -U stable-ts[fw]
 model = stable_whisper.load_faster_whisper('base')
 result = model.transcribe('audio.mp3')
 
+# faster transcription with `BatchedInferencePipeline`
+result = model.transcribe('audio.mp3', batch_size=16)
+
 # For versions < 2.18.0:
 result = model.transcribe_stable('audio.mp3')
 ```
@@ -531,6 +534,32 @@ model = stable_whisper.load_hf_whisper('openai/whisper-base.en')
 
 ```commandline
 stable-ts audio.mp3 -o audio.srt -hw
+```
+</details>
+
+</details>
+
+<details>
+<summary>MLX Whisper (on Apple Silicon)</summary>
+
+Transcribe faster on Apple devices with [MLX Whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper):
+```
+pip install -U stable-ts[mlx]
+```
+
+```python
+import stable_whisper
+
+model = stable_whisper.load_mlx_whisper('base')
+result = model.transcribe('audio.mp3')
+```
+
+
+<details>
+<summary>CLI</summary>
+
+```commandline
+stable-ts audio.mp3 -o audio.srt -mlx
 ```
 </details>
 
