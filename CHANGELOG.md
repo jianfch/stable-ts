@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## 2.19.1
+* fixed repetition of failed alignment word ([e46981e](https://github.com/jianfch/stable-ts/commit/e46981e9a07df50edd5ac525367f23a6d5f7d548))
+* added support for MLX-Whisper ([c125472](https://github.com/jianfch/stable-ts/commit/c12547261162fcf44777db173df28c288dbb338b))
+* added support for `faster_whisper.BatchedInferencePipeline` ([97b4bcd](https://github.com/jianfch/stable-ts/commit/97b4bcd20df50ac79aee18b2d3ab4ceda753734f))
+* updated README.md ([c125472](https://github.com/jianfch/stable-ts/commit/c12547261162fcf44777db173df28c288dbb338b), [97b4bcd](https://github.com/jianfch/stable-ts/commit/97b4bcd20df50ac79aee18b2d3ab4ceda753734f))
+* updated Whisper to 20250625 ([52533aa](https://github.com/jianfch/stable-ts/commit/52533aaa36fa1a78c53075e66388e5442df32641))
+* updated HuggingFace Transformers to <=4.47.1 ([d4334d5](https://github.com/jianfch/stable-ts/commit/d4334d55c323c6662f0720b432495b91e462fe22))
+
 ## 2.19.0
 * fixed `fill_in_gaps()` ([650cc4b](https://github.com/jianfch/stable-ts/commit/650cc4be7185d4fbf4bd9fb9bc7efc8d4d22ad5d))
 * fixed `align()` failing skip audio segment without speech ([cc2d6bf](https://github.com/jianfch/stable-ts/commit/cc2d6bf088e2b09b7be7337e83246289f34c0318))
