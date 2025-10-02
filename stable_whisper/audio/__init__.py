@@ -27,7 +27,7 @@ def get_denoiser_func(denoiser: Optional[str], key: str):
     if denoiser is None:
         return
     if denoiser not in SUPPORTED_DENOISERS:
-        raise NotImplementedError(f'"{denoiser}" is one of the supported denoisers: '
+        raise NotImplementedError(f'"{denoiser}" is not one of the supported denoisers: '
                                   f'{tuple(SUPPORTED_DENOISERS.keys())}.')
     assert key in ('run', 'load', 'access')
     return SUPPORTED_DENOISERS[denoiser][key]
