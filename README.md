@@ -261,6 +261,12 @@ Docstrings:
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    clip_timestamps : str or list of float
+        Comma-separated list start,end,start,end,... timestamps (in seconds) of clips to process.
+        The last end timestamp defaults to the end of the file.
+    resume : stable_whisper.result.WhisperResult or str or dict or list
+        Path/data of an unfinished transcription output to continue transciption from.
+        Use "+" as suffix of the path to resume from the end of second last segment (e.g "output-UNFINISHED.json+").
     decode_options
         Keyword arguments to construct class:`whisper.decode.DecodingOptions` instances.
 

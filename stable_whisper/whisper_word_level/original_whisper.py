@@ -16,7 +16,7 @@ from ..audio import AudioLoader, audioloader_not_supported, convert_demucs_kwarg
 from ..decode import decode_stable
 from ..stabilization import NonSpeechPredictor
 from ..timing import add_word_timestamps_stable
-from ..utils import safe_print, isolate_useful_options, update_options, exact_div
+from ..utils import safe_print, isolate_useful_options, update_options, exact_div, format_timestamp
 from ..whisper_compatibility import warn_compatibility_issues, get_tokenizer
 from ..default import get_min_word_dur, get_prepend_punctuations, get_append_punctuations
 
@@ -73,6 +73,7 @@ def transcribe_stable(
         extra_models: Optional[List["Whisper"]] = None,
         dynamic_heads: Optional[Union[bool, int, str]] = None,
         clip_timestamps: Optional[Union[str, List[float]]] = None,
+        resume: Union[WhisperResult, str, dict, list] = None,
         **decode_options) \
         -> WhisperResult:
     """
@@ -201,6 +202,9 @@ def transcribe_stable(
     clip_timestamps : str or list of float
         Comma-separated list start,end,start,end,... timestamps (in seconds) of clips to process.
         The last end timestamp defaults to the end of the file.
+    resume : stable_whisper.result.WhisperResult or str or dict or list
+        Path/data of an unfinished transcription output to continue transciption from.
+        Use "+" as suffix of the path to resume from the end of second last segment (e.g "output-UNFINISHED.json+").
     decode_options
         Keyword arguments to construct class:`whisper.decode.DecodingOptions` instances.
 
@@ -436,6 +440,28 @@ def transcribe_stable(
 
     with tqdm(total=initial_duration, unit='sec', disable=verbose is not False, desc=task.title()) as tqdm_pbar:
 
+        if resume is not None:
+            remove_last_seg = False
+            if not isinstance(resume, WhisperResult):
+                if isinstance(resume, str) and resume.endswith('+'):
+                    resume = resume[:-1]
+                    remove_last_seg = True
+                resume = WhisperResult(resume)
+            if resume and remove_last_seg:
+                del resume[-1]
+                resume.unfinished_start = -1.0
+            if resume.unfinished_start == -1.0:
+                resume_start = resume[-1].end if resume else 0.0
+            else:
+                resume_start = resume.unfinished_start
+            seek_sample = round(resume_start * SAMPLE_RATE)
+            tqdm_pbar.write(f'Resuming from {format_timestamp(resume_start)}')
+            decode_options["language"] = resume.language
+
+        interrupted_time = -1.0
+        segment_samples: int = 0
+        mel_segment: torch.Tensor = torch.zeros(0)
+
         def update_pbar(curr_total_duration=None):
             nonlocal audio_features
             audio_features = None
@@ -460,10 +486,11 @@ def transcribe_stable(
             update_seek()
             update_pbar()
 
-        while True:
+        def inner_transcribe():
+            nonlocal seek_sample, segment_samples, prompt_reset_since, mel_segment
             audio_segment, new_seek = audio.next_valid_chunk(seek_sample, N_SAMPLES)
             if audio_segment is None:
-                break
+                return 1
             if new_seek != seek_sample:
                 seek_sample = new_seek
                 update_pbar()
@@ -478,7 +505,7 @@ def transcribe_stable(
 
             if is_silent_segment:
                 fast_forward()
-                continue
+                return
 
             if nonspeech_skip and silence_preds['timings'] is not None:
                 silence_starts = silence_preds['timings'][0] - time_offset
@@ -490,7 +517,7 @@ def transcribe_stable(
                     if silence_starts[skip_idx] < min_word_dur or int(silence_starts[skip_idx] * SAMPLE_RATE) == 0:
                         segment_samples = round(silence_ends[skip_idx] * SAMPLE_RATE)
                         fast_forward()
-                        continue
+                        return
                     audio_segment = audio_segment[..., :int(silence_starts[skip_idx] * SAMPLE_RATE)]
                     segment_samples = audio_segment.shape[-1]
                     segment_duration = segment_samples / SAMPLE_RATE
@@ -513,7 +540,7 @@ def transcribe_stable(
 
                 if should_skip:
                     fast_forward()
-                    continue
+                    return
 
             current_segments = []
 
@@ -644,7 +671,7 @@ def transcribe_stable(
 
             if len(current_segments) == 0:
                 fast_forward()
-                continue
+                return
 
             if segment_silence_timing is not None:
                 for seg_i, segment in enumerate(current_segments):
@@ -677,8 +704,21 @@ def transcribe_stable(
 
             fast_forward()
 
+        while True:
+            try:
+                if inner_transcribe() is not None:
+                    break
+            except KeyboardInterrupt:
+                if all_segments:
+                    interrupted_time = all_segments[-1]['end']
+                curr_seek_time = seek_sample / SAMPLE_RATE
+                if curr_seek_time > interrupted_time:
+                    interrupted_time = curr_seek_time
+                tqdm_pbar.write(f'Interrupted at {format_timestamp(seek_sample / SAMPLE_RATE)}')
+                break
+
         # final update
-        update_pbar(seek_sample / SAMPLE_RATE)
+        update_pbar((seek_sample / SAMPLE_RATE) if interrupted_time == -1 else None)
 
     if model.device != torch.device('cpu'):
         torch.cuda.empty_cache()
@@ -696,17 +736,36 @@ def transcribe_stable(
         ),
         force_order=not word_timestamps
     )
-    if word_timestamps and regroup:
-        final_result.regroup(regroup)
 
     if time_scale is not None:
         final_result.rescale_time(1 / time_scale)
 
+    final_nonspeech_timings = nonspeech_predictor.nonspeech_timings if suppress_silence else None
+
+    if resume is not None:
+        if resume:
+            if final_result:
+                resume.fill_in_gaps(final_result, verbose=False)
+            if final_nonspeech_timings:
+                resume.update_nonspeech_sections(*final_nonspeech_timings, overwrite=False)
+            final_result = resume
+        else:
+            ns_starts = [sect['start'] for sect in resume.nonspeech_sections]
+            ns_ends = [sect['end'] for sect in resume.nonspeech_sections]
+            if final_nonspeech_timings:
+                ns_starts.extend(final_nonspeech_timings[0])
+                ns_ends.extend(final_nonspeech_timings[1])
+            final_result.update_nonspeech_sections(ns_starts, ns_ends, overwrite=True)
+    elif final_nonspeech_timings:
+        final_result.update_nonspeech_sections(*final_nonspeech_timings, overwrite=True)
+
+    if word_timestamps and regroup:
+        final_result.regroup(regroup)
+
+    final_result.unfinished_start = interrupted_time
+
     if len(final_result.text) == 0:
         warnings.warn(f'Failed to {task} audio. Result contains no text. ')
-
-    if suppress_silence and (final_nonspeech_timings := nonspeech_predictor.nonspeech_timings):
-        final_result.update_nonspeech_sections(*final_nonspeech_timings)
 
     return final_result
 

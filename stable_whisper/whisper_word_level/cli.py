@@ -129,6 +129,14 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                         help="output filepaths(s);"
                              "if not specified, auto-named output file(s) will be saved to "
                              "[output_dir] or current dir if not specified.")
+    parser.add_argument("--save_unfinished", "-su", action='store_true',
+                        help="whether to save unfinished outputs caused by KeyboardInterrupt; "
+                             "outputs are saved as JSON with suffix '-UNFINISHED.json'")
+    parser.add_argument("--resume_input", "-ri", nargs="+", type=str,
+                        help="JSON of unfinished output filepaths(s) to continue transcription from end of last word; "
+                             "use '+' as suffix to redo the last segment (e.g 'output-UNFINISHED.json+')")
+    parser.add_argument("--delete_resume", "-dr", action='store_true',
+                        help="whether to delete file(s) from '--resume_input'/'-ri' when transcription finishes")
     parser.add_argument("--model", '-m', default="base", type=str,
                         help="name of the Whisper model to use")
     parser.add_argument("--model_dir", type=str, default=None,
@@ -439,10 +447,13 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
     model_name: str = valid_model_name(args.pop("model"))
     model_dir: str = args.pop("model_dir")
     inputs: List[Union[str, torch.Tensor]] = args.pop("inputs")
+    resume_files: List[str] = args.pop("resume_input")
     outputs: List[str] = args.pop("output")
     output_dir: str = args.pop("output_dir")
     output_format = args.pop("output_format")
     overwrite: bool = args.pop("overwrite")
+    save_unfinished: bool = args.pop("save_unfinished")
+    delete_resume: bool = args.pop("delete_resume")
     no_stream = use_deprecated_args('no_stream', 'mel_first', pop=True, expected_default=False)
     args['stream'] = None if not no_stream else False
     if overwrite:
@@ -468,6 +479,12 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
         from .original_whisper import load_model as load_model_func
         model_name_kwarg = dict(name=model_name)
     else:
+        if save_unfinished:
+            raise NotImplementedError('--save_unfinished is only supported on vanilla Whisper models.')
+
+        if resume_files:
+            raise NotImplementedError('--resume_input is currently only supported on vanilla Whisper models.')
+
         if is_faster_whisper:
             model_type_name = 'Faster-Whisper'
             from .faster_whisper import load_faster_whisper as load_model_func
@@ -616,6 +633,10 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
     if args['vad'] and args['vad_onnx']:
         args['vad'] = dict(onnx=args['vad_onnx'])
 
+    if resume_files and len(inputs) != len(resume_files):
+        raise ValueError(f'--resume_input and inputs do not match in count. '
+                         f'Got {len(resume_files)} and {len(inputs)}')
+
     if debug:
         print('Input(s)  ->  Outputs(s)')
         for i, (input_audio, output_paths, alignment) in enumerate(zip(inputs, final_outputs, alignments)):
@@ -627,7 +648,11 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                     alignment = f' + text="{alignment}"'
                 else:
                     alignment = f' + "{alignment}"'
-            print(f'"{input_audio}"{alignment}  ->{dm_output}  {output_paths}')
+            if resume_files:
+                resume_info = f' + "{resume_files[i]}"'
+            else:
+                resume_info = ''
+            print(f'"{input_audio}"{resume_info}{alignment}  ->{dm_output}  {output_paths}')
         print('')
 
     if show_curr_task:
@@ -679,6 +704,8 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             model = _load_model()
             args['regroup'] = False
             args['audio'] = input_audio
+            if resume_files:
+                args['resume'] = resume_files[i]
             if denoiser_outputs:
                 args['denoiser_options']['save_path'] = denoiser_outputs[i]
             transcribe_method = args.get('transcribe_method')
@@ -739,6 +766,13 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             save_options = isolate_useful_options(args, save_method)
             update_options_with_args('save_option', save_options)
             call_method_with_options(save_method, save_options)
+
+        if result.unfinished_start != -1:
+            result.save_as_json(splitext(output_paths[0])[0] + '-UNFINISHED.json')
+            break
+        elif delete_resume and 'resume' in args and os.path.isfile(args['resume']):
+            os.remove(args['resume'])
+            print(f'Removed: {os.path.abspath(args["resume"])}')
 
 
 def cli(cmd: str = None):

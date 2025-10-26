@@ -938,7 +938,7 @@ class WhisperResult:
         self.ori_dict = result.get('ori_dict') or result
         self.language = self.ori_dict.get('language')
         self._regroup_history = result.get('regroup_history', '')
-        self._nonspeech_sections = result.get('nonspeech_sections', [])
+        self._nonspeech_sections = result.get('nonspeech_sections') or []
         segments = (result.get('segments', self.ori_dict.get('segments')) or {}).copy()
         self.segments = [Segment(**s, ignore_unused_args=True) for s in segments] if segments else []
         self._forced_order = force_order
@@ -947,6 +947,7 @@ class WhisperResult:
         self.raise_for_unsorted(check_sorted, show_unsorted)
         self.remove_no_word_segments(any(seg.has_words for seg in self.segments))
         self._ignore_special_periods = False
+        self.unfinished_start: float = result.get('unfinished', -1.0)
 
     def __getitem__(self, index: int) -> Segment:
         return self.segments[index]
@@ -1061,10 +1062,14 @@ class WhisperResult:
                       stacklevel=2)
         self.reassign_ids()
 
-    def update_nonspeech_sections(self, silent_starts, silent_ends):
-        self._nonspeech_sections = [
+    def update_nonspeech_sections(self, silent_starts, silent_ends, overwrite: bool = True):
+        nonspeech_sections = [
             dict(start=round(s, 3), end=round(e, 3)) for s, e in zip(silent_starts, silent_ends)
         ]
+        if overwrite:
+            self._nonspeech_sections = nonspeech_sections
+        else:
+            self._nonspeech_sections.extend(nonspeech_sections)
 
     def add_segments(
             self,
@@ -1397,7 +1402,8 @@ class WhisperResult:
                     language=self.language,
                     ori_dict=ori_dict,
                     regroup_history=self._regroup_history,
-                    nonspeech_sections=self._nonspeech_sections)
+                    nonspeech_sections=self._nonspeech_sections,
+                    unfinished=self.unfinished_start)
 
     def segments_to_dicts(self, reverse_text: Union[bool, tuple] = False):
         return [s.to_dict(reverse_text=reverse_text) for s in self.segments]
