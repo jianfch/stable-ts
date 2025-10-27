@@ -134,7 +134,8 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
                              "outputs are saved as JSON with suffix '-UNFINISHED.json'")
     parser.add_argument("--resume_input", "-ri", nargs="+", type=str,
                         help="JSON of unfinished output filepaths(s) to continue transcription from end of last word; "
-                             "use '+' as suffix to redo the last segment (e.g 'output-UNFINISHED.json+')")
+                             "use '+' as suffix to redo the last segment (e.g 'output-UNFINISHED.json+'); "
+                             "NOTE: this argument enables --save_unfinished/-su")
     parser.add_argument("--delete_resume", "-dr", action='store_true',
                         help="whether to delete file(s) from '--resume_input'/'-ri' when transcription finishes")
     parser.add_argument("--model", '-m', default="base", type=str,
@@ -452,7 +453,7 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
     output_dir: str = args.pop("output_dir")
     output_format = args.pop("output_format")
     overwrite: bool = args.pop("overwrite")
-    save_unfinished: bool = args.pop("save_unfinished")
+    save_unfinished: bool = args.pop("save_unfinished") or bool(resume_files)
     delete_resume: bool = args.pop("delete_resume")
     no_stream = use_deprecated_args('no_stream', 'mel_first', pop=True, expected_default=False)
     args['stream'] = None if not no_stream else False
@@ -767,8 +768,9 @@ def _cli(cmd: str = None, _cache: Dict[str, Union[bool, dict]] = None):
             update_options_with_args('save_option', save_options)
             call_method_with_options(save_method, save_options)
 
-        if result.unfinished_start != -1:
-            result.save_as_json(splitext(output_paths[0])[0] + '-UNFINISHED.json')
+        if (result.unfinished_start != -1) or (not delete_resume and resume_files):
+            resume_output = args['resume'] if resume_files else (splitext(output_paths[0])[0] + '-UNFINISHED.json')
+            result.save_as_json(resume_output)
             break
         elif delete_resume and 'resume' in args and os.path.isfile(args['resume']):
             os.remove(args['resume'])

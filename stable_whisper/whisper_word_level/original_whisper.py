@@ -745,7 +745,13 @@ def transcribe_stable(
     if resume is not None:
         if resume:
             if final_result:
-                resume.fill_in_gaps(final_result, verbose=False)
+                if resume.has_words:
+                    resume.fill_in_gaps(final_result, verbose=False)
+                else:
+                    max_resume_end = final_result[0].start
+                    while resume and resume[-1].end > max_resume_end:
+                        del resume[-1]
+                    resume.segments.extend(final_result.segments)
             if final_nonspeech_timings:
                 resume.update_nonspeech_sections(*final_nonspeech_timings, overwrite=False)
             final_result = resume
