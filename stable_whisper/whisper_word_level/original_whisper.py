@@ -72,6 +72,7 @@ def transcribe_stable(
         ignore_compatibility: bool = False,
         extra_models: Optional[List["Whisper"]] = None,
         dynamic_heads: Optional[Union[bool, int, str]] = None,
+        aligner: Union[str, dict] = 'legacy',
         clip_timestamps: Optional[Union[str, List[float]]] = None,
         resume: Union[WhisperResult, str, dict, list] = None,
         **decode_options) \
@@ -199,6 +200,8 @@ def transcribe_stable(
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    aligner : "legacy" or "new" or dict, default "legacy"
+        Algorithm for selecting attention heads for alignment. Use dictionary to specify keyword arguments for 'new'.
     clip_timestamps : str or list of float
         Comma-separated list start,end,start,end,... timestamps (in seconds) of clips to process.
         The last end timestamp defaults to the end of the file.
@@ -644,7 +647,8 @@ def transcribe_stable(
                     split_callback=split_callback,
                     gap_padding=gap_padding,
                     extra_models=extra_models,
-                    dynamic_heads=dynamic_heads
+                    dynamic_heads=dynamic_heads,
+                    aligner=aligner
                 )
 
                 for i in reversed(range(len(current_segments))):
@@ -673,6 +677,10 @@ def transcribe_stable(
                 fast_forward()
                 return
 
+            all_tokens.extend(
+                [token for segment in current_segments for token in segment["tokens"]]
+            )
+
             if segment_silence_timing is not None:
                 for seg_i, segment in enumerate(current_segments):
                     segment = Segment(**segment, ignore_unused_args=True).suppress_silence(
@@ -691,9 +699,6 @@ def transcribe_stable(
                     {"id": i, **segment}
                     for i, segment in enumerate(current_segments, start=len(all_segments))
                 ]
-            )
-            all_tokens.extend(
-                [token for segment in current_segments for token in segment["tokens"]]
             )
             if not single_timestamp_ending or avg_prob_threshold:
                 segment_samples = num_samples

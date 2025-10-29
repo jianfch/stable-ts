@@ -164,6 +164,7 @@ class AlignmentOptions(BasicOptions):
         self.presplit: Union[bool, List[str]] = self._pop('presplit', True)
         self.extra_models: Optional[list] = self._pop('extra_models', None)
         self.dynamic_heads: Optional[Union[bool, int, str]] = self._pop('dynamic_heads', None)
+        self.aligner: Union[str, dict] = self._pop('aligner', 'legacy')
 
     def to_non_vanilla(self):
         if self.extra_models:

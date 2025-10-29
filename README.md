@@ -261,6 +261,8 @@ Docstrings:
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    aligner : "legacy" or "new" or dict, default "legacy"
+        Algorithm for selecting attention heads for alignment. Use dictionary to specify keyword arguments for 'new'.
     clip_timestamps : str or list of float
         Comma-separated list start,end,start,end,... timestamps (in seconds) of clips to process.
         The last end timestamp defaults to the end of the file.
@@ -1007,6 +1009,8 @@ Docstring:
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    aligner : "legacy" or "new" or dict, default "legacy"
+        Algorithm for selecting attention heads for alignment. Use dictionary to specify keyword arguments for 'new'.
 
     Returns
     -------
@@ -1126,6 +1130,8 @@ Docstring:
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    aligner : "legacy" or "new" or dict, default "legacy"
+        Algorithm for selecting attention heads for alignment. Use dictionary to specify keyword arguments for 'new'.
     normalize_text : bool or dict, default True
         Whether to normalize text of each segment.
     inplace : bool, default True

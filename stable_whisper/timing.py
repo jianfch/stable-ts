@@ -112,26 +112,86 @@ def _compute_atten_weights(
     return weights
 
 
+def _compute_atten_weights_new(
+        model: "Whisper",
+        tokenizer: "Tokenizer",
+        text_tokens: List[int],
+        mel: torch.Tensor,
+        num_samples: int,
+        tokens: torch.tensor,
+        cache: dict,
+        medfilt_width: int = 7,
+        qk_scale: float = 1.0,
+        *,
+        topk=20,
+        w_colnorm=1,
+        w_rownorm=1,
+        w_coverage=0
+) -> torch.Tensor:
+    """
+    Implementation of https://arxiv.org/abs/2509.09987 (https://github.com/30stomercury/whisper-char-alignment).
+    """
+    if cache['qks'] is None:
+        _compute_qks(model, tokenizer, text_tokens, mel, tokens, cache)
+    weights = torch.cat(cache['qks'])
+    weights = weights[..., :round(num_samples / N_SAMPLES_PER_TOKEN)]
+    weights = median_filter(weights, medfilt_width)
+    weights = (weights * qk_scale).softmax(dim=-1)
+
+    n_layers = weights.size(0)
+    n_heads = weights.size(1)
+    score_matix = torch.zeros(n_layers, n_heads, device=weights.device)
+    if w_colnorm > 0:
+        col_norm_sum = weights.norm(dim=-2).sum(-1)
+        score_matix += w_colnorm * col_norm_sum
+    if w_rownorm > 0:
+        row_norm_sum = weights.norm(dim=-1).sum(-1)
+        score_matix += w_rownorm * row_norm_sum
+    if w_coverage > 0:
+        coverage = torch.sum(weights, dim=2)
+        penalty = torch.max(coverage, coverage.clone().fill_(0.5)).sum(-1)
+        penalty = penalty - coverage.size(-1) * 0.5
+        penalty = w_coverage * penalty
+        score_matix -= penalty
+
+    top_idxs = score_matix.flatten().topk(topk).indices
+    matrix = weights[top_idxs // n_heads, top_idxs % n_heads]
+    col_norm = matrix.norm(dim=-2, keepdim=True)
+    matrix = torch.mean(matrix / col_norm, 0)
+    matrix = matrix[len(tokenizer.sot_sequence):-1]
+
+    return matrix
+
+
 def _compute_jump_indices(
         model: "Whisper",
         cache: dict,
         extra_models: List["Whisper"] = None,
+        new: bool = False,
         **kwargs
 ):
-    weights = _compute_atten_weights(model, cache=cache, **kwargs)
-    if extra_models:
-        extra_weights = [weights]
-        for mi, other_model in enumerate(extra_models):
-            m = _compute_atten_weights(other_model, cache=cache['extra_caches'][mi], **kwargs)
-            extra_weights.append(m)
-        weights = torch.cat(extra_weights, dim=0)
-        extra_text_token_probs = [c['text_token_probs'] for c in cache['extra_caches']] + [cache['text_token_probs']]
-        cache['text_token_probs'] = torch.tensor(
-            extra_text_token_probs,
-            device=extra_weights[0].device
-        ).mean(dim=0).tolist()
+    if new:
+        weights = _compute_atten_weights_new(model, cache=cache, **kwargs)
+    else:
+        weights = _compute_atten_weights(model, cache=cache, **kwargs)
+        if extra_models:
+            extra_weights = [weights]
+            for mi, other_model in enumerate(extra_models):
+                m = _compute_atten_weights(other_model, cache=cache['extra_caches'][mi], **kwargs)
+                extra_weights.append(m)
+            weights = torch.cat(extra_weights, dim=0)
+            extra_text_token_probs = (
+                    [c['text_token_probs'] for c in cache['extra_caches']] + [cache['text_token_probs']]
+            )
+            cache['text_token_probs'] = torch.tensor(
+                extra_text_token_probs,
+                device=extra_weights[0].device
+            ).mean(dim=0).tolist()
 
-    matrix = weights.mean(dim=0)
+    if new:
+        matrix = weights
+    else:
+        matrix = weights.mean(dim=0)
     text_indices, time_indices = dtw(-matrix)
 
     jumps = np.pad(np.diff(text_indices), (1, 0), constant_values=1).astype(bool)
@@ -153,10 +213,13 @@ def find_alignment_stable(
         token_split=None,
         audio_features: torch.Tensor = None,
         extra_models: List["Whisper"] = None,
-        dynamic_heads: Optional[Union[bool, int, str]] = None
+        dynamic_heads: Optional[Union[bool, int, str]] = None,
+        aligner: Union[str, dict] = 'legacy'
 ) -> List[WordTiming]:
     if extra_models and (invalid_model_types := set(map(type, extra_models)) - {type(model)}):
         raise NotImplementedError(f'Got unsupported model type(s): {invalid_model_types}')
+
+    assert isinstance(aligner, dict) or aligner in ('new', 'legacy'), f'aligner must be "new"/"legacy", got "{aligner}"'
 
     if ts_num:
         warnings.warn('``ts_num`` is deprecated and will be removed in future versions.',
@@ -173,13 +236,21 @@ def find_alignment_stable(
         ]
     ).to(model.device)
 
+    word_tokens_orig = itk = None
     if token_split is None:
         words, word_tokens = tokenizer.split_to_word_tokens(text_tokens + [tokenizer.eot])
     else:
         words, word_tokens = token_split
+        if isinstance(word_tokens, dict):
+            word_tokens_orig = word_tokens['tokens_orig']
+            itk = word_tokens['ignore_tokens']
+            word_tokens = word_tokens['tokens']
+            word_tokens_orig.append([tokenizer.eot])
         words.append(tokenizer.decode([tokenizer.eot]))
         word_tokens.append([tokenizer.eot])
     word_boundaries = np.pad(np.cumsum([len(t) for t in word_tokens[:-1]]), (1, 0))
+    if itk:
+        word_boundaries += np.array([tk[:len(itk)] == itk for tk in word_tokens], dtype=word_boundaries.dtype)
     if dynamic_heads:
         if dynamic_heads is True:
             dynamic_heads_count = 6
@@ -203,12 +274,18 @@ def find_alignment_stable(
         tokens=tokens,
         qk_scale=qk_scale,
         medfilt_width=medfilt_width,
-        extra_models=extra_models,
-        dynamic_heads_count=dynamic_heads_count
+        extra_models=extra_models
     )
+    if aligner != 'legacy':
+        new = True
+        if isinstance(aligner, dict):
+            kwargs.update(aligner)
+    else:
+        new = False
+        kwargs['dynamic_heads_count'] = dynamic_heads_count
     cache = _new_cache(audio_features=audio_features, extras=0 if extra_models is None else len(extra_models))
     for _ in range(dynamic_iterations or 1):
-        _compute_jump_indices(cache=cache, **kwargs)
+        _compute_jump_indices(cache=cache, new=new, **kwargs)
     jump_times = cache['jump_indices'] / TOKENS_PER_SECOND
     start_times = jump_times[word_boundaries[:-1]]
     end_times = jump_times[word_boundaries[1:]]
@@ -216,6 +293,10 @@ def find_alignment_stable(
         np.mean(cache['text_token_probs'][i:j])
         for i, j in zip(word_boundaries[:-1], word_boundaries[1:])
     ]
+
+    if word_tokens_orig is not None:
+        assert len(word_tokens) == len(word_tokens_orig)
+        word_tokens = word_tokens_orig
 
     return [
         WordTiming(word, tokens, start, end, probability)
@@ -265,7 +346,8 @@ def split_word_tokens(segments: List[dict],
                       *,
                       padding: (str, int) = None,
                       split_callback: Callable = None,
-                      pad_first_seg: bool = True):
+                      pad_first_seg: bool = True,
+                      char_split: bool = False):
     if padding is not None:
         if isinstance(padding, str):
             padding = tokenizer.encode(padding)
@@ -275,6 +357,7 @@ def split_word_tokens(segments: List[dict],
     seg_indices = []
     words = []
     word_tokens = []
+    word_char_tokens = []
     for i, s in enumerate(segments):
         temp_word_tokens = [t for t in s['tokens'] if not isinstance(t, int) or t < tokenizer.eot]
         curr_words, curr_word_tokens = (
@@ -294,9 +377,17 @@ def split_word_tokens(segments: List[dict],
             words.append(None)
             word_tokens.append(padding)
         seg_indices.extend([i] * len(curr_words))
-        tokens.extend(list(chain.from_iterable(curr_word_tokens)))
+        if char_split:
+            curr_word_char_tokens = [[ct for char in word for ct in tokenizer.encode(char)] for word in curr_words]
+            word_char_tokens.extend(curr_word_char_tokens)
+            tokens.extend(list(chain.from_iterable(curr_word_char_tokens)))
+        else:
+            tokens.extend(list(chain.from_iterable(curr_word_tokens)))
         words.extend(curr_words)
         word_tokens.extend(curr_word_tokens)
+
+    if char_split:
+        word_tokens = dict(tokens=word_char_tokens, tokens_orig=word_tokens, ignore_tokens=tokenizer.encode(' '))
 
     return tokens, (words, word_tokens), seg_indices
 
@@ -333,6 +424,7 @@ def add_word_timestamps_stable(
         split_callback: Callable = None,
         gap_padding: Optional[str] = ' ...',
         pad_first_seg: bool = True,
+        aligner: Union[str, dict] = 'legacy',
         **kwargs,
 ):
     if len(segments) == 0:
@@ -347,6 +439,10 @@ def add_word_timestamps_stable(
     if append_punctuations is None:
         append_punctuations = "\"'.。,，!！?？:：”)]}、"
 
+    char_split = isinstance(aligner, dict) and aligner.pop('char_split', False)
+    if char_split:
+        gap_padding = None
+
     def align():
         for seg in segments:
             seg['words'] = []
@@ -356,7 +452,8 @@ def add_word_timestamps_stable(
             tokenizer,
             padding=gap_padding,
             split_callback=split_callback,
-            pad_first_seg=pad_first_seg
+            pad_first_seg=pad_first_seg,
+            char_split=char_split
         )
 
         alignment = find_alignment_stable(model, tokenizer, text_tokens, mel, num_samples,
@@ -364,7 +461,8 @@ def add_word_timestamps_stable(
                                           token_split=token_split,
                                           audio_features=audio_features,
                                           ts_num=ts_num,
-                                          ts_noise=ts_noise)
+                                          ts_noise=ts_noise,
+                                          aligner=aligner)
         alt_beginning_alignment = pop_empty_alignment(alignment, seg_indices)
 
         merge_punctuations(alignment, prepend_punctuations, append_punctuations)

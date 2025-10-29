@@ -149,6 +149,8 @@ def align(
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    aligner : "legacy" or "new" or dict, default "legacy"
+        Algorithm for selecting attention heads for alignment. Use dictionary to specify keyword arguments for 'new'.
 
     Returns
     -------
@@ -316,6 +318,8 @@ def align_words(
         word-timestamp extraction. Specify the number of heads or `True` for default of 6 heads.
         To specify number of iterations for finding the optimal heads,
         use string with "," to separate heads and iterations (e.g. "8,3" for 8 heads and 3 iterations).
+    aligner : "legacy" or "new" or dict, default "legacy"
+        Algorithm for selecting attention heads for alignment. Use dictionary to specify keyword arguments for 'new'.
     normalize_text : bool or dict, default True
         Whether to normalize text of each segment.
     inplace : bool, default True
@@ -419,7 +423,8 @@ def get_whisper_alignment_func(
                 append_punctuations='',
                 gap_padding=None,
                 extra_models=options.align.extra_models,
-                dynamic_heads=options.align.dynamic_heads
+                dynamic_heads=options.align.dynamic_heads,
+                aligner=options.align.aligner
             )
             return [w for seg in temp_segments for w in seg['words']]
 
