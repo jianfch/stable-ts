@@ -1721,24 +1721,34 @@ class WhisperResult:
         stable_whisper.result.WhisperResult
             The current instance after the changes.
         """
-        def _over_max(x: Segment):
-            return (
-                    (min_words and len(x.words) >= min_words) or
-                    (min_chars and x.char_count() >= min_chars) or
-                    (min_dur and x.duration >= min_dur)
-            )
-
-        indices = set(s.id for s in self.segments if _over_max(s)) if any((min_words, min_chars, min_dur)) else None
+        has_min = any((min_words, min_chars, min_dur))
+        ignore_special_periods = self._ignore_special_periods or ignore_special_periods
 
         def _get_indices(x: Segment):
-            return x.get_punctuation_indices(punctuation) if indices is None or x.id in indices else []
+            indices = x.get_punctuation_indices(punctuation)
+            if ignore_special_periods:
+                self._remove_special_period_indices(indices, self.segments.index(x))
+            if not has_min:
+                return indices
 
-        ignore_special_periods = self._ignore_special_periods or ignore_special_periods
+            filtered_indices = []
+            prev_idx = 0
+            for idx in indices:
+                words = x.words[prev_idx:idx + 1]
+                if (
+                        (min_words and len(words) >= min_words) or
+                        (min_chars and sum(len(w) for w in words) >= min_chars) or
+                        (min_dur and words[-1].end - words[0].start >= min_dur)
+                ):
+                    filtered_indices.append(idx)
+                    prev_idx = idx + 1
+            return filtered_indices
+
         self._split_segments(
             _get_indices,
             lock=lock,
             newline=newline,
-            ignore_special_periods=ignore_special_periods
+            ignore_special_periods=False
         )
         punct_str = '/'.join(p if isinstance(p, str) else '*'.join(p) for p in punctuation)
         self._update_history(
